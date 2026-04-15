@@ -1,2 +1,4 @@
 node_modules
 backend/**/target
+backend/**/data/*.db
+backend/**/data/*.trace.db
