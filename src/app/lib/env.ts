@@ -1,6 +1,8 @@
 const trimSlash = (value: string) => value.replace(/\/$/, "");
 
-const API_BASE = trimSlash(import.meta.env.VITE_API_BASE_URL || "");
+const API_BASE = trimSlash(
+  import.meta.env.VITE_API_BASE_URL || "",
+);
 const WS_BASE = trimSlash(import.meta.env.VITE_WS_BASE_URL || "");
 
 export const env = {

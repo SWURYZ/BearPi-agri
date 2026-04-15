@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import {
   Thermometer,
@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { SimpleModal } from "../components/ui/SimpleModal";
+import { fetchRealtimeSnapshot } from "../services/realtime";
 
 const greenhouses = [
   {
@@ -23,10 +24,10 @@ const greenhouses = [
     crop: "番茄",
     status: "正常",
     statusColor: "green",
-    temp: 24.5,
-    humidity: 68,
-    light: 8500,
-    co2: 420,
+    temp: "--",
+    humidity: "--",
+    light: "--",
+    co2: "--",
     deviceCount: 12,
     onlineDevices: 12,
     alerts: 0,
@@ -133,6 +134,63 @@ export function Dashboard() {
   const [offlineDialogOpen, setOfflineDialogOpen] = useState(false);
   const [offlineGhName, setOfflineGhName] = useState("");
 
+  useEffect(() => {
+    let disposed = false;
+
+    async function loadRealtimeForGh1() {
+      try {
+        const snapshot = await fetchRealtimeSnapshot("1号大棚");
+        if (disposed) {
+          return;
+        }
+
+        if (Object.keys(snapshot).length === 0) {
+          setGreenhouseData((prev) =>
+            prev.map((gh) =>
+              gh.id === "GH-01"
+                ? { ...gh, temp: "--", humidity: "--", light: "--", co2: "--" }
+                : gh,
+            ),
+          );
+          return;
+        }
+
+        setGreenhouseData((prev) =>
+          prev.map((gh) =>
+            gh.id === "GH-01"
+              ? {
+                  ...gh,
+                  temp: typeof snapshot.temp === "number" ? snapshot.temp : "--",
+                  humidity: typeof snapshot.humidity === "number" ? snapshot.humidity : "--",
+                  light: typeof snapshot.light === "number" ? snapshot.light : "--",
+                  co2: "--",
+                }
+              : gh,
+          ),
+        );
+        setLastUpdate(nowText());
+      } catch {
+        if (!disposed) {
+          setGreenhouseData((prev) =>
+            prev.map((gh) =>
+              gh.id === "GH-01"
+                ? { ...gh, temp: "--", humidity: "--", light: "--", co2: "--" }
+                : gh,
+            ),
+          );
+        }
+      }
+    }
+
+    void loadRealtimeForGh1();
+    const timer = window.setInterval(loadRealtimeForGh1, 5000);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
   const totalAlerts = greenhouseData.reduce((sum, g) => sum + g.alerts, 0);
   const onlineCount = greenhouseData.filter((g) => g.status !== "离线").length;
 
@@ -159,10 +217,10 @@ export function Dashboard() {
     setGreenhouseData((prev) =>
       prev.map((gh) => ({
         ...gh,
-        temp: jitter(gh.temp, 1.2, 1),
-        humidity: jitter(gh.humidity, 2, 0),
-        light: jitter(gh.light, 400, 0),
-        co2: jitter(gh.co2, 25, 0),
+        temp: gh.id === "GH-01" ? gh.temp : jitter(gh.temp, 1.2, 1),
+        humidity: gh.id === "GH-01" ? gh.humidity : jitter(gh.humidity, 2, 0),
+        light: gh.id === "GH-01" ? gh.light : jitter(gh.light, 400, 0),
+        co2: gh.id === "GH-01" ? gh.co2 : jitter(gh.co2, 25, 0),
       })),
     );
     setLastUpdate(nowText());

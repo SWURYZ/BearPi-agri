@@ -1,0 +1,59 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: tech-stack-smoke-service
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://127.0.0.1:5432/smart_agri}
+    username: ${SPRING_DATASOURCE_USERNAME:agri}
+    password: ${SPRING_DATASOURCE_PASSWORD:agri123}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      initialization-fail-timeout: -1
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+  flyway:
+    enabled: ${APP_FLYWAY_ENABLED:false}
+    locations: classpath:db/migration
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:127.0.0.1:9092}
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+        register-enabled: false
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+      config:
+        enabled: false
+        server-addr: ${NACOS_SERVER_ADDR:127.0.0.1:8848}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui/index.html
+
+app:
+  stack-check:
+    enable-database-check: ${APP_ENABLE_DATABASE_CHECK:false}
+    enable-redis-check: ${APP_ENABLE_REDIS_CHECK:false}
+    enable-kafka-check: ${APP_ENABLE_KAFKA_CHECK:false}
+    enable-mqtt-check: ${APP_ENABLE_MQTT_CHECK:false}
+    enable-nacos-check: ${APP_ENABLE_NACOS_CHECK:false}
+    kafka-bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:127.0.0.1:9092}
+    nacos-base-url: ${NACOS_BASE_URL:http://127.0.0.1:8848}
+    mqtt-uri: ${MQTT_BROKER:tcp://127.0.0.1:1883}
+    mqtt-username: ${MQTT_USERNAME:admin}
+    mqtt-password: ${MQTT_PASSWORD:public}
+    mqtt-client-id: tech-stack-smoke-service

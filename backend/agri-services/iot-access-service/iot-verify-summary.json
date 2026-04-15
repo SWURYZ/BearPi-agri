@@ -1,0 +1,14 @@
+{
+  "health": null,
+  "amqpConnected": false,
+  "amqpQueue": "bearpi-update",
+  "telemetryDetected": false,
+  "telemetryDeviceId": null,
+  "telemetrySample1": null,
+  "telemetrySample2": null,
+  "ledControl": null,
+  "ledStatus": null,
+  "motorControl": null,
+  "motorStatus": null,
+  "errors": []
+}

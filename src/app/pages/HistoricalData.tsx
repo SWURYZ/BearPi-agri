@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   LineChart,
   Line,
@@ -12,6 +12,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { Calendar, Download, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { fetchRealtimeSnapshot, fetchSensorHistory } from "../services/realtime";
 
 function genDataset(hours: number) {
   const data = [];
@@ -72,7 +73,84 @@ export function HistoricalData() {
   const [selectedRange, setSelectedRange] = useState(timeRanges[0]);
   const [selectedGH, setSelectedGH] = useState("1号大棚");
   const [selectedSensors, setSelectedSensors] = useState<string[]>(["temp", "humidity"]);
-  const data = genDataset(selectedRange.hours);
+  const [data, setData] = useState(() => genDataset(timeRanges[0].hours));
+  const [latestMetrics, setLatestMetrics] = useState<{
+    temp?: number;
+    humidity?: number;
+    light?: number;
+  }>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    const fallback = genDataset(selectedRange.hours);
+
+    async function loadRealData() {
+      if (selectedGH !== "1号大棚") {
+        setData(fallback);
+        const lastFallback = fallback[fallback.length - 1];
+        setLatestMetrics({
+          temp: lastFallback?.temp,
+          humidity: lastFallback?.humidity,
+          light: lastFallback?.light,
+        });
+        return;
+      }
+
+      try {
+        const range = `${selectedRange.hours}h`;
+        const [snapshot, tempHistory, humidityHistory, lightHistory] = await Promise.all([
+          fetchRealtimeSnapshot(selectedGH),
+          fetchSensorHistory(selectedGH, "temp", range),
+          fetchSensorHistory(selectedGH, "humidity", range),
+          fetchSensorHistory(selectedGH, "light", range),
+        ]);
+
+        const primaryTimeline =
+          tempHistory.length > 0
+            ? tempHistory
+            : humidityHistory.length > 0
+              ? humidityHistory
+              : lightHistory.length > 0
+                ? lightHistory
+                : [];
+
+        if (!cancelled) {
+          if (primaryTimeline.length > 0) {
+            const merged = primaryTimeline.map((point, index) => {
+              const fallbackPoint = fallback[Math.min(index, fallback.length - 1)] ?? {};
+              return {
+                time: point.time,
+                temp: tempHistory[index]?.value ?? fallbackPoint.temp,
+                humidity: humidityHistory[index]?.value ?? fallbackPoint.humidity,
+                light: lightHistory[index]?.value ?? fallbackPoint.light,
+                co2: fallbackPoint.co2,
+                soilHumidity: fallbackPoint.soilHumidity,
+              };
+            });
+            setData(merged);
+          } else {
+            setData([]);
+          }
+
+          setLatestMetrics({
+            temp: snapshot.temp,
+            humidity: snapshot.humidity,
+            light: snapshot.light,
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setData([]);
+          setLatestMetrics({});
+        }
+      }
+    }
+
+    void loadRealData();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedGH, selectedRange]);
 
   function toggleSensor(key: string) {
     setSelectedSensors((prev) =>
@@ -80,7 +158,7 @@ export function HistoricalData() {
     );
   }
 
-  const lastPoint = data[data.length - 1];
+  const lastPoint = useMemo(() => data[data.length - 1], [data]);
 
   return (
     <div className="p-6 space-y-5">
@@ -167,9 +245,9 @@ export function HistoricalData() {
 
       {/* Stats Row */}
       <div className="grid grid-cols-5 gap-3">
-        <StatCard label="当前温度" value={String(lastPoint?.temp ?? "--")} unit="°C" trend="up" />
-        <StatCard label="当前湿度" value={String(lastPoint?.humidity ?? "--")} unit="%" trend="flat" />
-        <StatCard label="当前光照" value={String(lastPoint?.light ?? "--")} unit="lux" trend="down" />
+        <StatCard label="当前温度" value={String(latestMetrics.temp ?? lastPoint?.temp ?? "--")} unit="°C" trend="up" />
+        <StatCard label="当前湿度" value={String(latestMetrics.humidity ?? lastPoint?.humidity ?? "--")} unit="%" trend="flat" />
+        <StatCard label="当前光照" value={String(latestMetrics.light ?? lastPoint?.light ?? "--")} unit="lux" trend="down" />
         <StatCard label="当前CO₂" value={String(lastPoint?.co2 ?? "--")} unit="ppm" trend="up" />
         <StatCard label="土壤湿度" value={String(lastPoint?.soilHumidity ?? "--")} unit="%" trend="down" />
       </div>

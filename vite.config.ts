@@ -18,7 +18,7 @@ function figmaAssetResolver() {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const apiProxyTarget = env.VITE_API_PROXY_TARGET
+  const apiProxyTarget = env.VITE_API_PROXY_TARGET || 'http://localhost:8082'
 
   return {
     plugins: [

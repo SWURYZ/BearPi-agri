@@ -1,0 +1,55 @@
+server:
+  port: 8082
+
+spring:
+  datasource:
+    url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/bearpi?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:20031104}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      initialization-fail-timeout: -1
+  application:
+    name: iot-access-service
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    show-sql: false
+  flyway:
+    enabled: ${APP_FLYWAY_ENABLED:false}
+    locations: classpath:db/migration
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui/index.html
+
+huaweicloud:
+  iotda:
+    command-enabled: ${HUAWEICLOUD_IOTDA_COMMAND_ENABLED:true}
+    ak: ${HUAWEICLOUD_IOTDA_AK:HPUASOFYRYK6SXUL0I7X}
+    sk: ${HUAWEICLOUD_IOTDA_SK:zcpB6oZt2jhINGSwmwHG013Ub7NxrxMw4k0Wfn7g}
+    project-id: ${HUAWEICLOUD_IOTDA_PROJECT_ID:ed1e23a0e3734fc082cbcf11e6855e91}
+    region: ${HUAWEICLOUD_IOTDA_REGION:cn-north-4}
+    endpoint: ${HUAWEICLOUD_IOTDA_ENDPOINT:https://6c48cc4953.st1.iotda-app.cn-north-4.myhuaweicloud.com}
+    amqp:
+      enabled: ${HUAWEICLOUD_IOTDA_AMQP_ENABLED:true}
+      url: ${HUAWEICLOUD_IOTDA_AMQP_URL:amqps://6c48cc4953.st1.iotda-app.cn-north-4.myhuaweicloud.com:5671?amqp.vhost=default&amqp.idleTimeout=120000&amqp.saslMechanisms=PLAIN}
+      access-key: ${HUAWEICLOUD_IOTDA_AMQP_ACCESS_KEY:3TESt7hB}
+      access-code: ${HUAWEICLOUD_IOTDA_AMQP_ACCESS_CODE:HDIfDVKjVtuz2JT5IM5lUCxzV9l8N1cA}
+      queue-id: ${HUAWEICLOUD_IOTDA_AMQP_QUEUE_ID:c4a324ba-299d-4b41-82e9-65c0d0af1eab}
+      queue-name: ${HUAWEICLOUD_IOTDA_AMQP_QUEUE_NAME:bearpi-update}
+
+proxy:
+  enabled: false
+  host: "127.0.0.1"
+  port: 7897
+
+security:
+  jwt:
+    enabled: false
+
+simulation:
+  enabled: false
+  interval: 5000
+  device-id: "bearpi_device_001"

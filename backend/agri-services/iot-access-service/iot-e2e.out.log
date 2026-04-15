@@ -1,0 +1,31 @@
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+
+ :: Spring Boot ::                (v3.3.6)
+
+2026-04-15T12:14:20.515+08:00  INFO 47884 --- [iot-access-service] [           main] c.s.iotaccess.IotAccessApplication       : Starting IotAccessApplication using Java 21.0.4 with PID 47884 (D:\Desktop\大三下\学校实习\code\Dapeng\backend\agri-services\iot-access-service\target\iot-access-service-0.1.0-SNAPSHOT.jar started by ryz in D:\Desktop\大三下\学校实习\code\Dapeng\backend\agri-services\iot-access-service)
+2026-04-15T12:14:20.518+08:00  INFO 47884 --- [iot-access-service] [           main] c.s.iotaccess.IotAccessApplication       : No active profile set, falling back to 1 default profile: "default"
+2026-04-15T12:14:21.918+08:00  INFO 47884 --- [iot-access-service] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.
+2026-04-15T12:14:22.003+08:00  INFO 47884 --- [iot-access-service] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 71 ms. Found 2 JPA repository interfaces.
+2026-04-15T12:14:22.887+08:00  INFO 47884 --- [iot-access-service] [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 18085 (http)
+2026-04-15T12:14:22.916+08:00  INFO 47884 --- [iot-access-service] [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-04-15T12:14:22.917+08:00  INFO 47884 --- [iot-access-service] [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.33]
+2026-04-15T12:14:23.010+08:00  INFO 47884 --- [iot-access-service] [           main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-04-15T12:14:23.012+08:00  INFO 47884 --- [iot-access-service] [           main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 2432 ms
+2026-04-15T12:14:23.222+08:00  INFO 47884 --- [iot-access-service] [           main] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]
+2026-04-15T12:14:23.337+08:00  INFO 47884 --- [iot-access-service] [           main] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.5.3.Final
+2026-04-15T12:14:23.397+08:00  INFO 47884 --- [iot-access-service] [           main] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled
+2026-04-15T12:14:23.795+08:00  INFO 47884 --- [iot-access-service] [           main] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer
+2026-04-15T12:14:23.830+08:00  INFO 47884 --- [iot-access-service] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...
+2026-04-15T12:14:23.846+08:00  INFO 47884 --- [iot-access-service] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Start completed.
+2026-04-15T12:14:24.957+08:00  INFO 47884 --- [iot-access-service] [           main] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)
+2026-04-15T12:14:25.025+08:00  INFO 47884 --- [iot-access-service] [           main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'
+2026-04-15T12:14:27.743+08:00  INFO 47884 --- [iot-access-service] [cloud.com:5671]] org.apache.qpid.jms.JmsConnection        : Connection ID:83882c2c-d48b-4d5a-aa6f-c0d600bf5ba0:1 connected to server: amqps://6c48cc4953.st1.iotda-app.cn-north-4.myhuaweicloud.com:5671
+2026-04-15T12:14:28.053+08:00  INFO 47884 --- [iot-access-service] [           main] c.s.i.config.HuaweiAmqpConsumerConfig    : Huawei AMQP consumer started, queue=bearpi-update
+2026-04-15T12:14:28.894+08:00  INFO 47884 --- [iot-access-service] [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 18085 (http) with context path '/'
+2026-04-15T12:14:28.918+08:00  INFO 47884 --- [iot-access-service] [           main] c.s.iotaccess.IotAccessApplication       : Started IotAccessApplication in 8.946 seconds (process running for 9.697)

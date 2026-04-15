@@ -1,0 +1,11 @@
+{
+  "health": "DOWN",
+  "telemetry": null,
+  "led": null,
+  "ledStatus": null,
+  "motor": null,
+  "motorStatus": null,
+  "errors": [
+    "服务未启动成功"
+  ]
+}

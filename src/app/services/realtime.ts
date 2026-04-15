@@ -1,4 +1,4 @@
-import { withApiBase, withWsBase } from "../lib/env";
+import { withApiBase } from "../lib/env";
 
 export const SENSOR_KEYS = [
   "temp",
@@ -106,37 +106,26 @@ export async function fetchSensorHistory(
 export function connectRealtimeStream(
   greenhouse: string,
   onMetrics: (metrics: SensorMetrics) => void,
-  onError?: (err: Event) => void,
+  _onError?: (err: Event) => void,
 ) {
-  const wsUrl = withWsBase(`/ws/realtime?greenhouse=${encodeURIComponent(greenhouse)}`);
-  if (!wsUrl) {
-    return {
-      connected: false,
-      close: () => {
-        // no-op
-      },
-    };
-  }
-
-  const ws = new WebSocket(wsUrl);
-  ws.onmessage = (event) => {
+  const pull = async () => {
     try {
-      const payload = JSON.parse(event.data);
-      const metrics = normalizeMetrics(payload);
+      const metrics = await fetchRealtimeSnapshot(greenhouse);
       if (Object.keys(metrics).length > 0) {
         onMetrics(metrics);
       }
     } catch {
-      // Ignore malformed messages to keep stream resilient.
+      // Ignore polling errors and allow UI fallback logic to decide status.
     }
   };
 
-  if (onError) {
-    ws.onerror = onError;
-  }
+  void pull();
+  const timer = window.setInterval(pull, 5000);
 
   return {
     connected: true,
-    close: () => ws.close(),
+    close: () => {
+      window.clearInterval(timer);
+    },
   };
 }
