@@ -56,6 +56,84 @@ function formatTime(date: Date) {
   return `${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
 }
 
+function extractUserName(text: string): string | null {
+  const patterns = [
+    /我叫\s*([^\s，。！？,.!?\n]{1,20})/,
+    /我的名字是\s*([^\s，。！？,.!?\n]{1,20})/,
+    /叫我\s*([^\s，。！？,.!?\n]{1,20})/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) {
+      return match[1].trim();
+    }
+  }
+
+  return null;
+}
+
+function asksGreetingFirst(text: string): boolean {
+  return /(先.*(打招呼|问候)|回答前.*(打招呼|问候)|先跟我打个招呼|先给我打个招呼|记得先问候我)/.test(text);
+}
+
+function findRememberedNameFromMessages(messages: Message[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== "user") {
+      continue;
+    }
+    const detected = extractUserName(msg.content || "");
+    if (detected) {
+      return detected;
+    }
+  }
+  return null;
+}
+
+function findGreetingRuleFromMessages(messages: Message[]): boolean {
+  return messages.some((msg) => msg.role === "user" && asksGreetingFirst(msg.content || ""));
+}
+
+function buildQuestionWithMemory(question: string, userName: string | null, greetingFirst: boolean): string {
+  const directives: string[] = [];
+
+  if (userName) {
+    directives.push(`用户姓名是${userName}`);
+  }
+  if (greetingFirst) {
+    directives.push(userName
+      ? `回答前先简短问候并称呼“${userName}”`
+      : "回答前先简短问候用户");
+  }
+
+  if (directives.length === 0) {
+    return question;
+  }
+
+  return `【会话记忆】${directives.join("；")}。请严格遵守。\n\n用户问题：${question}`;
+}
+
+function buildRecentDialogueContext(messages: Message[], currentQuestion: string): string {
+  const history = messages
+    .filter((msg) => msg.id !== "0")
+    .slice(-8)
+    .map((msg) => {
+      const role = msg.role === "user" ? "用户" : "助手";
+      const content = (msg.content || "").replace(/\s+/g, " ").trim();
+      if (!content) return null;
+      const shortText = content.length > 120 ? content.slice(0, 120) + "..." : content;
+      return `${role}：${shortText}`;
+    })
+    .filter(Boolean) as string[];
+
+  if (history.length === 0) {
+    return currentQuestion;
+  }
+
+  return `【最近对话上下文】\n${history.join("\n")}\n\n【当前问题】${currentQuestion}`;
+}
+
 /* --- Markdown renderer --- */
 function renderMarkdown(content: string) {
   if (!content) return null;
@@ -288,10 +366,41 @@ export function AIAssistant() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [rememberedUserName, setRememberedUserName] = useState<string | null>(null);
+  const [mustGreetFirst, setMustGreetFirst] = useState(false);
   const [selectedImage, setSelectedImage] = useState<{ file: File; preview: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    try {
+      const savedName = localStorage.getItem("agri.ai.rememberedUserName");
+      if (savedName) {
+        setRememberedUserName(savedName);
+      }
+      const savedGreetRule = localStorage.getItem("agri.ai.mustGreetFirst");
+      if (savedGreetRule === "true") {
+        setMustGreetFirst(true);
+      }
+    } catch {
+      // ignore localStorage access issues
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (rememberedUserName) {
+        localStorage.setItem("agri.ai.rememberedUserName", rememberedUserName);
+      } else {
+        localStorage.removeItem("agri.ai.rememberedUserName");
+      }
+      localStorage.setItem("agri.ai.mustGreetFirst", mustGreetFirst ? "true" : "false");
+    } catch {
+      // ignore localStorage access issues
+    }
+  }, [rememberedUserName, mustGreetFirst]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -345,6 +454,15 @@ export function AIAssistant() {
       sources: [],
     };
 
+    const detectedName = extractUserName(content);
+    const rememberedFromHistory = findRememberedNameFromMessages(messages);
+    const nextRememberedName = detectedName || rememberedUserName || rememberedFromHistory;
+    const nextMustGreetFirst = mustGreetFirst || asksGreetingFirst(content) || findGreetingRuleFromMessages(messages);
+
+    if (!rememberedUserName && rememberedFromHistory) {
+      setRememberedUserName(rememberedFromHistory);
+    }
+
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInput("");
     setSelectedImage(null);
@@ -358,11 +476,22 @@ export function AIAssistant() {
       ? "[\u7528\u6237\u4e0a\u4f20\u4e86\u4e00\u5f20\u56fe\u7247]\n" + content
       : content;
 
+    if (detectedName && detectedName !== rememberedUserName) {
+      setRememberedUserName(detectedName);
+    }
+    if (nextMustGreetFirst !== mustGreetFirst) {
+      setMustGreetFirst(nextMustGreetFirst);
+    }
+
+    const memoryAwareQuestion = buildQuestionWithMemory(questionText, nextRememberedName, nextMustGreetFirst);
+    const enrichedQuestion = buildRecentDialogueContext(messages, memoryAwareQuestion);
+
     try {
       await streamAgriAgentChat(
         {
-          question: questionText,
+          question: enrichedQuestion,
           userId: "agri-web-ui",
+          conversationId: conversationId ?? undefined,
         },
         {
           onToken: (token) => {
@@ -372,6 +501,12 @@ export function AIAssistant() {
           },
           onThinking: (token) => {
             appendField(assistantId, "thinking", token);
+          },
+          onContext: (id) => {
+            const trimmed = id?.trim();
+            if (trimmed) {
+              setConversationId(trimmed);
+            }
           },
           onError: (message) => {
             updateField(assistantId, "content", "\u670d\u52a1\u5f02\u5e38\uff1a" + (message || "\u8bf7\u7a0d\u540e\u91cd\u8bd5"));
@@ -434,7 +569,18 @@ export function AIAssistant() {
             <h1 className="text-xl font-bold text-gray-800">{"\u519c\u4e8b\u667a\u80fd\u95ee\u7b54"}</h1>
           </div>
           <button
-            onClick={() => setMessages((prev) => [prev[0]])}
+            onClick={() => {
+              setMessages((prev) => [prev[0]]);
+              setConversationId(null);
+              setRememberedUserName(null);
+              setMustGreetFirst(false);
+              try {
+                localStorage.removeItem("agri.ai.rememberedUserName");
+                localStorage.removeItem("agri.ai.mustGreetFirst");
+              } catch {
+                // ignore localStorage access issues
+              }
+            }}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
           >
             <RefreshCw className="w-3.5 h-3.5" />
@@ -501,9 +647,9 @@ export function AIAssistant() {
 
               <div
                 className={"rounded-2xl px-4 py-3 text-sm " + (msg.role === "user"
-                    ? "bg-blue-500 text-white rounded-tr-md"
-                    : "bg-white border border-gray-100 shadow-sm text-gray-700 rounded-tl-md"
-                  )}
+                  ? "bg-blue-500 text-white rounded-tr-md"
+                  : "bg-white border border-gray-100 shadow-sm text-gray-700 rounded-tl-md"
+                )}
               >
                 {msg.role === "assistant" ? (
                   <div className="space-y-1">
@@ -666,11 +812,11 @@ export function AIAssistant() {
             }}
             disabled={!loading && !input.trim() && !selectedImage}
             className={"w-9 h-9 rounded-xl flex items-center justify-center transition-all " + (loading
-                ? "bg-amber-500 text-white hover:bg-amber-600 shadow-sm"
-                : input.trim() || selectedImage
-                  ? "bg-green-600 text-white hover:bg-green-700 shadow-sm"
-                  : "bg-gray-100 text-gray-300 cursor-not-allowed"
-              )}
+              ? "bg-amber-500 text-white hover:bg-amber-600 shadow-sm"
+              : input.trim() || selectedImage
+                ? "bg-green-600 text-white hover:bg-green-700 shadow-sm"
+                : "bg-gray-100 text-gray-300 cursor-not-allowed"
+            )}
           >
             {loading ? <Square className="w-4 h-4" /> : <Send className="w-4 h-4" />}
           </button>
