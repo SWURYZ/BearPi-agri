@@ -3,17 +3,16 @@ server:
 
 spring:
   datasource:
-    url: jdbc:h2:file:./data/device-control;MODE=MySQL;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://47.108.58.107:3306/dream6?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:c0765083cd3f57ab}
+    hikari:
+      initialization-fail-timeout: -1
   application:
     name: device-control-service
-  h2:
-    console:
-      enabled: true
-      path: /h2-console
   jpa:
+    database-platform: ${SPRING_JPA_DATABASE_PLATFORM:org.hibernate.community.dialect.MySQLLegacyDialect}
     hibernate:
       ddl-auto: update
     open-in-view: false
@@ -21,6 +20,8 @@ spring:
   flyway:
     enabled: ${APP_FLYWAY_ENABLED:false}
     locations: classpath:db/migration
+    table: flyway_schema_history_device_control
+    baseline-on-migrate: true
 
 springdoc:
   swagger-ui:
