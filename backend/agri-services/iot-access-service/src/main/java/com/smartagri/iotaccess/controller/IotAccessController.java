@@ -33,19 +33,19 @@ public class IotAccessController {
     private final HuaweiIotCommandService commandService;
 
     @GetMapping("/devices/{deviceId}/latest")
-    public ApiResponse<DeviceTelemetry> latest(@PathVariable String deviceId) {
+    public ApiResponse<DeviceTelemetry> latest(@PathVariable("deviceId") String deviceId) {
         return ApiResponse.success(telemetryIngestionService.latest(deviceId));
     }
 
     @GetMapping("/devices/{deviceId}/telemetry")
     public ApiResponse<java.util.List<DeviceTelemetry>> telemetry(
-            @PathVariable String deviceId,
-            @RequestParam(defaultValue = "60") int minutes) {
+            @PathVariable("deviceId") String deviceId,
+            @RequestParam(name = "minutes", defaultValue = "60") int minutes) {
         return ApiResponse.success(telemetryIngestionService.recent(deviceId, minutes));
     }
 
     @GetMapping("/devices/{deviceId}/status")
-    public ApiResponse<Map<String, Object>> status(@PathVariable String deviceId) {
+    public ApiResponse<Map<String, Object>> status(@PathVariable("deviceId") String deviceId) {
         DeviceTelemetry latest = telemetryIngestionService.latest(deviceId);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("deviceId", deviceId);
@@ -65,7 +65,7 @@ public class IotAccessController {
 
     @PutMapping("/devices/{deviceId}/actuators")
     public ApiResponse<Map<String, CommandDispatchResponse>> controlActuator(
-            @PathVariable String deviceId,
+            @PathVariable("deviceId") String deviceId,
             @RequestBody ActuatorControlRequest request) {
         Map<String, CommandDispatchResponse> result = new LinkedHashMap<>();
 
@@ -89,7 +89,7 @@ public class IotAccessController {
     }
 
     @GetMapping("/commands/request/{requestId}")
-    public ResponseEntity<ApiResponse<DeviceCommandLog>> queryCommand(@PathVariable String requestId) {
+    public ResponseEntity<ApiResponse<DeviceCommandLog>> queryCommand(@PathVariable("requestId") String requestId) {
         return commandService.findByRequestId(requestId)
                 .map(log -> ResponseEntity.ok(ApiResponse.success(log)))
                 .orElseGet(() -> ResponseEntity.notFound().build());
