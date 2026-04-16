@@ -1,5 +1,7 @@
 package com.smartagri.greenhousemonitor.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smartagri.greenhousemonitor.domain.entity.DeviceGreenhouseMapping;
 import com.smartagri.greenhousemonitor.domain.entity.Greenhouse;
 import com.smartagri.greenhousemonitor.domain.entity.GreenhouseSensorSnapshot;
@@ -8,6 +10,7 @@ import com.smartagri.greenhousemonitor.domain.repository.GreenhouseRepository;
 import com.smartagri.greenhousemonitor.domain.repository.GreenhouseSensorSnapshotRepository;
 import com.smartagri.greenhousemonitor.dto.DeviceBindRequest;
 import com.smartagri.greenhousemonitor.dto.DeviceMappingResponse;
+import com.smartagri.greenhousemonitor.dto.DeviceScanBindRequest;
 import com.smartagri.greenhousemonitor.dto.GreenhouseOverviewResponse;
 import com.smartagri.greenhousemonitor.dto.GreenhouseRequest;
 import com.smartagri.greenhousemonitor.dto.GreenhouseResponse;
@@ -16,9 +19,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -26,9 +33,12 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class GreenhouseMonitorService {
 
+    private static final String DEFAULT_GREENHOUSE_CODE = "GH-001";
+
     private final GreenhouseRepository greenhouseRepository;
     private final GreenhouseSensorSnapshotRepository snapshotRepository;
     private final DeviceGreenhouseMappingRepository mappingRepository;
+    private final ObjectMapper objectMapper;
 
     // ---- 大棚管理 ----
 
@@ -169,12 +179,116 @@ public class GreenhouseMonitorService {
     }
 
     /**
+     * Query connected devices (BOUND) in one greenhouse.
+     */
+    public List<DeviceMappingResponse> listConnectedDevices(String greenhouseCode) {
+        return mappingRepository.findByGreenhouseCodeAndStatus(greenhouseCode, "BOUND").stream()
+                .map(this::toMappingResponse)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Query connected devices across all greenhouses.
+     */
+    public List<DeviceMappingResponse> listAllConnectedDevices() {
+        return mappingRepository.findAll().stream()
+                .filter(m -> "BOUND".equalsIgnoreCase(m.getStatus()))
+                .map(this::toMappingResponse)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Query connected devices in default greenhouse #1.
+     */
+    public List<DeviceMappingResponse> listConnectedDevicesInDefaultGreenhouse() {
+        return listConnectedDevices(resolveDefaultGreenhouseCode());
+    }
+
+    /**
+     * Parse QR payload and bind device to greenhouse.
+     */
+    @Transactional
+    public DeviceMappingResponse scanBindDevice(DeviceScanBindRequest request) {
+        Map<String, String> payload = parseQrPayload(request.qrContent());
+        String deviceId = firstNonBlank(payload.get("deviceId"), payload.get("id"));
+        if (!StringUtils.hasText(deviceId)) {
+            throw new IllegalArgumentException("QR payload missing deviceId");
+        }
+        String greenhouseCode = StringUtils.hasText(request.greenhouseCode())
+                ? request.greenhouseCode().trim()
+                : resolveDefaultGreenhouseCode();
+
+        DeviceBindRequest bindRequest = new DeviceBindRequest(
+                deviceId.trim(),
+                firstNonBlank(payload.get("deviceName"), payload.get("name")),
+                firstNonBlank(payload.get("deviceType"), payload.get("type")),
+                greenhouseCode
+        );
+        return bindDevice(bindRequest);
+    }
+
+    /**
      * 查询单台设备的绑定状态
      */
     public DeviceMappingResponse getDeviceMapping(String deviceId) {
         return mappingRepository.findByDeviceId(deviceId)
                 .map(this::toMappingResponse)
                 .orElseThrow(() -> new IllegalArgumentException("设备映射不存在: " + deviceId));
+    }
+
+    private String resolveDefaultGreenhouseCode() {
+        Optional<Greenhouse> byCode = greenhouseRepository.findByCode(DEFAULT_GREENHOUSE_CODE);
+        if (byCode.isPresent()) {
+            return byCode.get().getCode();
+        }
+
+        return greenhouseRepository.findByEnabled(true).stream()
+                .findFirst()
+                .map(Greenhouse::getCode)
+                .orElse(DEFAULT_GREENHOUSE_CODE);
+    }
+
+    private Map<String, String> parseQrPayload(String qrContent) {
+        if (!StringUtils.hasText(qrContent)) {
+            return Map.of();
+        }
+        String content = qrContent.trim();
+
+        if (content.startsWith("{") && content.endsWith("}")) {
+            try {
+                return objectMapper.readValue(content, new TypeReference<Map<String, String>>() { });
+            } catch (Exception ex) {
+                log.warn("[扫码绑定] JSON QR parse failed, fallback to plain parser: {}", ex.getMessage());
+            }
+        }
+
+        Map<String, String> map = new HashMap<>();
+        String normalized = content.replace(';', '&');
+        for (String part : normalized.split("&")) {
+            if (!part.contains("=")) {
+                continue;
+            }
+            String[] kv = part.split("=", 2);
+            if (kv.length == 2 && StringUtils.hasText(kv[0])) {
+                map.put(kv[0].trim(), kv[1].trim());
+            }
+        }
+        if (!map.isEmpty()) {
+            return map;
+        }
+
+        map.put("deviceId", content);
+        return map;
+    }
+
+    private String firstNonBlank(String first, String second) {
+        if (StringUtils.hasText(first)) {
+            return first.trim();
+        }
+        if (StringUtils.hasText(second)) {
+            return second.trim();
+        }
+        return null;
     }
 
     // ---- Mapping helpers ----

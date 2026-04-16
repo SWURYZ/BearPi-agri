@@ -1,17 +1,23 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Cpu,
-  Plus,
   QrCode,
   Trash2,
   Search,
   CheckCircle,
   WifiOff,
   AlertTriangle,
-  Edit2,
   RefreshCw,
+  Camera,
+  X,
 } from "lucide-react";
 import { SimpleModal } from "../components/ui/SimpleModal";
+import {
+  type DeviceMappingResponse,
+  fetchAllConnectedDevices,
+  scanBindDevice,
+  unbindDevice,
+} from "../services/greenhouseMonitor";
 
 interface Device {
   id: string;
@@ -26,23 +32,10 @@ interface Device {
   signal: number;
 }
 
-const initialDevices: Device[] = [
-  { id: "DEV-GH01-T01", name: "温湿度传感器 #1", type: "传感器", gh: "1号大棚", mac: "AA:BB:CC:01:01", ip: "192.168.1.101", status: "在线", bindTime: "2026-01-15", firmware: "v2.1.3", signal: 92 },
-  { id: "DEV-GH01-T02", name: "温湿度传感器 #2", type: "传感器", gh: "1号大棚", mac: "AA:BB:CC:01:02", ip: "192.168.1.102", status: "在线", bindTime: "2026-01-15", firmware: "v2.1.3", signal: 87 },
-  { id: "DEV-GH01-F01", name: "通风风机 #1", type: "执行器", gh: "1号大棚", mac: "AA:BB:CC:01:11", ip: "192.168.1.111", status: "在线", bindTime: "2026-01-16", firmware: "v1.5.0", signal: 78 },
-  { id: "DEV-GH01-F02", name: "通风风机 #2", type: "执行器", gh: "1号大棚", mac: "AA:BB:CC:01:12", ip: "192.168.1.112", status: "在线", bindTime: "2026-01-16", firmware: "v1.5.0", signal: 81 },
-  { id: "DEV-GH01-L01", name: "光照传感器", type: "传感器", gh: "1号大棚", mac: "AA:BB:CC:01:21", ip: "192.168.1.121", status: "在线", bindTime: "2026-02-01", firmware: "v1.2.0", signal: 95 },
-  { id: "DEV-GH02-T01", name: "温湿度传感器 #1", type: "传感器", gh: "2号大棚", mac: "AA:BB:CC:02:01", ip: "192.168.1.201", status: "告警", bindTime: "2026-01-20", firmware: "v2.1.3", signal: 65 },
-  { id: "DEV-GH02-P01", name: "灌溉水泵", type: "执行器", gh: "2号大棚", mac: "AA:BB:CC:02:11", ip: "192.168.1.211", status: "在线", bindTime: "2026-01-20", firmware: "v2.0.1", signal: 73 },
-  { id: "DEV-GH03-T01", name: "土壤传感器 #1", type: "传感器", gh: "3号大棚", mac: "AA:BB:CC:03:01", ip: "192.168.1.301", status: "在线", bindTime: "2026-02-10", firmware: "v1.8.2", signal: 88 },
-  { id: "DEV-GH04-T01", name: "网关设备", type: "网关", gh: "4号大棚", mac: "AA:BB:CC:04:00", ip: "192.168.1.400", status: "离线", bindTime: "2026-03-01", firmware: "v3.0.0", signal: 0 },
-  { id: "DEV-GH05-L01", name: "补光灯控制器", type: "执行器", gh: "5号大棚", mac: "AA:BB:CC:05:11", ip: "192.168.1.511", status: "在线", bindTime: "2026-02-28", firmware: "v1.1.0", signal: 90 },
-];
-
-const statusConfig: Record<string, { color: string; icon: React.ReactNode; badge: string }> = {
-  在线: { color: "text-green-600", icon: <CheckCircle className="w-4 h-4 text-green-500" />, badge: "bg-green-100 text-green-600" },
-  离线: { color: "text-gray-400", icon: <WifiOff className="w-4 h-4 text-gray-400" />, badge: "bg-gray-100 text-gray-400" },
-  告警: { color: "text-yellow-600", icon: <AlertTriangle className="w-4 h-4 text-yellow-500" />, badge: "bg-yellow-100 text-yellow-600" },
+const statusConfig: Record<string, { color: string; icon: React.ReactNode }> = {
+  在线: { color: "text-green-600", icon: <CheckCircle className="w-4 h-4 text-green-500" /> },
+  离线: { color: "text-gray-400", icon: <WifiOff className="w-4 h-4 text-gray-400" /> },
+  告警: { color: "text-yellow-600", icon: <AlertTriangle className="w-4 h-4 text-yellow-500" /> },
 };
 
 const typeColors: Record<string, string> = {
@@ -50,6 +43,34 @@ const typeColors: Record<string, string> = {
   执行器: "bg-green-50 text-green-600",
   网关: "bg-purple-50 text-purple-600",
 };
+
+function normalizeDeviceType(raw: string | null): string {
+  if (!raw) return "传感器";
+  const text = raw.toUpperCase();
+  if (text.includes("ACTUATOR") || text.includes("MOTOR") || text.includes("LIGHT")) return "执行器";
+  if (text.includes("GATEWAY")) return "网关";
+  if (text.includes("SENSOR")) return "传感器";
+  if (["传感器", "执行器", "网关"].includes(raw)) return raw;
+  return "传感器";
+}
+
+function mapFromBackend(item: DeviceMappingResponse): Device {
+  const type = normalizeDeviceType(item.deviceType);
+  const online = item.status === "BOUND";
+  const ghName = item.greenhouseCode && item.greenhouseCode.trim() ? item.greenhouseCode : "未分配";
+  return {
+    id: item.deviceId,
+    name: item.deviceName || item.deviceId,
+    type,
+    gh: ghName,
+    mac: "-",
+    ip: "-",
+    status: online ? "在线" : "离线",
+    bindTime: item.boundAt ? item.boundAt.slice(0, 10) : "-",
+    firmware: "-",
+    signal: online ? 92 : 0,
+  };
+}
 
 function SignalBar({ value }: { value: number }) {
   const color = value >= 80 ? "bg-green-500" : value >= 50 ? "bg-yellow-500" : "bg-red-500";
@@ -67,59 +88,143 @@ function SignalBar({ value }: { value: number }) {
 }
 
 export function DeviceManagement() {
-  const [devices, setDevices] = useState<Device[]>(initialDevices);
+  const [devices, setDevices] = useState<Device[]>([]);
   const [search, setSearch] = useState("");
   const [filterGH, setFilterGH] = useState("全部");
   const [filterStatus, setFilterStatus] = useState("全部");
   const [filterType, setFilterType] = useState("全部");
   const [showBindModal, setShowBindModal] = useState(false);
-  const [bindForm, setBindForm] = useState({ id: "", name: "", type: "传感器", gh: "1号大棚" });
+  const [qrContent, setQrContent] = useState("");
+  const [bindGreenhouseCode, setBindGreenhouseCode] = useState("1号大棚");
+  const [scanHint, setScanHint] = useState("点击开启摄像头后扫码，或手动粘贴二维码内容");
+  const [isLoading, setIsLoading] = useState(false);
+  const [isBinding, setIsBinding] = useState(false);
   const [pendingUnbindId, setPendingUnbindId] = useState<string | null>(null);
 
-  const filtered = devices.filter((d) => {
-    if (filterGH !== "全部" && d.gh !== filterGH) return false;
-    if (filterStatus !== "全部" && d.status !== filterStatus) return false;
-    if (filterType !== "全部" && d.type !== filterType) return false;
-    if (search && !d.name.includes(search) && !d.id.includes(search)) return false;
-    return true;
-  });
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const detectorRef = useRef<any>(null);
+  const timerRef = useRef<number | null>(null);
+  const scanningRef = useRef(false);
+
+  const filtered = useMemo(() => {
+    return devices.filter((d) => {
+      if (filterGH !== "全部" && d.gh !== filterGH) return false;
+      if (filterStatus !== "全部" && d.status !== filterStatus) return false;
+      if (filterType !== "全部" && d.type !== filterType) return false;
+      if (search && !d.name.includes(search) && !d.id.includes(search)) return false;
+      return true;
+    });
+  }, [devices, filterGH, filterStatus, filterType, search]);
+
+  async function loadDevices() {
+    setIsLoading(true);
+    try {
+      const rows = await fetchAllConnectedDevices();
+      setDevices(rows.map(mapFromBackend));
+    } catch (e) {
+      console.error(e);
+      setDevices([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadDevices();
+    return () => stopCamera();
+  }, []);
+
+  const onlineCount = devices.filter((d) => d.status === "在线").length;
+  const offlineCount = devices.filter((d) => d.status === "离线").length;
+  const alertCount = devices.filter((d) => d.status === "告警").length;
+  const greenhouseOptions = ["全部", ...Array.from(new Set(devices.map((d) => d.gh)))];
+
+  function stopCamera() {
+    if (timerRef.current) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    scanningRef.current = false;
+  }
+
+  async function startCameraScan() {
+    try {
+      stopCamera();
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+
+      const Detector = (window as any).BarcodeDetector;
+      if (!Detector) {
+        setScanHint("当前浏览器不支持二维码识别，请手动粘贴二维码内容");
+        return;
+      }
+      detectorRef.current = new Detector({ formats: ["qr_code"] });
+      setScanHint("摄像头已开启，请对准二维码");
+
+      timerRef.current = window.setInterval(async () => {
+        if (scanningRef.current || !videoRef.current || !detectorRef.current) return;
+        try {
+          scanningRef.current = true;
+          const codes = await detectorRef.current.detect(videoRef.current);
+          if (codes && codes.length > 0 && codes[0].rawValue) {
+            setQrContent(codes[0].rawValue);
+            setScanHint("扫码成功，点击“确认绑定”即可");
+            stopCamera();
+          }
+        } catch {
+          // keep scanning loop running
+        } finally {
+          scanningRef.current = false;
+        }
+      }, 500);
+    } catch (e: any) {
+      setScanHint(`摄像头打开失败: ${e?.message || "请检查浏览器权限"}`);
+    }
+  }
+
+  async function bindDeviceFromScan() {
+    if (!qrContent.trim()) {
+      setScanHint("请先扫码或输入二维码内容");
+      return;
+    }
+    setIsBinding(true);
+    try {
+      await scanBindDevice({ qrContent: qrContent.trim(), greenhouseCode: bindGreenhouseCode });
+      setScanHint("绑定成功");
+      setQrContent("");
+      setBindGreenhouseCode("1号大棚");
+      setShowBindModal(false);
+      await loadDevices();
+    } catch (e: any) {
+      setScanHint(`绑定失败: ${e?.message || "请检查二维码内容"}`);
+    } finally {
+      setIsBinding(false);
+    }
+  }
 
   function requestUnbind(id: string) {
     setPendingUnbindId(id);
   }
 
-  function confirmUnbind() {
-    if (!pendingUnbindId) {
-      return;
+  async function confirmUnbind() {
+    if (!pendingUnbindId) return;
+    try {
+      await unbindDevice(pendingUnbindId);
+      setPendingUnbindId(null);
+      await loadDevices();
+    } catch (e) {
+      console.error(e);
+      setPendingUnbindId(null);
     }
-    setDevices((prev) => prev.filter((d) => d.id !== pendingUnbindId));
-    setPendingUnbindId(null);
   }
-
-  function bindDevice() {
-    const now = new Date().toISOString().slice(0, 10);
-    setDevices((prev) => [
-      ...prev,
-      {
-        id: bindForm.id || `DEV-NEW-${Date.now()}`,
-        name: bindForm.name || "新设备",
-        type: bindForm.type,
-        gh: bindForm.gh,
-        mac: `AA:BB:CC:FF:${Math.floor(Math.random() * 99).toString(16).padStart(2, "0")}`,
-        ip: `192.168.1.${Math.floor(Math.random() * 200 + 50)}`,
-        status: "在线",
-        bindTime: now,
-        firmware: "v1.0.0",
-        signal: Math.floor(Math.random() * 40 + 55),
-      },
-    ]);
-    setShowBindModal(false);
-    setBindForm({ id: "", name: "", type: "传感器", gh: "1号大棚" });
-  }
-
-  const onlineCount = devices.filter((d) => d.status === "在线").length;
-  const offlineCount = devices.filter((d) => d.status === "离线").length;
-  const alertCount = devices.filter((d) => d.status === "告警").length;
 
   return (
     <div className="p-6 space-y-5">
@@ -133,11 +238,10 @@ export function DeviceManagement() {
         onCancel={() => setPendingUnbindId(null)}
       />
 
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-gray-800">设备管理</h1>
-          
+          <p className="text-sm text-gray-500 mt-1">按后端真实已绑定设备动态展示各大棚，不再使用本地写死数据</p>
         </div>
         <button
           onClick={() => setShowBindModal(true)}
@@ -148,94 +252,84 @@ export function DeviceManagement() {
         </button>
       </div>
 
-      {/* Bind Device Modal */}
       {showBindModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-6 w-96 shadow-2xl">
-            <div className="flex items-center gap-3 mb-5">
-              <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center">
-                <QrCode className="w-5 h-5 text-green-600" />
-              </div>
-              <div>
-                <h3 className="text-base font-semibold text-gray-800">扫码绑定设备</h3>
-                <p className="text-xs text-gray-400">扫描设备二维码或手动填写设备信息</p>
-              </div>
-            </div>
-
-            {/* Mock QR Scanner */}
-            <div className="border-2 border-dashed border-green-300 rounded-xl p-6 text-center mb-4 bg-green-50/50">
-              <QrCode className="w-12 h-12 text-green-400 mx-auto mb-2" />
-              <p className="text-sm text-gray-500">将设备二维码对准此区域</p>
-              <p className="text-xs text-gray-400 mt-1">或手动填写以下信息</p>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs text-gray-500 mb-1 block">设备ID</label>
-                <input
-                  value={bindForm.id}
-                  onChange={(e) => setBindForm((p) => ({ ...p, id: e.target.value }))}
-                  placeholder="如: DEV-GH01-T03"
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-400"
-                />
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 mb-1 block">设备名称</label>
-                <input
-                  value={bindForm.name}
-                  onChange={(e) => setBindForm((p) => ({ ...p, name: e.target.value }))}
-                  placeholder="如: 温湿度传感器 #3"
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-400"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-gray-500 mb-1 block">设备类型</label>
-                  <select
-                    value={bindForm.type}
-                    onChange={(e) => setBindForm((p) => ({ ...p, type: e.target.value }))}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-400"
-                  >
-                    <option>传感器</option>
-                    <option>执行器</option>
-                    <option>网关</option>
-                  </select>
+          <div className="bg-white rounded-2xl p-6 w-[460px] shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center">
+                  <QrCode className="w-5 h-5 text-green-600" />
                 </div>
                 <div>
-                  <label className="text-xs text-gray-500 mb-1 block">所属大棚</label>
-                  <select
-                    value={bindForm.gh}
-                    onChange={(e) => setBindForm((p) => ({ ...p, gh: e.target.value }))}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-400"
-                  >
-                    {["1号大棚", "2号大棚", "3号大棚", "4号大棚", "5号大棚", "6号大棚"].map((g) => (
-                      <option key={g}>{g}</option>
-                    ))}
-                  </select>
+                  <h3 className="text-base font-semibold text-gray-800">扫码绑定设备</h3>
+                  <p className="text-xs text-gray-400">调用电脑摄像头扫描二维码并绑定到指定大棚</p>
                 </div>
               </div>
+              <button onClick={() => { stopCamera(); setShowBindModal(false); }} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="border border-gray-200 rounded-xl overflow-hidden bg-black mb-3">
+              <video ref={videoRef} autoPlay playsInline muted className="w-full h-52 object-cover" />
+            </div>
+
+            <div className="flex gap-2 mb-3">
+              <button
+                onClick={startCameraScan}
+                className="flex-1 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 flex items-center justify-center gap-1.5"
+              >
+                <Camera className="w-4 h-4" />
+                开启摄像头扫码
+              </button>
+              <button
+                onClick={stopCamera}
+                className="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+              >
+                停止
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-gray-500 block">绑定到大棚</label>
+              <select
+                value={bindGreenhouseCode}
+                onChange={(e) => setBindGreenhouseCode(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-400"
+              >
+                {["1号大棚", "2号大棚", "3号大棚", "4号大棚", "5号大棚", "6号大棚"].map((g) => (
+                  <option key={g} value={g}>{g}</option>
+                ))}
+              </select>
+              <label className="text-xs text-gray-500 block">二维码内容</label>
+              <input
+                value={qrContent}
+                onChange={(e) => setQrContent(e.target.value)}
+                placeholder="支持 JSON / key=value / 直接deviceId"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-400"
+              />
+              <p className="text-xs text-gray-500">{scanHint}</p>
             </div>
 
             <div className="flex gap-2 mt-5">
               <button
-                onClick={() => setShowBindModal(false)}
+                onClick={() => { stopCamera(); setShowBindModal(false); }}
                 className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
               >
                 取消
               </button>
               <button
-                onClick={bindDevice}
-                className="flex-1 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 flex items-center justify-center gap-1.5"
+                onClick={bindDeviceFromScan}
+                disabled={isBinding}
+                className="flex-1 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 disabled:opacity-60"
               >
-                <Plus className="w-4 h-4" />
-                确认绑定
+                {isBinding ? "绑定中..." : "确认绑定"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Summary */}
       <div className="grid grid-cols-4 gap-3">
         {[
           { label: "设备总数", value: devices.length, color: "gray", icon: "📡" },
@@ -255,7 +349,6 @@ export function DeviceManagement() {
         ))}
       </div>
 
-      {/* Filters */}
       <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
         <div className="flex items-center gap-4 flex-wrap">
           <div className="flex items-center gap-2 flex-1 min-w-48 border border-gray-200 rounded-lg px-3 py-2">
@@ -274,7 +367,9 @@ export function DeviceManagement() {
               onChange={(e) => setFilterGH(e.target.value)}
               className="border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-400"
             >
-              {["全部", "1号大棚", "2号大棚", "3号大棚", "4号大棚", "5号大棚"].map((g) => <option key={g}>{g}</option>)}
+              {greenhouseOptions.map((g) => (
+                <option key={g} value={g}>{g}</option>
+              ))}
             </select>
           </div>
           <div className="flex items-center gap-2">
@@ -305,10 +400,16 @@ export function DeviceManagement() {
               </button>
             ))}
           </div>
+          <button
+            onClick={loadDevices}
+            className="flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
+            刷新
+          </button>
         </div>
       </div>
 
-      {/* Device Table */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
         <table className="w-full">
           <thead className="bg-gray-50 border-b border-gray-100">
@@ -324,7 +425,7 @@ export function DeviceManagement() {
                 <td className="px-3 py-3 text-xs text-gray-500 font-mono whitespace-nowrap">{d.id}</td>
                 <td className="px-3 py-3 text-sm font-medium text-gray-800 whitespace-nowrap">{d.name}</td>
                 <td className="px-3 py-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${typeColors[d.type]}`}>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${typeColors[d.type] || typeColors["传感器"]}`}>
                     {d.type}
                   </span>
                 </td>
@@ -347,11 +448,12 @@ export function DeviceManagement() {
                 </td>
                 <td className="px-3 py-3">
                   <div className="flex items-center gap-1">
-                    <button className="p-1.5 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="刷新">
+                    <button
+                      onClick={loadDevices}
+                      className="p-1.5 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                      title="刷新"
+                    >
                       <RefreshCw className="w-3.5 h-3.5" />
-                    </button>
-                    <button className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-colors" title="编辑">
-                      <Edit2 className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => requestUnbind(d.id)}
@@ -369,7 +471,7 @@ export function DeviceManagement() {
         {filtered.length === 0 && (
           <div className="text-center py-12 text-gray-400">
             <Cpu className="w-10 h-10 mx-auto mb-2 opacity-30" />
-            <p className="text-sm">暂无符合条件的设备</p>
+            <p className="text-sm">{isLoading ? "加载中..." : "暂无已绑定设备，请先扫码绑定设备"}</p>
           </div>
         )}
       </div>
