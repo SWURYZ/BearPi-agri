@@ -19,6 +19,7 @@ function figmaAssetResolver() {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const apiProxyTarget = env.VITE_API_PROXY_TARGET || 'http://localhost:8082'
+  const agriAgentProxyTarget = env.VITE_AGRI_AGENT_PROXY_TARGET || 'http://localhost:8085'
 
   return {
     plugins: [
@@ -36,14 +37,19 @@ export default defineConfig(({ mode }) => {
     },
     server: apiProxyTarget
       ? {
-          proxy: {
-            '/api': {
-              target: apiProxyTarget,
-              changeOrigin: true,
-              ws: true,
-            },
+        proxy: {
+          '/api/v1/agri-agent': {
+            target: agriAgentProxyTarget,
+            changeOrigin: true,
+            ws: true,
           },
-        }
+          '/api': {
+            target: apiProxyTarget,
+            changeOrigin: true,
+            ws: true,
+          },
+        },
+      }
       : undefined,
 
     // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
