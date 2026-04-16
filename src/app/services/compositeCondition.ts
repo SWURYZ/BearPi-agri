@@ -1,4 +1,4 @@
-const COMPOSITE_BASE = "http://localhost:8085/api/v1/composite-condition";
+const COMPOSITE_BASE = "http://localhost:8087/api/v1/composite-condition";
 
 interface ApiResponse<T> {
   code: number;
