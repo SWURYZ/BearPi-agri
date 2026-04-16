@@ -39,6 +39,7 @@ public class AgriAgentController {
                         switch (chunk.type()) {
                             case TOKEN -> emitter.send(SseEmitter.event().name("token").data(chunk.content()));
                             case THINKING -> emitter.send(SseEmitter.event().name("thinking").data(chunk.content()));
+                            case CONTEXT -> emitter.send(SseEmitter.event().name("context").data(chunk.content()));
                             case DONE -> {
                                 emitter.send(SseEmitter.event().name("done").data(chunk.content()));
                                 emitter.complete();
