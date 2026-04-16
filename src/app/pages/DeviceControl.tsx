@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Power,
   Clock,
@@ -14,6 +14,19 @@ import {
   ToggleLeft,
   ToggleRight,
 } from "lucide-react";
+import {
+  sendManualControl,
+  fetchDeviceStatus,
+  fetchScheduleRules,
+  createScheduleRule,
+  toggleScheduleRule,
+  deleteScheduleRule,
+  type ScheduleRuleResponse,
+  type DeviceStatusResponse,
+} from "../services/deviceControl";
+
+/* -------- 真实设备 ID（华为云 IoT 平台注册的设备） -------- */
+const REAL_DEVICE_ID = "69d75b1d7f2e6c302f654fea_20031104";
 
 type DeviceStatus = "on" | "off" | "loading" | "error";
 
@@ -25,35 +38,13 @@ interface Device {
   status: DeviceStatus;
   icon: React.ElementType;
   color: string;
+  commandType: string;
   feedback?: string;
 }
 
 const initialDevices: Device[] = [
-  { id: "DEV-001", name: "通风风机 #1", type: "风机", gh: "1号大棚", status: "on", icon: Fan, color: "blue" },
-  { id: "DEV-002", name: "通风风机 #2", type: "风机", gh: "1号大棚", status: "off", icon: Fan, color: "blue" },
-  { id: "DEV-003", name: "灌溉水泵", type: "水泵", gh: "1号大棚", status: "off", icon: Droplets, color: "cyan" },
-  { id: "DEV-004", name: "补光灯 A区", type: "补光灯", gh: "1号大棚", status: "on", icon: Sun, color: "yellow" },
-  { id: "DEV-005", name: "补光灯 B区", type: "补光灯", gh: "1号大棚", status: "off", icon: Sun, color: "yellow" },
-  { id: "DEV-006", name: "加热装置", type: "加热", gh: "1号大棚", status: "off", icon: Thermometer, color: "red" },
-  { id: "DEV-007", name: "遮阳帘", type: "遮阳", gh: "2号大棚", status: "on", icon: Sun, color: "orange" },
-  { id: "DEV-008", name: "喷雾系统", type: "喷雾", gh: "2号大棚", status: "off", icon: Droplets, color: "teal" },
-];
-
-interface TimerRule {
-  id: string;
-  device: string;
-  action: "开启" | "关闭";
-  time: string;
-  repeat: string;
-  status: "启用" | "禁用";
-}
-
-const initialTimers: TimerRule[] = [
-  { id: "T-001", device: "补光灯 A区", action: "开启", time: "06:00", repeat: "每天", status: "启用" },
-  { id: "T-002", device: "补光灯 A区", action: "关闭", time: "18:00", repeat: "每天", status: "启用" },
-  { id: "T-003", device: "灌溉水泵", action: "开启", time: "07:30", repeat: "周一三五", status: "启用" },
-  { id: "T-004", device: "灌溉水泵", action: "关闭", time: "08:00", repeat: "周一三五", status: "启用" },
-  { id: "T-005", device: "补光灯 B区", action: "开启", time: "08:00", repeat: "每天", status: "禁用" },
+  { id: REAL_DEVICE_ID, name: "补光灯", type: "补光灯", gh: "1号大棚", status: "off", icon: Sun, color: "yellow", commandType: "LIGHT_CONTROL" },
+  { id: REAL_DEVICE_ID, name: "电机/风机", type: "电机", gh: "1号大棚", status: "off", icon: Fan, color: "blue", commandType: "MOTOR_CONTROL" },
 ];
 
 const colorMap: Record<string, { bg: string; text: string; icon: string }> = {
@@ -68,50 +59,121 @@ const colorMap: Record<string, { bg: string; text: string; icon: string }> = {
 export function DeviceControl() {
   const [activeTab, setActiveTab] = useState<"manual" | "timer">("manual");
   const [devices, setDevices] = useState<Device[]>(initialDevices);
-  const [timers, setTimers] = useState<TimerRule[]>(initialTimers);
-  const [selectedGH, setSelectedGH] = useState("1号大棚");
+  const [timers, setTimers] = useState<ScheduleRuleResponse[]>([]);
   const [showAddTimer, setShowAddTimer] = useState(false);
-  const [newTimer, setNewTimer] = useState({ device: "补光灯 A区", action: "开启" as "开启" | "关闭", time: "09:00", repeat: "每天" });
+  const [newTimer, setNewTimer] = useState({ ruleName: "补光灯定时", turnOnTime: "06:00", turnOffTime: "18:00", repeat: "DAILY", commandType: "LIGHT_CONTROL" });
   const [timerMessage, setTimerMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  const filteredDevices = devices.filter((d) => d.gh === selectedGH);
+  /* -------- 初始化：从后端拉取设备状态 -------- */
+  useEffect(() => {
+    fetchDeviceStatus(REAL_DEVICE_ID)
+      .then((status: DeviceStatusResponse) => {
+        if (!status) return;
+        setDevices((prev) =>
+          prev.map((d) => {
+            if (d.commandType === "LIGHT_CONTROL" && status.ledStatus) {
+              return { ...d, status: status.ledStatus === "ON" ? "on" : "off" };
+            }
+            if (d.commandType === "MOTOR_CONTROL" && status.motorStatus) {
+              return { ...d, status: status.motorStatus === "ON" ? "on" : "off" };
+            }
+            return d;
+          })
+        );
+      })
+      .catch(() => { /* 后端未启动时 fallback */ });
+  }, []);
 
-  function handleToggle(id: string) {
+  /* -------- 初始化：从后端拉取定时规则 -------- */
+  const loadRules = useCallback(async () => {
+    try {
+      const rules = await fetchScheduleRules();
+      setTimers(rules);
+    } catch {
+      /* 后端未启动时 fallback */
+    }
+  }, []);
+
+  useEffect(() => { loadRules(); }, [loadRules]);
+
+  /* -------- 手动控制：调用 device-control-service -------- */
+  async function handleToggle(deviceIndex: number) {
+    const device = devices[deviceIndex];
+    const prevStatus = device.status;
+    const targetAction = prevStatus === "on" ? "OFF" : "ON";
+
     setDevices((prev) =>
-      prev.map((d) => (d.id === id ? { ...d, status: "loading" as DeviceStatus } : d))
+      prev.map((d, i) => (i === deviceIndex ? { ...d, status: "loading" as DeviceStatus, feedback: undefined } : d))
     );
-    setTimeout(() => {
+
+    try {
+      const resp = await sendManualControl({
+        deviceId: device.id,
+        commandType: device.commandType,
+        action: targetAction,
+      });
+
+      const newStatus: DeviceStatus = resp.status === "SENT" || resp.status === "DELIVERED"
+        ? (targetAction === "ON" ? "on" : "off")
+        : "error";
+
       setDevices((prev) =>
-        prev.map((d) => {
-          if (d.id !== id) return d;
-          const newStatus: DeviceStatus = d.status === "loading"
-            ? (prev.find((x) => x.id === id)?.status === "on" ? "off" : "on")
-            : d.status === "on" ? "off" : "on";
-          return { ...d, status: newStatus, feedback: `指令已执行，设备${newStatus === "on" ? "开启" : "关闭"}` };
-        })
+        prev.map((d, i) =>
+          i === deviceIndex
+            ? { ...d, status: newStatus, feedback: resp.message }
+            : d
+        )
       );
-    }, 1200);
+    } catch (err) {
+      setDevices((prev) =>
+        prev.map((d, i) =>
+          i === deviceIndex
+            ? { ...d, status: prevStatus, feedback: "网络错误，请检查后端服务是否启动" }
+            : d
+        )
+      );
+    }
   }
 
-  function addTimer() {
-    const exists = timers.some(
-      (rule) => rule.device === newTimer.device && rule.time === newTimer.time,
-    );
-    if (exists) {
-      setTimerMessage({ type: "error", text: "新增失败：同一设备在同一时间已存在规则" });
+  /* -------- 新增定时规则：调用 light-schedule-service -------- */
+  async function addTimer() {
+    if (newTimer.turnOnTime >= newTimer.turnOffTime) {
+      setTimerMessage({ type: "error", text: "新增失败：开灯时间不能晚于或等于关灯时间" });
       window.setTimeout(() => setTimerMessage(null), 2600);
       return;
     }
+    try {
+      await createScheduleRule({
+        deviceId: REAL_DEVICE_ID,
+        ruleName: newTimer.ruleName,
+        turnOnTime: newTimer.turnOnTime,
+        turnOffTime: newTimer.turnOffTime,
+        repeatMode: newTimer.repeat,
+        commandType: newTimer.commandType,
+        enabled: true,
+      });
+      setShowAddTimer(false);
+      setTimerMessage({ type: "success", text: "新增成功" });
+      loadRules();
+      window.setTimeout(() => setTimerMessage(null), 2200);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "新增失败，请检查后端服务";
+      setTimerMessage({ type: "error", text: msg });
+      window.setTimeout(() => setTimerMessage(null), 3000);
+    }
+  }
 
-    const newRule: TimerRule = {
-      id: `T-${Date.now()}`,
-      ...newTimer,
-      status: "启用",
-    };
-    setTimers((prev) => [...prev, newRule]);
-    setShowAddTimer(false);
-    setTimerMessage({ type: "success", text: "新增成功" });
-    window.setTimeout(() => setTimerMessage(null), 2200);
+  /* -------- 删除定时规则 -------- */
+  async function handleDeleteRule(id: number) {
+    try {
+      await deleteScheduleRule(id);
+      await loadRules();
+      setTimerMessage({ type: "success", text: "删除成功" });
+      window.setTimeout(() => setTimerMessage(null), 2200);
+    } catch {
+      setTimerMessage({ type: "error", text: "删除失败，请检查后端服务" });
+      window.setTimeout(() => setTimerMessage(null), 2600);
+    }
   }
 
   return (
@@ -146,102 +208,87 @@ export function DeviceControl() {
 
       {activeTab === "manual" && (
         <>
-          {/* Greenhouse Selector */}
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-500">大棚选择：</span>
-            {["1号大棚", "2号大棚", "3号大棚"].map((gh) => (
-              <button
-                key={gh}
-                onClick={() => setSelectedGH(gh)}
-                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                  selectedGH === gh
-                    ? "bg-green-600 text-white shadow-sm"
-                    : "bg-white border border-gray-200 text-gray-600 hover:border-green-400"
-                }`}
-              >
-                {gh}
-              </button>
-            ))}
-          </div>
-
           {/* MQTT Flow Info */}
           <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 flex items-center gap-3">
             <div className="text-blue-500">📡</div>
-            
-          </div>
-
-          {/* Device Cards */}
-          <div className="grid grid-cols-4 gap-4">
-            {filteredDevices.map((device) => {
-              const colors = colorMap[device.color] || colorMap.blue;
-              return (
-                <div key={device.id} className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className={`p-2 rounded-xl ${colors.bg}`}>
-                      <device.icon className={`w-5 h-5 ${colors.icon}`} />
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      {device.status === "loading" ? (
-                        <Loader className="w-4 h-4 text-gray-400 animate-spin" />
-                      ) : device.status === "on" ? (
-                        <CheckCircle className="w-4 h-4 text-green-500" />
-                      ) : device.status === "error" ? (
-                        <AlertCircle className="w-4 h-4 text-red-500" />
-                      ) : (
-                        <div className="w-4 h-4 rounded-full bg-gray-200" />
-                      )}
-                    </div>
-                  </div>
-                  <h3 className="text-sm font-semibold text-gray-800 mb-0.5">{device.name}</h3>
-                  <div className="text-xs text-gray-400 mb-3">{device.id} · {device.type}</div>
-
-                  <div className="flex items-center justify-between">
-                    <span
-                      className={`text-xs font-medium ${
-                        device.status === "on" ? "text-green-600" :
-                        device.status === "loading" ? "text-gray-400" :
-                        "text-gray-400"
-                      }`}
-                    >
-                      {device.status === "on" ? "运行中" : device.status === "loading" ? "执行中..." : "已停止"}
-                    </span>
-                    <button
-                      onClick={() => handleToggle(device.id)}
-                      disabled={device.status === "loading"}
-                      className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                        device.status === "on"
-                          ? "bg-red-50 text-red-600 hover:bg-red-100 border border-red-200"
-                          : device.status === "loading"
-                          ? "bg-gray-50 text-gray-400 cursor-not-allowed border border-gray-100"
-                          : "bg-green-50 text-green-600 hover:bg-green-100 border border-green-200"
-                      }`}
-                    >
-                      {device.status === "on" ? (
-                        <><ToggleRight className="w-3.5 h-3.5" />关闭</>
-                      ) : device.status === "loading" ? (
-                        <><Loader className="w-3.5 h-3.5 animate-spin" />执行中</>
-                      ) : (
-                        <><ToggleLeft className="w-3.5 h-3.5" />开启</>
-                      )}
-                    </button>
-                  </div>
-
-                  {device.feedback && (
-                    <div className="mt-2 text-xs text-green-600 bg-green-50 rounded-lg px-2 py-1">
-                      ✓ {device.feedback}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {filteredDevices.length === 0 && (
-            <div className="text-center py-16 text-gray-400 bg-white rounded-xl border border-gray-100">
-              <Power className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">该大棚暂无设备</p>
+            <div className="text-xs text-blue-700">
+              <span className="font-medium">控制流程：</span>
+              点击按钮 → 后端封装 MQTT 指令 → 华为云 IoT 平台下发 → 硬件执行 → 反馈状态
             </div>
-          )}
+          </div>
+
+          {/* Device Group */}
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-2 h-2 rounded-full bg-green-500" />
+              <h3 className="text-sm font-semibold text-gray-800">1号大棚 — BearPi 设备</h3>
+              <span className="text-xs text-gray-400 font-mono truncate">{REAL_DEVICE_ID}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              {devices.map((device, idx) => {
+                const colors = colorMap[device.color] || colorMap.blue;
+                return (
+                  <div key={`${device.id}-${device.commandType}`} className="bg-gray-50 rounded-xl border border-gray-100 p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className={`p-2 rounded-xl ${colors.bg}`}>
+                        <device.icon className={`w-5 h-5 ${colors.icon}`} />
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        {device.status === "loading" ? (
+                          <Loader className="w-4 h-4 text-gray-400 animate-spin" />
+                        ) : device.status === "on" ? (
+                          <CheckCircle className="w-4 h-4 text-green-500" />
+                        ) : device.status === "error" ? (
+                          <AlertCircle className="w-4 h-4 text-red-500" />
+                        ) : (
+                          <div className="w-4 h-4 rounded-full bg-gray-200" />
+                        )}
+                      </div>
+                    </div>
+                    <h3 className="text-sm font-semibold text-gray-800 mb-0.5">{device.name}</h3>
+                    <div className="text-xs text-gray-400 mb-3 truncate">{device.type}</div>
+
+                    <div className="flex items-center justify-between">
+                      <span
+                        className={`text-xs font-medium ${
+                          device.status === "on" ? "text-green-600" :
+                          device.status === "loading" ? "text-gray-400" :
+                          "text-gray-400"
+                        }`}
+                      >
+                        {device.status === "on" ? "运行中" : device.status === "loading" ? "执行中..." : "已停止"}
+                      </span>
+                      <button
+                        onClick={() => handleToggle(idx)}
+                        disabled={device.status === "loading"}
+                        className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                          device.status === "on"
+                            ? "bg-red-50 text-red-600 hover:bg-red-100 border border-red-200"
+                            : device.status === "loading"
+                            ? "bg-gray-50 text-gray-400 cursor-not-allowed border border-gray-100"
+                            : "bg-green-50 text-green-600 hover:bg-green-100 border border-green-200"
+                        }`}
+                      >
+                        {device.status === "on" ? (
+                          <><ToggleRight className="w-3.5 h-3.5" />关闭</>
+                        ) : device.status === "loading" ? (
+                          <><Loader className="w-3.5 h-3.5 animate-spin" />执行中</>
+                        ) : (
+                          <><ToggleLeft className="w-3.5 h-3.5" />开启</>
+                        )}
+                      </button>
+                    </div>
+
+                    {device.feedback && (
+                      <div className="mt-2 text-xs text-green-600 bg-green-50 rounded-lg px-2 py-1 truncate">
+                        ✓ {device.feedback}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </>
       )}
 
@@ -263,12 +310,12 @@ export function DeviceControl() {
             <div className="text-green-500">⏰</div>
             <div className="text-xs text-green-700">
               <span className="font-medium">定时控制：</span>
-              农户配置定时规则 → 后端调度中心扫描执行时间点 → 自动批量下发开启/关闭指令 → 系统记录执行状态
+              农户配置定时规则 → 后端调度中心每分钟扫描 → 到达时间点自动下发开启/关闭指令 → 系统记录执行状态
             </div>
           </div>
 
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-700">补光灯定时规则列表</h3>
+            <h3 className="text-sm font-semibold text-gray-700">定时规则列表</h3>
             <button
               onClick={() => setShowAddTimer(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors"
@@ -282,48 +329,60 @@ export function DeviceControl() {
           {showAddTimer && (
             <div className="bg-white rounded-xl border-2 border-green-300 p-5 shadow-sm">
               <h4 className="text-sm font-semibold text-gray-800 mb-4">新增定时规则</h4>
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-5 gap-3">
                 <div>
-                  <label className="text-xs text-gray-500 mb-1.5 block">设备</label>
+                  <label className="text-xs text-gray-500 mb-1.5 block">控制类型</label>
                   <select
-                    value={newTimer.device}
-                    onChange={(e) => setNewTimer((p) => ({ ...p, device: e.target.value }))}
+                    value={newTimer.commandType}
+                    onChange={(e) => setNewTimer((p) => ({ ...p, commandType: e.target.value, ruleName: e.target.value === "LIGHT_CONTROL" ? "补光灯定时" : "灌溉定时" }))}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-400"
                   >
-                    {["补光灯 A区", "补光灯 B区", "灌溉水泵", "通风风机 #1"].map((d) => (
-                      <option key={d}>{d}</option>
-                    ))}
+                    <option value="LIGHT_CONTROL">补光灯定时</option>
+                    <option value="MOTOR_CONTROL">灌溉定时</option>
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs text-gray-500 mb-1.5 block">动作</label>
-                  <select
-                    value={newTimer.action}
-                    onChange={(e) => setNewTimer((p) => ({ ...p, action: e.target.value as "开启" | "关闭" }))}
+                  <label className="text-xs text-gray-500 mb-1.5 block">规则名称</label>
+                  <input
+                    type="text"
+                    value={newTimer.ruleName}
+                    onChange={(e) => setNewTimer((p) => ({ ...p, ruleName: e.target.value }))}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-400"
-                  >
-                    <option>开启</option>
-                    <option>关闭</option>
-                  </select>
+                    placeholder="如: 补光灯早间定时"
+                  />
                 </div>
                 <div>
-                  <label className="text-xs text-gray-500 mb-1.5 block">执行时间</label>
+                  <label className="text-xs text-gray-500 mb-1.5 block">开启时间</label>
                   <input
                     type="time"
-                    value={newTimer.time}
-                    onChange={(e) => setNewTimer((p) => ({ ...p, time: e.target.value }))}
+                    value={newTimer.turnOnTime}
+                    onChange={(e) => setNewTimer((p) => ({ ...p, turnOnTime: e.target.value }))}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-400"
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-gray-500 mb-1.5 block">重复</label>
+                  <label className="text-xs text-gray-500 mb-1.5 block">关闭时间</label>
+                  <input
+                    type="time"
+                    value={newTimer.turnOffTime}
+                    onChange={(e) => setNewTimer((p) => ({ ...p, turnOffTime: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-400"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1.5 block">重复模式</label>
                   <select
                     value={newTimer.repeat}
                     onChange={(e) => setNewTimer((p) => ({ ...p, repeat: e.target.value }))}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-green-400"
                   >
-                    {["每天", "工作日", "周末", "周一三五", "仅一次"].map((r) => (
-                      <option key={r}>{r}</option>
+                    {[
+                      { value: "DAILY", label: "每天" },
+                      { value: "WEEKDAY", label: "工作日" },
+                      { value: "WEEKEND", label: "周末" },
+                      { value: "ONCE", label: "仅一次" },
+                    ].map((r) => (
+                      <option key={r.value} value={r.value}>{r.label}</option>
                     ))}
                   </select>
                 </div>
@@ -340,43 +399,44 @@ export function DeviceControl() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
-                  {["规则ID", "设备", "动作", "执行时间", "重复周期", "状态", "执行记录", "操作"].map((h) => (
+                  {["ID", "控制类型", "规则名称", "开启时间", "关闭时间", "重复模式", "状态", "操作"].map((h) => (
                     <th key={h} className="text-left text-xs font-medium text-gray-500 px-4 py-3">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {timers.map((rule) => (
+                {timers.map((rule, index) => (
                   <tr key={rule.id} className="hover:bg-gray-50/50 transition-colors">
-                    <td className="px-4 py-3 text-xs text-gray-400 font-mono">{rule.id}</td>
-                    <td className="px-4 py-3 text-sm font-medium text-gray-700">{rule.device}</td>
+                    <td className="px-4 py-3 text-xs text-gray-400 font-mono">{index + 1}</td>
                     <td className="px-4 py-3">
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        rule.action === "开启" ? "bg-green-100 text-green-600" : "bg-gray-100 text-gray-500"
+                        rule.commandType === "LIGHT_CONTROL" ? "bg-yellow-100 text-yellow-700" : "bg-blue-100 text-blue-700"
                       }`}>
-                        {rule.action}
+                        {rule.commandType === "LIGHT_CONTROL" ? "补光灯" : "灌溉"}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-700 font-mono">{rule.time}</td>
-                    <td className="px-4 py-3 text-sm text-gray-500">{rule.repeat}</td>
+                    <td className="px-4 py-3 text-sm font-medium text-gray-700">{rule.ruleName}</td>
+                    <td className="px-4 py-3 text-sm text-gray-700 font-mono">{rule.turnOnTime}</td>
+                    <td className="px-4 py-3 text-sm text-gray-700 font-mono">{rule.turnOffTime}</td>
+                    <td className="px-4 py-3 text-sm text-gray-500">
+                      {{ DAILY: "每天", WEEKDAY: "工作日", WEEKEND: "周末", ONCE: "仅一次" }[rule.repeatMode] || rule.repeatMode}
+                    </td>
                     <td className="px-4 py-3">
                       <button
-                        onClick={() => setTimers((prev) =>
-                          prev.map((r) => r.id === rule.id ? { ...r, status: r.status === "启用" ? "禁用" : "启用" } : r)
-                        )}
+                        onClick={async () => {
+                          await toggleScheduleRule(rule.id, !rule.enabled);
+                          loadRules();
+                        }}
                         className={`text-xs px-2 py-0.5 rounded-full font-medium cursor-pointer ${
-                          rule.status === "启用" ? "bg-green-100 text-green-600" : "bg-gray-100 text-gray-400"
+                          rule.enabled ? "bg-green-100 text-green-600" : "bg-gray-100 text-gray-400"
                         }`}
                       >
-                        {rule.status}
+                        {rule.enabled ? "启用" : "禁用"}
                       </button>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-gray-400">
-                      {rule.status === "启用" ? "上次执行: 今天 " + rule.time : "未执行"}
                     </td>
                     <td className="px-4 py-3">
                       <button
-                        onClick={() => setTimers((prev) => prev.filter((r) => r.id !== rule.id))}
+                        onClick={() => handleDeleteRule(rule.id)}
                         className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -386,6 +446,9 @@ export function DeviceControl() {
                 ))}
               </tbody>
             </table>
+            {timers.length === 0 && (
+              <div className="text-center py-10 text-gray-400 text-sm">暂无定时规则，点击「新增规则」添加</div>
+            )}
           </div>
         </>
       )}

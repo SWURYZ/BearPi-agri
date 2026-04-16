@@ -1,0 +1,36 @@
+server:
+  port: 8083
+
+spring:
+  datasource:
+    url: jdbc:h2:file:./data/device-control;MODE=MySQL;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  application:
+    name: device-control-service
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    show-sql: false
+  flyway:
+    enabled: ${APP_FLYWAY_ENABLED:false}
+    locations: classpath:db/migration
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui/index.html
+
+huaweicloud:
+  iotda:
+    command-enabled: ${HUAWEICLOUD_IOTDA_COMMAND_ENABLED:true}
+    ak: ${HUAWEICLOUD_IOTDA_AK:HPUASOFYRYK6SXUL0I7X}
+    sk: ${HUAWEICLOUD_IOTDA_SK:zcpB6oZt2jhINGSwmwHG013Ub7NxrxMw4k0Wfn7g}
+    project-id: ${HUAWEICLOUD_IOTDA_PROJECT_ID:ed1e23a0e3734fc082cbcf11e6855e91}
+    region: ${HUAWEICLOUD_IOTDA_REGION:cn-north-4}
+    endpoint: ${HUAWEICLOUD_IOTDA_ENDPOINT:https://6c48cc4953.st1.iotda-app.cn-north-4.myhuaweicloud.com}
