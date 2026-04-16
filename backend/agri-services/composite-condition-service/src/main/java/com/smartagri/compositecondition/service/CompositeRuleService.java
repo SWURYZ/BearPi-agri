@@ -145,7 +145,7 @@ public class CompositeRuleService {
         rule.setLogicOperator(request.logicOperator() != null ? request.logicOperator() : "AND");
         rule.setEnabled(request.enabled());
         rule.setTargetDeviceId(request.targetDeviceId());
-        rule.setCommandType(request.commandType());
+        rule.setCommandType(normalizeCommandType(request.commandType(), request.name(), request.description()));
         rule.setCommandAction(request.commandAction());
 
         if (request.conditions() != null) {
@@ -180,5 +180,35 @@ public class CompositeRuleService {
                 conditionResponses,
                 rule.getCreatedAt(),
                 rule.getUpdatedAt());
+    }
+
+    private String normalizeCommandType(String commandType, String ruleName, String description) {
+        String raw = commandType == null ? "" : commandType.trim();
+        String normalized = raw.toUpperCase();
+        if ("LIGHT_CONTROL".equals(normalized) || "MOTOR_CONTROL".equals(normalized)) {
+            return normalized;
+        }
+
+        if ("补光灯".equals(raw) || "LIGHT".equals(normalized)) {
+            return "LIGHT_CONTROL";
+        }
+        if ("灌溉水泵".equals(raw)
+                || "水泵".equals(raw)
+                || "电机".equals(raw)
+                || "马达".equals(raw)
+                || "MOTOR".equals(normalized)
+                || "PUMP".equals(normalized)) {
+            return "MOTOR_CONTROL";
+        }
+
+        String text = ((ruleName == null ? "" : ruleName) + " " + (description == null ? "" : description)).toLowerCase();
+        if (text.contains("浇水") || text.contains("灌溉") || text.contains("水泵") || text.contains("马达") || text.contains("电机")) {
+            return "MOTOR_CONTROL";
+        }
+        if (text.contains("补光") || text.contains("灯")) {
+            return "LIGHT_CONTROL";
+        }
+
+        return raw;
     }
 }
