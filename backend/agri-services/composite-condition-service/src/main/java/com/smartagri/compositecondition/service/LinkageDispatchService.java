@@ -81,7 +81,8 @@ public class LinkageDispatchService {
             return;
         }
 
-        Map<String, Object> payload = buildPayload(commandType, commandAction);
+        String effectiveCommandType = normalizeCommandType(commandType, ruleName);
+        Map<String, Object> payload = buildPayload(effectiveCommandType, commandAction);
         DeviceMessageRequest body = new DeviceMessageRequest();
         body.setMessage(payload);
 
@@ -129,6 +130,46 @@ public class LinkageDispatchService {
             }
         }
         return payload;
+    }
+
+    private String normalizeCommandType(String commandType, String ruleName) {
+        String raw = commandType == null ? "" : commandType.trim();
+        String normalized = raw.toUpperCase();
+        if ("LIGHT_CONTROL".equals(normalized) || "MOTOR_CONTROL".equals(normalized)) {
+            if ("LIGHT_CONTROL".equals(normalized) && isIrrigationRule(ruleName)) {
+                return "MOTOR_CONTROL";
+            }
+            return normalized;
+        }
+
+        if ("补光灯".equals(raw) || "LIGHT".equals(normalized)) {
+            return "LIGHT_CONTROL";
+        }
+        if ("灌溉水泵".equals(raw)
+                || "水泵".equals(raw)
+                || "电机".equals(raw)
+                || "马达".equals(raw)
+                || "MOTOR".equals(normalized)
+                || "PUMP".equals(normalized)) {
+            return "MOTOR_CONTROL";
+        }
+
+        if (isIrrigationRule(ruleName)) {
+            return "MOTOR_CONTROL";
+        }
+        return raw;
+    }
+
+    private boolean isIrrigationRule(String ruleName) {
+        if (!StringUtils.hasText(ruleName)) {
+            return false;
+        }
+        String text = ruleName.toLowerCase();
+        return text.contains("浇水")
+                || text.contains("灌溉")
+                || text.contains("水泵")
+                || text.contains("马达")
+                || text.contains("电机");
     }
 
     private Region resolveRegion() {
