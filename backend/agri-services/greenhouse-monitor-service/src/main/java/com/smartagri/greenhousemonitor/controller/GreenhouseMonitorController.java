@@ -3,6 +3,7 @@ package com.smartagri.greenhousemonitor.controller;
 import com.smartagri.common.model.ApiResponse;
 import com.smartagri.greenhousemonitor.dto.DeviceBindRequest;
 import com.smartagri.greenhousemonitor.dto.DeviceMappingResponse;
+import com.smartagri.greenhousemonitor.dto.DeviceScanBindRequest;
 import com.smartagri.greenhousemonitor.dto.GreenhouseOverviewResponse;
 import com.smartagri.greenhousemonitor.dto.GreenhouseRequest;
 import com.smartagri.greenhousemonitor.dto.GreenhouseResponse;
@@ -138,6 +139,39 @@ public class GreenhouseMonitorController {
     @GetMapping("/greenhouses/{code}/devices")
     public ApiResponse<List<DeviceMappingResponse>> listDevices(@PathVariable("code") String code) {
         return ApiResponse.success(monitorService.listDevices(code));
+    }
+
+    /**
+     * Query currently connected devices in the specified greenhouse.
+     */
+    @GetMapping("/greenhouses/{code}/devices/connected")
+    public ApiResponse<List<DeviceMappingResponse>> listConnectedDevices(@PathVariable("code") String code) {
+        return ApiResponse.success(monitorService.listConnectedDevices(code));
+    }
+
+    /**
+     * Query currently connected devices across all greenhouses.
+     */
+    @GetMapping("/devices/connected")
+    public ApiResponse<List<DeviceMappingResponse>> listAllConnectedDevices() {
+        return ApiResponse.success(monitorService.listAllConnectedDevices());
+    }
+
+    /**
+     * Query currently connected devices in default greenhouse #1.
+     */
+    @GetMapping("/greenhouses/default/devices/connected")
+    public ApiResponse<List<DeviceMappingResponse>> listConnectedDevicesInDefaultGreenhouse() {
+        return ApiResponse.success(monitorService.listConnectedDevicesInDefaultGreenhouse());
+    }
+
+    /**
+     * Scan QR and bind device into target greenhouse.
+     */
+    @PostMapping("/devices/scan-bind")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ApiResponse<DeviceMappingResponse> scanBindDevice(@Valid @RequestBody DeviceScanBindRequest request) {
+        return ApiResponse.success(monitorService.scanBindDevice(request));
     }
 
     /**

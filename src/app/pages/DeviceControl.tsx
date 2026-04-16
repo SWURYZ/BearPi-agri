@@ -17,16 +17,16 @@ import {
 import {
   sendManualControl,
   fetchDeviceStatus,
+  fetchRealtimeDeviceStatus,
   fetchScheduleRules,
   createScheduleRule,
   toggleScheduleRule,
   deleteScheduleRule,
   type ScheduleRuleResponse,
   type DeviceStatusResponse,
+  type RealtimeDeviceStatus,
 } from "../services/deviceControl";
-
-/* -------- 真实设备 ID（华为云 IoT 平台注册的设备） -------- */
-const REAL_DEVICE_ID = "69d75b1d7f2e6c302f654fea_20031104";
+import { fetchAllConnectedDevices, type DeviceMappingResponse } from "../services/greenhouseMonitor";
 
 type DeviceStatus = "on" | "off" | "loading" | "error";
 
@@ -42,10 +42,13 @@ interface Device {
   feedback?: string;
 }
 
-const initialDevices: Device[] = [
-  { id: REAL_DEVICE_ID, name: "补光灯", type: "补光灯", gh: "1号大棚", status: "off", icon: Sun, color: "yellow", commandType: "LIGHT_CONTROL" },
-  { id: REAL_DEVICE_ID, name: "电机/风机", type: "电机", gh: "1号大棚", status: "off", icon: Fan, color: "blue", commandType: "MOTOR_CONTROL" },
-];
+function buildControlDevices(deviceId: string, greenhouse: string): Device[] {
+  if (!deviceId) return [];
+  return [
+    { id: deviceId, name: "补光灯", type: "补光灯", gh: greenhouse, status: "off", icon: Sun, color: "yellow", commandType: "LIGHT_CONTROL" },
+    { id: deviceId, name: "电机/风机", type: "电机", gh: greenhouse, status: "off", icon: Fan, color: "blue", commandType: "MOTOR_CONTROL" },
+  ];
+}
 
 const colorMap: Record<string, { bg: string; text: string; icon: string }> = {
   blue: { bg: "bg-blue-50", text: "text-blue-600", icon: "text-blue-500" },
@@ -58,31 +61,79 @@ const colorMap: Record<string, { bg: string; text: string; icon: string }> = {
 
 export function DeviceControl() {
   const [activeTab, setActiveTab] = useState<"manual" | "timer">("manual");
-  const [devices, setDevices] = useState<Device[]>(initialDevices);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [boundDevices, setBoundDevices] = useState<DeviceMappingResponse[]>([]);
+  const [targetDeviceId, setTargetDeviceId] = useState("");
+  const [targetGreenhouse, setTargetGreenhouse] = useState("未绑定大棚");
   const [timers, setTimers] = useState<ScheduleRuleResponse[]>([]);
   const [showAddTimer, setShowAddTimer] = useState(false);
   const [newTimer, setNewTimer] = useState({ ruleName: "补光灯定时", turnOnTime: "06:00", turnOffTime: "18:00", repeat: "DAILY", commandType: "LIGHT_CONTROL" });
   const [timerMessage, setTimerMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  const refreshBoundDevices = useCallback(async () => {
+    try {
+      const rows = await fetchAllConnectedDevices();
+      setBoundDevices(rows);
+      if (rows.length === 0) {
+        setTargetDeviceId("");
+        setTargetGreenhouse("未绑定大棚");
+        setDevices([]);
+        return;
+      }
+      const preferred = rows.find((r) => r.deviceId === targetDeviceId) ?? rows[0];
+      setTargetDeviceId(preferred.deviceId);
+      setTargetGreenhouse(preferred.greenhouseCode || "未绑定大棚");
+      setDevices(buildControlDevices(preferred.deviceId, preferred.greenhouseCode || "未绑定大棚"));
+    } catch {
+      setTargetDeviceId("");
+      setTargetGreenhouse("未绑定大棚");
+      setDevices([]);
+    }
+  }, [targetDeviceId]);
+
+  useEffect(() => {
+    void refreshBoundDevices();
+  }, [refreshBoundDevices]);
+
   /* -------- 初始化：从后端拉取设备状态 -------- */
   useEffect(() => {
-    fetchDeviceStatus(REAL_DEVICE_ID)
-      .then((status: DeviceStatusResponse) => {
+    if (!targetDeviceId) return;
+    fetchRealtimeDeviceStatus(targetDeviceId)
+      .then((status: RealtimeDeviceStatus) => {
         if (!status) return;
         setDevices((prev) =>
           prev.map((d) => {
-            if (d.commandType === "LIGHT_CONTROL" && status.ledStatus) {
-              return { ...d, status: status.ledStatus === "ON" ? "on" : "off" };
+            const ledStatus = status.led;
+            const motorStatus = status.motor;
+            if (d.commandType === "LIGHT_CONTROL" && ledStatus) {
+              return { ...d, status: ledStatus === "ON" ? "on" : "off" };
             }
-            if (d.commandType === "MOTOR_CONTROL" && status.motorStatus) {
-              return { ...d, status: status.motorStatus === "ON" ? "on" : "off" };
+            if (d.commandType === "MOTOR_CONTROL" && motorStatus) {
+              return { ...d, status: motorStatus === "ON" ? "on" : "off" };
             }
             return d;
           })
         );
       })
-      .catch(() => { /* 后端未启动时 fallback */ });
-  }, []);
+      .catch(() => {
+        fetchDeviceStatus(targetDeviceId)
+          .then((status: DeviceStatusResponse) => {
+            if (!status) return;
+            setDevices((prev) =>
+              prev.map((d) => {
+                if (d.commandType === "LIGHT_CONTROL" && status.ledStatus) {
+                  return { ...d, status: status.ledStatus === "ON" ? "on" : "off" };
+                }
+                if (d.commandType === "MOTOR_CONTROL" && status.motorStatus) {
+                  return { ...d, status: status.motorStatus === "ON" ? "on" : "off" };
+                }
+                return d;
+              })
+            );
+          })
+          .catch(() => { /* 后端未启动时 fallback */ });
+      });
+  }, [targetDeviceId]);
 
   /* -------- 初始化：从后端拉取定时规则 -------- */
   const loadRules = useCallback(async () => {
@@ -107,6 +158,9 @@ export function DeviceControl() {
     );
 
     try {
+      if (!device.id) {
+        throw new Error("未选择控制设备");
+      }
       const resp = await sendManualControl({
         deviceId: device.id,
         commandType: device.commandType,
@@ -117,13 +171,38 @@ export function DeviceControl() {
         ? (targetAction === "ON" ? "on" : "off")
         : "error";
 
+      const tip = resp.status === "SENT" || resp.status === "DELIVERED"
+        ? "指令已下发"
+        : resp.message;
+
       setDevices((prev) =>
         prev.map((d, i) =>
           i === deviceIndex
-            ? { ...d, status: newStatus, feedback: resp.message }
+            ? { ...d, status: newStatus, feedback: tip }
             : d
         )
       );
+
+      // Background sync only, do not block button interaction.
+      window.setTimeout(async () => {
+        try {
+          const realtime = await fetchRealtimeDeviceStatus(device.id);
+          setDevices((prev) =>
+            prev.map((d, i) => {
+              if (i !== deviceIndex) return d;
+              if (d.commandType === "LIGHT_CONTROL" && realtime.led) {
+                return { ...d, status: realtime.led === "ON" ? "on" : "off" };
+              }
+              if (d.commandType === "MOTOR_CONTROL" && realtime.motor) {
+                return { ...d, status: realtime.motor === "ON" ? "on" : "off" };
+              }
+              return d;
+            })
+          );
+        } catch {
+          // Ignore background sync failure.
+        }
+      }, 1200);
     } catch (err) {
       setDevices((prev) =>
         prev.map((d, i) =>
@@ -137,6 +216,11 @@ export function DeviceControl() {
 
   /* -------- 新增定时规则：调用 light-schedule-service -------- */
   async function addTimer() {
+    if (!targetDeviceId) {
+      setTimerMessage({ type: "error", text: "请先在设备管理中绑定设备" });
+      window.setTimeout(() => setTimerMessage(null), 2600);
+      return;
+    }
     if (newTimer.turnOnTime >= newTimer.turnOffTime) {
       setTimerMessage({ type: "error", text: "新增失败：开灯时间不能晚于或等于关灯时间" });
       window.setTimeout(() => setTimerMessage(null), 2600);
@@ -144,7 +228,7 @@ export function DeviceControl() {
     }
     try {
       await createScheduleRule({
-        deviceId: REAL_DEVICE_ID,
+        deviceId: targetDeviceId,
         ruleName: newTimer.ruleName,
         turnOnTime: newTimer.turnOnTime,
         turnOffTime: newTimer.turnOffTime,
@@ -219,75 +303,103 @@ export function DeviceControl() {
 
           {/* Device Group */}
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-2 h-2 rounded-full bg-green-500" />
-              <h3 className="text-sm font-semibold text-gray-800">1号大棚 — BearPi 设备</h3>
-              <span className="text-xs text-gray-400 font-mono truncate">{REAL_DEVICE_ID}</span>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-green-500" />
+                <h3 className="text-sm font-semibold text-gray-800">{targetGreenhouse} — BearPi 设备</h3>
+                <span className="text-xs text-gray-400 font-mono truncate">{targetDeviceId || "未选择设备"}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500">控制目标：</span>
+                <select
+                  value={targetDeviceId}
+                  onChange={(e) => {
+                    const selected = boundDevices.find((d) => d.deviceId === e.target.value);
+                    setTargetDeviceId(e.target.value);
+                    setTargetGreenhouse(selected?.greenhouseCode || "未绑定大棚");
+                    setDevices(buildControlDevices(e.target.value, selected?.greenhouseCode || "未绑定大棚"));
+                  }}
+                  className="border border-gray-200 rounded-lg px-2 py-1 text-xs outline-none focus:border-green-400"
+                >
+                  {boundDevices.length === 0 && <option value="">暂无已绑定设备</option>}
+                  {boundDevices.map((d) => (
+                    <option key={d.deviceId} value={d.deviceId}>
+                      {d.deviceId} ({d.greenhouseCode || "未分配"})
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              {devices.map((device, idx) => {
-                const colors = colorMap[device.color] || colorMap.blue;
-                return (
-                  <div key={`${device.id}-${device.commandType}`} className="bg-gray-50 rounded-xl border border-gray-100 p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className={`p-2 rounded-xl ${colors.bg}`}>
-                        <device.icon className={`w-5 h-5 ${colors.icon}`} />
+            {devices.length === 0 ? (
+              <div className="text-sm text-gray-500 bg-gray-50 border border-gray-100 rounded-lg p-4">
+                未发现可控设备，请先到设备管理页扫码绑定设备。
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                {devices.map((device, idx) => {
+                  const colors = colorMap[device.color] || colorMap.blue;
+                  return (
+                    <div key={`${device.id}-${device.commandType}`} className="bg-gray-50 rounded-xl border border-gray-100 p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className={`p-2 rounded-xl ${colors.bg}`}>
+                          <device.icon className={`w-5 h-5 ${colors.icon}`} />
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          {device.status === "loading" ? (
+                            <Loader className="w-4 h-4 text-gray-400 animate-spin" />
+                          ) : device.status === "on" ? (
+                            <CheckCircle className="w-4 h-4 text-green-500" />
+                          ) : device.status === "error" ? (
+                            <AlertCircle className="w-4 h-4 text-red-500" />
+                          ) : (
+                            <div className="w-4 h-4 rounded-full bg-gray-200" />
+                          )}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        {device.status === "loading" ? (
-                          <Loader className="w-4 h-4 text-gray-400 animate-spin" />
-                        ) : device.status === "on" ? (
-                          <CheckCircle className="w-4 h-4 text-green-500" />
-                        ) : device.status === "error" ? (
-                          <AlertCircle className="w-4 h-4 text-red-500" />
-                        ) : (
-                          <div className="w-4 h-4 rounded-full bg-gray-200" />
-                        )}
-                      </div>
-                    </div>
-                    <h3 className="text-sm font-semibold text-gray-800 mb-0.5">{device.name}</h3>
-                    <div className="text-xs text-gray-400 mb-3 truncate">{device.type}</div>
+                      <h3 className="text-sm font-semibold text-gray-800 mb-0.5">{device.name}</h3>
+                      <div className="text-xs text-gray-400 mb-3 truncate">{device.type}</div>
 
-                    <div className="flex items-center justify-between">
-                      <span
-                        className={`text-xs font-medium ${
-                          device.status === "on" ? "text-green-600" :
-                          device.status === "loading" ? "text-gray-400" :
-                          "text-gray-400"
-                        }`}
-                      >
-                        {device.status === "on" ? "运行中" : device.status === "loading" ? "执行中..." : "已停止"}
-                      </span>
-                      <button
-                        onClick={() => handleToggle(idx)}
-                        disabled={device.status === "loading"}
-                        className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                          device.status === "on"
-                            ? "bg-red-50 text-red-600 hover:bg-red-100 border border-red-200"
-                            : device.status === "loading"
-                            ? "bg-gray-50 text-gray-400 cursor-not-allowed border border-gray-100"
-                            : "bg-green-50 text-green-600 hover:bg-green-100 border border-green-200"
-                        }`}
-                      >
-                        {device.status === "on" ? (
-                          <><ToggleRight className="w-3.5 h-3.5" />关闭</>
-                        ) : device.status === "loading" ? (
-                          <><Loader className="w-3.5 h-3.5 animate-spin" />执行中</>
-                        ) : (
-                          <><ToggleLeft className="w-3.5 h-3.5" />开启</>
-                        )}
-                      </button>
-                    </div>
-
-                    {device.feedback && (
-                      <div className="mt-2 text-xs text-green-600 bg-green-50 rounded-lg px-2 py-1 truncate">
-                        ✓ {device.feedback}
+                      <div className="flex items-center justify-between">
+                        <span
+                          className={`text-xs font-medium ${
+                            device.status === "on" ? "text-green-600" :
+                            device.status === "loading" ? "text-gray-400" :
+                            "text-gray-400"
+                          }`}
+                        >
+                          {device.status === "on" ? "运行中" : device.status === "loading" ? "执行中..." : "已停止"}
+                        </span>
+                        <button
+                          onClick={() => handleToggle(idx)}
+                          disabled={device.status === "loading"}
+                          className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                            device.status === "on"
+                              ? "bg-red-50 text-red-600 hover:bg-red-100 border border-red-200"
+                              : device.status === "loading"
+                              ? "bg-gray-50 text-gray-400 cursor-not-allowed border border-gray-100"
+                              : "bg-green-50 text-green-600 hover:bg-green-100 border border-green-200"
+                          }`}
+                        >
+                          {device.status === "on" ? (
+                            <><ToggleRight className="w-3.5 h-3.5" />关闭</>
+                          ) : device.status === "loading" ? (
+                            <><Loader className="w-3.5 h-3.5 animate-spin" />执行中</>
+                          ) : (
+                            <><ToggleLeft className="w-3.5 h-3.5" />开启</>
+                          )}
+                        </button>
                       </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+
+                      {device.feedback && (
+                        <div className="mt-2 text-xs text-green-600 bg-green-50 rounded-lg px-2 py-1 truncate">
+                          ✓ {device.feedback}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </>
       )}
