@@ -15,6 +15,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -25,9 +26,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class CozeAgentService {
 
-    private static final ParameterizedTypeReference<ServerSentEvent<String>> SSE_STRING_TYPE =
-            new ParameterizedTypeReference<>() {
-            };
+    private static final ParameterizedTypeReference<ServerSentEvent<String>> SSE_STRING_TYPE = new ParameterizedTypeReference<>() {
+    };
 
     private final CozeApiProperties properties;
     private final ObjectMapper objectMapper;
@@ -66,7 +66,8 @@ public class CozeAgentService {
     private Map<String, Object> buildPayload(AgriAgentChatRequest request) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("bot_id", properties.getBotId());
-        payload.put("user_id", StringUtils.hasText(request.userId()) ? request.userId() : "agri-web-" + UUID.randomUUID());
+        payload.put("user_id",
+                StringUtils.hasText(request.userId()) ? request.userId() : "agri-web-" + UUID.randomUUID());
         payload.put("stream", true);
         payload.put("auto_save_history", true);
 
@@ -78,26 +79,37 @@ public class CozeAgentService {
                 Map.of(
                         "role", "user",
                         "content", request.question(),
-                        "content_type", "text"
-                )
-        ));
+                        "content_type", "text")));
 
         return payload;
     }
 
     private Flux<AgentChunk> parseSseEvent(ServerSentEvent<String> event) {
         String sseEventName = event.event();
+        String lowerEventName = sseEventName == null ? "" : sseEventName.toLowerCase();
+        String data = event.data();
+
+        if (StringUtils.hasText(data)) {
+            String conversationId = parseConversationId(data);
+            if (StringUtils.hasText(conversationId)) {
+                if (lowerEventName.contains("chat.completed")) {
+                    return Flux.just(AgentChunk.context(conversationId), AgentChunk.done());
+                }
+                if (lowerEventName.contains("message.completed")) {
+                    return Flux.just(AgentChunk.context(conversationId));
+                }
+            }
+        }
 
         // Skip conversation.message.completed to avoid duplicating streamed tokens
-        if (sseEventName != null && sseEventName.contains("message.completed")) {
+        if (lowerEventName.contains("message.completed")) {
             return Flux.empty();
         }
         // conversation.chat.completed signals end of stream
-        if (sseEventName != null && sseEventName.contains("chat.completed")) {
+        if (lowerEventName.contains("chat.completed")) {
             return Flux.just(AgentChunk.done());
         }
 
-        String data = event.data();
         if (!StringUtils.hasText(data)) {
             return Flux.empty();
         }
@@ -109,12 +121,16 @@ public class CozeAgentService {
 
         try {
             JsonNode root = objectMapper.readTree(trimmed);
-            AgentChunk chunk = parseCozeNode(root);
-            if (chunk != null) {
-                return Flux.just(chunk);
+            List<AgentChunk> chunks = parseCozeNodes(root);
+            if (!chunks.isEmpty()) {
+                return Flux.fromIterable(chunks);
             }
         } catch (Exception ignored) {
             if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+                String eventName = sseEventName == null ? "" : sseEventName.toLowerCase();
+                if (eventName.contains("reasoning") || eventName.contains("thinking")) {
+                    return Flux.just(AgentChunk.thinking(fixPossibleMojibake(trimmed)));
+                }
                 return Flux.just(AgentChunk.token(fixPossibleMojibake(trimmed)));
             }
         }
@@ -122,28 +138,72 @@ public class CozeAgentService {
         return Flux.empty();
     }
 
-    private AgentChunk parseCozeNode(JsonNode node) {
+    private List<AgentChunk> parseCozeNodes(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return List.of();
+        }
+
+        List<AgentChunk> chunks = new ArrayList<>();
+
+        String conversationId = firstNonBlank(
+                textNode(node, "/conversation_id"),
+                textNode(node, "/conversation/id"),
+                deepText(node, "conversation_id"));
+        if (StringUtils.hasText(conversationId)) {
+            addChunk(chunks, AgentChunk.context(conversationId));
+        }
+
         // --- Coze v3 conversation.message.delta format ---
-        // { "type": "answer"|"reasoning", "content": "...", "reasoning_content": "..." }
+        // Some providers may include reasoning and answer in the same delta object.
         String nodeType = textNode(node, "/type");
-        if (StringUtils.hasText(nodeType)) {
-            String lt = nodeType.toLowerCase();
-            if ("reasoning".equals(lt) || "thinking".equals(lt) || "verbose".equals(lt)) {
-                String reasoning = firstNonBlank(textNode(node, "/reasoning_content"), textNode(node, "/content"), textNode(node, "/delta"));
-                if (StringUtils.hasText(reasoning)) {
-                    return AgentChunk.thinking(fixPossibleMojibake(reasoning));
-                }
-                return null;
+        String lowerNodeType = StringUtils.hasText(nodeType) ? nodeType.toLowerCase() : "";
+
+        if (lowerNodeType.contains("completed") || lowerNodeType.contains("finish")) {
+            addChunk(chunks, AgentChunk.done());
+            return chunks;
+        }
+
+        boolean isReasoningType = "reasoning".equals(lowerNodeType)
+                || "thinking".equals(lowerNodeType)
+                || "verbose".equals(lowerNodeType);
+
+        String reasoning = firstNonBlank(
+                textNode(node, "/reasoning_content"),
+                textNode(node, "/delta/reasoning_content"),
+                textNode(node, "/delta/reasoning"),
+                textNode(node, "/thinking"),
+                deepText(node, "reasoning_content", "reasoning", "thinking_content", "thinking"));
+        if (isReasoningType) {
+            reasoning = firstNonBlank(reasoning, textNode(node, "/content"), textNode(node, "/delta"));
+        }
+        if (StringUtils.hasText(reasoning)) {
+            addChunk(chunks, AgentChunk.thinking(fixPossibleMojibake(reasoning)));
+        }
+
+        if (!isReasoningType && "answer".equals(lowerNodeType)) {
+            String answer = firstNonBlank(
+                    textNode(node, "/content"),
+                    textNode(node, "/delta/content"),
+                    textNode(node, "/delta/text"),
+                    textNode(node, "/delta"),
+                    textNode(node, "/answer"),
+                    deepText(node, "answer", "content"));
+            if (StringUtils.hasText(answer)) {
+                addChunk(chunks, AgentChunk.token(fixPossibleMojibake(answer)));
             }
-            if ("answer".equals(lt)) {
-                String answer = firstNonBlank(textNode(node, "/content"), textNode(node, "/delta"), textNode(node, "/answer"));
-                if (StringUtils.hasText(answer)) {
-                    return AgentChunk.token(fixPossibleMojibake(answer));
-                }
-                return null;
-            }
-            if (lt.contains("completed") || lt.contains("finish")) {
-                return AgentChunk.done();
+        }
+
+        // If type is absent or ambiguous, still try answer channel for compatibility.
+        if (!StringUtils.hasText(lowerNodeType)) {
+            String answer = firstNonBlank(
+                    textNode(node, "/content"),
+                    textNode(node, "/delta/content"),
+                    textNode(node, "/delta/text"),
+                    textNode(node, "/delta"),
+                    textNode(node, "/answer"),
+                    deepText(node, "answer", "content"));
+            if (StringUtils.hasText(answer)) {
+                addChunk(chunks, AgentChunk.token(fixPossibleMojibake(answer)));
             }
         }
 
@@ -151,15 +211,16 @@ public class CozeAgentService {
         String msgType = textNode(node, "/msg_type");
         if (StringUtils.hasText(msgType)) {
             if ("generate_answer_finish".equalsIgnoreCase(msgType)) {
-                return AgentChunk.done();
+                addChunk(chunks, AgentChunk.done());
+                return chunks;
             }
             if ("answer".equalsIgnoreCase(msgType)) {
-                String answer = firstNonBlank(textNode(node, "/content"), textNode(node, "/answer"), textNode(node, "/delta"));
+                String answer = firstNonBlank(textNode(node, "/content"), textNode(node, "/answer"),
+                        textNode(node, "/delta"));
                 if (StringUtils.hasText(answer)) {
-                    return AgentChunk.token(fixPossibleMojibake(answer));
+                    addChunk(chunks, AgentChunk.token(fixPossibleMojibake(answer)));
                 }
             }
-            return null;
         }
 
         // --- event field fallback ---
@@ -167,40 +228,92 @@ public class CozeAgentService {
         if (StringUtils.hasText(eventType)) {
             String lowerType = eventType.toLowerCase();
             if (lowerType.contains("completed") || lowerType.contains("finish")) {
-                return AgentChunk.done();
+                addChunk(chunks, AgentChunk.done());
+                return chunks;
             }
             if (lowerType.contains("reasoning") || lowerType.contains("thinking")) {
-                String reasoning = firstNonBlank(textNode(node, "/content"), textNode(node, "/reasoning_content"), textNode(node, "/delta"));
-                if (StringUtils.hasText(reasoning)) {
-                    return AgentChunk.thinking(fixPossibleMojibake(reasoning));
+                String reasoningByEvent = firstNonBlank(textNode(node, "/content"),
+                        textNode(node, "/reasoning_content"),
+                        textNode(node, "/delta"), deepText(node, "reasoning_content", "reasoning", "thinking"));
+                if (StringUtils.hasText(reasoningByEvent)) {
+                    addChunk(chunks, AgentChunk.thinking(fixPossibleMojibake(reasoningByEvent)));
                 }
             }
             if (lowerType.contains("delta") || lowerType.contains("answer")) {
-                String answer = firstNonBlank(textNode(node, "/content"), textNode(node, "/delta"), textNode(node, "/answer"));
+                String answer = firstNonBlank(textNode(node, "/content"), textNode(node, "/delta"),
+                        textNode(node, "/answer"), deepText(node, "answer", "content"));
                 if (StringUtils.hasText(answer)) {
-                    return AgentChunk.token(fixPossibleMojibake(answer));
+                    addChunk(chunks, AgentChunk.token(fixPossibleMojibake(answer)));
                 }
             }
         }
 
         JsonNode dataNode = node.get("data");
         if (dataNode != null && !dataNode.isNull()) {
-            if (dataNode.isObject()) {
-                return parseCozeNode(dataNode);
+            if (dataNode.isObject() || dataNode.isArray()) {
+                for (AgentChunk nested : parseCozeNodes(dataNode)) {
+                    addChunk(chunks, nested);
+                }
             }
             if (dataNode.isTextual()) {
                 String rawData = dataNode.asText();
-                if (StringUtils.hasText(rawData) && (rawData.startsWith("{") || rawData.startsWith("["))) {
+                String rawDataTrimmed = rawData == null ? "" : rawData.trim();
+                if (StringUtils.hasText(rawDataTrimmed)
+                        && (rawDataTrimmed.startsWith("{") || rawDataTrimmed.startsWith("["))) {
                     try {
-                        return parseCozeNode(objectMapper.readTree(rawData));
+                        for (AgentChunk nested : parseCozeNodes(objectMapper.readTree(rawDataTrimmed))) {
+                            addChunk(chunks, nested);
+                        }
                     } catch (Exception ignored) {
-                        return null;
+                        // ignore malformed nested json
                     }
                 }
             }
         }
 
-        return null;
+        if (node.isArray()) {
+            for (JsonNode item : node) {
+                for (AgentChunk nested : parseCozeNodes(item)) {
+                    addChunk(chunks, nested);
+                }
+            }
+        }
+
+        return chunks;
+    }
+
+    private String parseConversationId(String rawData) {
+        if (!StringUtils.hasText(rawData)) {
+            return null;
+        }
+        String trimmed = rawData.trim();
+        if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+            return null;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(trimmed);
+            return firstNonBlank(
+                    textNode(root, "/conversation_id"),
+                    textNode(root, "/conversation/id"),
+                    deepText(root, "conversation_id"));
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private void addChunk(List<AgentChunk> chunks, AgentChunk chunk) {
+        if (chunk == null) {
+            return;
+        }
+        if (chunks.isEmpty()) {
+            chunks.add(chunk);
+            return;
+        }
+        AgentChunk last = chunks.get(chunks.size() - 1);
+        if (last.type() == chunk.type() && String.valueOf(last.content()).equals(String.valueOf(chunk.content()))) {
+            return;
+        }
+        chunks.add(chunk);
     }
 
     private String firstNonBlank(String... values) {
@@ -216,6 +329,35 @@ public class CozeAgentService {
         JsonNode candidate = node.at(pointer);
         if (candidate.isTextual()) {
             return candidate.asText();
+        }
+        return null;
+    }
+
+    private String deepText(JsonNode node, String... fieldNames) {
+        if (node == null || node.isNull() || fieldNames == null) {
+            return null;
+        }
+        for (String field : fieldNames) {
+            if (!StringUtils.hasText(field)) {
+                continue;
+            }
+            JsonNode found = node.findValue(field);
+            if (found == null || found.isNull()) {
+                continue;
+            }
+            if (found.isTextual()) {
+                String value = found.asText();
+                if (StringUtils.hasText(value)) {
+                    return value;
+                }
+                continue;
+            }
+            if (found.isObject()) {
+                JsonNode text = found.get("text");
+                if (text != null && text.isTextual() && StringUtils.hasText(text.asText())) {
+                    return text.asText();
+                }
+            }
         }
         return null;
     }
@@ -271,6 +413,10 @@ public class CozeAgentService {
             return new AgentChunk(AgentChunkType.DONE, "[DONE]");
         }
 
+        static AgentChunk context(String conversationId) {
+            return new AgentChunk(AgentChunkType.CONTEXT, conversationId);
+        }
+
         static AgentChunk error(String message) {
             return new AgentChunk(AgentChunkType.ERROR, message);
         }
@@ -279,6 +425,7 @@ public class CozeAgentService {
     public enum AgentChunkType {
         TOKEN,
         THINKING,
+        CONTEXT,
         DONE,
         ERROR
     }
