@@ -18,5 +18,6 @@
         <module>tech-stack-smoke-service</module>
         <module>device-control-service</module>
         <module>light-schedule-service</module>
+        <module>agri-agent-service</module>
     </modules>
 </project>
