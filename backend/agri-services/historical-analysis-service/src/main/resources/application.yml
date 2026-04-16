@@ -1,0 +1,31 @@
+server:
+  port: 8087
+
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://47.108.58.107:3306/dream6?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:c0765083cd3f57ab}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      initialization-fail-timeout: -1
+  application:
+    name: historical-analysis-service
+  jpa:
+    database-platform: ${SPRING_JPA_DATABASE_PLATFORM:org.hibernate.community.dialect.MySQLLegacyDialect}
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+    show-sql: false
+  flyway:
+    enabled: false
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui/index.html
+
+historical-analysis:
+  max-points: 240
+  greenhouse-device-map:
+    "1号大棚": "69d75b1d7f2e6c302f654fea_20031104"
+    "GH-01": "69d75b1d7f2e6c302f654fea_20031104"
