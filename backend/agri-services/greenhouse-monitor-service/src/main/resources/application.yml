@@ -1,0 +1,37 @@
+server:
+  port: 8086
+
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://47.108.58.107:3306/dream6?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:c0765083cd3f57ab}
+    hikari:
+      initialization-fail-timeout: -1
+  application:
+    name: greenhouse-monitor-service
+  jpa:
+    database-platform: ${SPRING_JPA_DATABASE_PLATFORM:org.hibernate.community.dialect.MySQLLegacyDialect}
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    show-sql: false
+  flyway:
+    enabled: ${APP_FLYWAY_ENABLED:false}
+    locations: classpath:db/migration
+    table: flyway_schema_history_greenhouse_monitor
+    baseline-on-migrate: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui/index.html
+
+huaweicloud:
+  iotda:
+    command-enabled: ${HUAWEICLOUD_IOTDA_COMMAND_ENABLED:true}
+    ak: ${HUAWEICLOUD_IOTDA_AK:HPUASOFYRYK6SXUL0I7X}
+    sk: ${HUAWEICLOUD_IOTDA_SK:zcpB6oZt2jhINGSwmwHG013Ub7NxrxMw4k0Wfn7g}
+    project-id: ${HUAWEICLOUD_IOTDA_PROJECT_ID:ed1e23a0e3734fc082cbcf11e6855e91}
+    region: ${HUAWEICLOUD_IOTDA_REGION:cn-north-4}
+    endpoint: ${HUAWEICLOUD_IOTDA_ENDPOINT:https://6c48cc4953.st1.iotda-app.cn-north-4.myhuaweicloud.com}
