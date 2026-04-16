@@ -74,6 +74,7 @@ export function HistoricalData() {
   const [selectedGH, setSelectedGH] = useState("1号大棚");
   const [selectedSensors, setSelectedSensors] = useState<string[]>(["temp", "humidity"]);
   const [data, setData] = useState(() => genDataset(timeRanges[0].hours));
+  const [exporting, setExporting] = useState(false);
   const [latestMetrics, setLatestMetrics] = useState<{
     temp?: number;
     humidity?: number;
@@ -160,6 +161,80 @@ export function HistoricalData() {
 
   const lastPoint = useMemo(() => data[data.length - 1], [data]);
 
+  async function handleExportData() {
+    if (exporting) return;
+
+    setExporting(true);
+    try {
+      const range = `${selectedRange.hours}h`;
+      const [tempHistory, humidityHistory, lightHistory] = await Promise.all([
+        fetchSensorHistory(selectedGH, "temp", range, true, true),
+        fetchSensorHistory(selectedGH, "humidity", range, true, true),
+        fetchSensorHistory(selectedGH, "light", range, true, true),
+      ]);
+
+      const rowsByTime = new Map<string, { timestamp: string; temp?: number; humidity?: number; light?: number }>();
+
+      for (const point of tempHistory) {
+        const key = point.timestamp || point.time;
+        rowsByTime.set(key, {
+          ...(rowsByTime.get(key) || { timestamp: key }),
+          timestamp: key,
+          temp: point.value,
+        });
+      }
+      for (const point of humidityHistory) {
+        const key = point.timestamp || point.time;
+        rowsByTime.set(key, {
+          ...(rowsByTime.get(key) || { timestamp: key }),
+          timestamp: key,
+          humidity: point.value,
+        });
+      }
+      for (const point of lightHistory) {
+        const key = point.timestamp || point.time;
+        rowsByTime.set(key, {
+          ...(rowsByTime.get(key) || { timestamp: key }),
+          timestamp: key,
+          light: point.value,
+        });
+      }
+
+      const rows = Array.from(rowsByTime.values()).sort((a, b) => {
+        const ta = Date.parse(a.timestamp);
+        const tb = Date.parse(b.timestamp);
+        if (Number.isNaN(ta) || Number.isNaN(tb)) {
+          return a.timestamp.localeCompare(b.timestamp);
+        }
+        return ta - tb;
+      });
+      const lines = [
+        ["时间戳", "空气温度(°C)", "空气湿度(%)", "光照强度(lux)"].join(","),
+        ...rows.map((row) => [
+          row.timestamp,
+          row.temp ?? "",
+          row.humidity ?? "",
+          row.light ?? "",
+        ].join(",")),
+      ];
+
+      const csv = "\ufeff" + lines.join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const safeRange = selectedRange.label.replace(/\s+/g, "");
+      const safeGh = selectedGH.replace(/\s+/g, "");
+      link.href = url;
+      link.download = `${safeGh}_${safeRange}_历史数据.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="p-6 space-y-5">
       {/* Header */}
@@ -168,9 +243,13 @@ export function HistoricalData() {
           <h1 className="text-xl font-bold text-gray-800">历史数据趋势分析</h1>
           
         </div>
-        <button className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors shadow-sm">
+        <button
+          onClick={() => void handleExportData()}
+          disabled={exporting}
+          className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+        >
           <Download className="w-4 h-4" />
-          导出数据
+          {exporting ? "导出中..." : "导出数据"}
         </button>
       </div>
 
