@@ -5,10 +5,10 @@ spring:
   application:
     name: tech-stack-smoke-service
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://127.0.0.1:5432/smart_agri}
-    username: ${SPRING_DATASOURCE_USERNAME:agri}
-    password: ${SPRING_DATASOURCE_PASSWORD:agri123}
-    driver-class-name: org.postgresql.Driver
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://47.108.58.107:3306/dream6?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:c0765083cd3f57ab}
+    driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       initialization-fail-timeout: -1
   data:
@@ -18,6 +18,8 @@ spring:
   flyway:
     enabled: ${APP_FLYWAY_ENABLED:false}
     locations: classpath:db/migration
+    table: flyway_schema_history_smoke
+    baseline-on-migrate: true
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:127.0.0.1:9092}
   cloud:

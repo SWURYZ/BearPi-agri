@@ -2,3 +2,6 @@ node_modules
 backend/**/target
 backend/**/data/*.db
 backend/**/data/*.trace.db
+.runtime/
+backend/**/hs_err_pid*.log
+backend/**/replay_pid*.log

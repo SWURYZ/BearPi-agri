@@ -24,7 +24,7 @@ backend/
 - Spring Cloud 2023.0.x
 - Spring Cloud Alibaba Nacos
 - MyBatis-Plus
-- PostgreSQL
+- MySQL
 - Flyway
 - Redis
 - Kafka
@@ -93,9 +93,9 @@ APP_FLYWAY_ENABLED=true
 常用基础连接变量：
 
 ```bash
-SPRING_DATASOURCE_URL=jdbc:postgresql://127.0.0.1:5432/smart_agri
-SPRING_DATASOURCE_USERNAME=agri
-SPRING_DATASOURCE_PASSWORD=agri123
+SPRING_DATASOURCE_URL=jdbc:mysql://47.108.58.107:3306/dream6?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+SPRING_DATASOURCE_USERNAME=root
+SPRING_DATASOURCE_PASSWORD=<your-password>
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092

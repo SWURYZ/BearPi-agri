@@ -3,15 +3,16 @@ server:
 
 spring:
   datasource:
-    url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:3306/bearpi?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
-    username: ${MYSQL_USERNAME:root}
-    password: ${MYSQL_PASSWORD:20031104}
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://47.108.58.107:3306/dream6?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:c0765083cd3f57ab}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       initialization-fail-timeout: -1
   application:
     name: iot-access-service
   jpa:
+    database-platform: ${SPRING_JPA_DATABASE_PLATFORM:org.hibernate.community.dialect.MySQLLegacyDialect}
     hibernate:
       ddl-auto: update
     open-in-view: false
@@ -19,6 +20,8 @@ spring:
   flyway:
     enabled: ${APP_FLYWAY_ENABLED:false}
     locations: classpath:db/migration
+    table: flyway_schema_history_iot_access
+    baseline-on-migrate: true
 
 springdoc:
   swagger-ui:
