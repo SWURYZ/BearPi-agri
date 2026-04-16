@@ -30,30 +30,47 @@ public class TelemetryIngestionService {
             return;
         }
 
-        String deviceId = textOrNull(notifyData.path("header").path("device_id"));
+        String deviceId = resolveDeviceId(root, notifyData);
         String rawPayload = root.toString();
         boolean saved = false;
 
         for (JsonNode serviceNode : services) {
             String serviceId = textOrNull(serviceNode.path("service_id"));
-            if (!"Agriculture".equals(serviceId)) {
-                log.info("跳过非 Agriculture 服务消息, deviceId={}, serviceId={}", deviceId, serviceId);
+            JsonNode properties = serviceNode.path("properties");
+            if (properties.isMissingNode() || properties.isNull()) {
+            log.warn("服务消息缺少 properties, deviceId={}, serviceId={}, payload={}", deviceId, serviceId, root);
                 continue;
             }
 
-            JsonNode properties = serviceNode.path("properties");
-            if (properties.isMissingNode() || properties.isNull()) {
-                log.warn("Agriculture 消息缺少 properties, deviceId={}, payload={}", deviceId, root);
-                continue;
+            Double temperature = numberFromAliases(properties,
+                "Temperature", "temperature", "temp", "Temp");
+            Double humidity = numberFromAliases(properties,
+                "Humidity", "humidity", "hum", "Hum");
+            Double luminance = numberFromAliases(properties,
+                "Luminance", "luminance", "Light", "light", "light_intensity");
+            String ledStatus = textFromAliases(properties,
+                "LightStatus", "lightStatus", "ledStatus", "LED", "led");
+            String motorStatus = textFromAliases(properties,
+                "MotorStatus", "motorStatus", "fanStatus", "motor", "Fan");
+
+            boolean hasKnownMetrics = temperature != null
+                || humidity != null
+                || luminance != null
+                || ledStatus != null
+                || motorStatus != null;
+            if (!hasKnownMetrics) {
+            log.info("消息无可识别农业指标, deviceId={}, serviceId={}", deviceId, serviceId);
+            continue;
             }
+
             DeviceTelemetry telemetry = new DeviceTelemetry();
             telemetry.setDeviceId(deviceId);
             telemetry.setServiceId(serviceId);
-            telemetry.setTemperature(numberOrNull(properties.get("Temperature")));
-            telemetry.setHumidity(numberOrNull(properties.get("Humidity")));
-            telemetry.setLuminance(numberOrNull(properties.get("Luminance")));
-            telemetry.setLedStatus(textOrNull(properties.get("LightStatus")));
-            telemetry.setMotorStatus(textOrNull(properties.get("MotorStatus")));
+            telemetry.setTemperature(temperature);
+            telemetry.setHumidity(humidity);
+            telemetry.setLuminance(luminance);
+            telemetry.setLedStatus(ledStatus);
+            telemetry.setMotorStatus(motorStatus);
             telemetry.setReportTime(resolveReportTime(serviceNode));
             telemetry.setRawPayload(rawPayload);
             telemetryRepository.save(telemetry);
@@ -84,7 +101,7 @@ public class TelemetryIngestionService {
     }
 
     private LocalDateTime resolveReportTime(JsonNode serviceNode) {
-        for (String field : new String[]{"event_time", "report_time"}) {
+        for (String field : new String[]{"event_time", "report_time", "eventTime", "reportTime"}) {
             JsonNode node = serviceNode.get(field);
             if (node == null || node.isNull() || node.asText().isBlank()) {
                 continue;
@@ -95,6 +112,57 @@ public class TelemetryIngestionService {
             }
         }
         return LocalDateTime.now();
+    }
+
+    private String resolveDeviceId(JsonNode root, JsonNode notifyData) {
+        String[] paths = {
+                "notify_data.header.device_id",
+                "notify_data.header.deviceId",
+                "notify_data.device_id",
+                "notify_data.deviceId",
+                "device_id",
+                "deviceId"
+        };
+        for (String path : paths) {
+            JsonNode node = atPath(root, path);
+            String value = textOrNull(node);
+            if (value != null) {
+                return value;
+            }
+        }
+        return textOrNull(notifyData.path("header").path("device_id"));
+    }
+
+    private JsonNode atPath(JsonNode node, String dottedPath) {
+        JsonNode current = node;
+        String[] parts = dottedPath.split("\\\\.");
+        for (String part : parts) {
+            if (current == null || current.isMissingNode() || current.isNull()) {
+                return null;
+            }
+            current = current.path(part);
+        }
+        return current;
+    }
+
+    private Double numberFromAliases(JsonNode properties, String... aliases) {
+        for (String alias : aliases) {
+            Double value = numberOrNull(properties.get(alias));
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private String textFromAliases(JsonNode properties, String... aliases) {
+        for (String alias : aliases) {
+            String value = textOrNull(properties.get(alias));
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
     }
 
     private String textOrNull(JsonNode node) {
