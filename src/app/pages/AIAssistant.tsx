@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+﻿import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Send,
   Bot,
@@ -13,6 +13,13 @@ import {
   ThumbsUp,
   ThumbsDown,
   Square,
+  Mic,
+  MicOff,
+  ImagePlus,
+  X,
+  ChevronDown,
+  ChevronRight,
+  Brain,
 } from "lucide-react";
 import { streamAgriAgentChat } from "../services/agriAgent";
 
@@ -20,8 +27,10 @@ interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
+  thinking: string;
   timestamp: string;
   sources?: string[];
+  imagePreview?: string;
 }
 
 const currentData = {
@@ -30,29 +39,248 @@ const currentData = {
   light: 8500,
   co2: 420,
   soilHumidity: 45,
-  gh: "1号大棚",
-  crop: "番茄",
+  gh: "\u0031\u53f7\u5927\u68da",
+  crop: "\u756a\u8304",
 };
 
 const suggestedQuestions = [
-  "当前温度偏高，需要开启通风吗？",
-  "番茄最适宜的温湿度范围是多少？",
-  "今天光照强度是否适合番茄生长？",
-  "如何判断土壤湿度是否需要灌溉？",
-  "CO₂浓度对作物生长有什么影响？",
-  "大棚温度骤降时应该怎么处理？",
+  "\u5f53\u524d\u6e29\u5ea6\u504f\u9ad8\uff0c\u9700\u8981\u5f00\u542f\u901a\u98ce\u5417\uff1f",
+  "\u756a\u8304\u6700\u9002\u5b9c\u7684\u6e29\u6e7f\u5ea6\u8303\u56f4\u662f\u591a\u5c11\uff1f",
+  "\u4eca\u5929\u5149\u7167\u5f3a\u5ea6\u662f\u5426\u9002\u5408\u756a\u8304\u751f\u957f\uff1f",
+  "\u5982\u4f55\u5224\u65ad\u571f\u58e4\u6e7f\u5ea6\u662f\u5426\u9700\u8981\u704c\u6e89\uff1f",
+  "CO\u2082\u6d53\u5ea6\u5bf9\u4f5c\u7269\u751f\u957f\u6709\u4ec0\u4e48\u5f71\u54cd\uff1f",
+  "\u5927\u68da\u6e29\u5ea6\u9aa4\u964d\u65f6\u5e94\u8be5\u600e\u4e48\u5904\u7406\uff1f",
 ];
 
 function formatTime(date: Date) {
   return `${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
 }
 
+/* --- Markdown renderer --- */
+function renderMarkdown(content: string) {
+  if (!content) return null;
+
+  const lines = content.split("\n");
+  const elements: React.JSX.Element[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Code block
+    if (line.startsWith("```")) {
+      const lang = line.slice(3).trim();
+      const codeLines: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith("```")) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      i++;
+      elements.push(
+        <pre key={elements.length} className="bg-gray-900 text-green-300 rounded-lg p-3 my-2 text-xs overflow-x-auto">
+          {lang && <div className="text-gray-500 text-[10px] mb-1">{lang}</div>}
+          <code>{codeLines.join("\n")}</code>
+        </pre>
+      );
+      continue;
+    }
+
+    // Headings - skip bare ### lines (noise from Coze)
+    if (line.trim() === "###" || line.trim() === "##" || line.trim() === "#") {
+      i++; continue;
+    }
+    if (line.startsWith("### ")) {
+      elements.push(<h4 key={elements.length} className="font-semibold text-gray-800 text-sm mt-3 mb-1">{renderInline(line.slice(4))}</h4>);
+      i++; continue;
+    }
+    if (line.startsWith("## ")) {
+      elements.push(<h3 key={elements.length} className="font-bold text-gray-800 mt-2 mb-1">{renderInline(line.slice(3))}</h3>);
+      i++; continue;
+    }
+    if (line.startsWith("# ")) {
+      elements.push(<h2 key={elements.length} className="font-bold text-gray-900 text-lg mt-2 mb-1">{renderInline(line.slice(2))}</h2>);
+      i++; continue;
+    }
+
+    // Numbered list
+    if (/^\d+\.\s/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\d+\.\s/.test(lines[i])) {
+        items.push(lines[i].replace(/^\d+\.\s/, ""));
+        i++;
+      }
+      elements.push(
+        <ol key={elements.length} className="list-decimal list-inside space-y-0.5 my-1 ml-1">
+          {items.map((item, idx) => <li key={idx} className="leading-relaxed text-sm">{renderInline(item)}</li>)}
+        </ol>
+      );
+      continue;
+    }
+
+    // Unordered list
+    if (line.startsWith("- ") || line.startsWith("* ")) {
+      const items: string[] = [];
+      while (i < lines.length && (lines[i].startsWith("- ") || lines[i].startsWith("* "))) {
+        items.push(lines[i].slice(2));
+        i++;
+      }
+      elements.push(
+        <ul key={elements.length} className="list-disc list-inside space-y-0.5 my-1 ml-1">
+          {items.map((item, idx) => <li key={idx} className="leading-relaxed text-sm">{renderInline(item)}</li>)}
+        </ul>
+      );
+      continue;
+    }
+
+    // Empty line
+    if (!line.trim()) {
+      elements.push(<div key={elements.length} className="h-1" />);
+      i++; continue;
+    }
+
+    // Normal paragraph
+    elements.push(<p key={elements.length} className="leading-relaxed text-sm">{renderInline(line)}</p>);
+    i++;
+  }
+
+  return <>{elements}</>;
+}
+
+function renderInline(text: string): (string | React.JSX.Element)[] {
+  const parts: (string | React.JSX.Element)[] = [];
+  const regex = /(\*\*(.+?)\*\*)|(`(.+?)`)|(\*(.+?)\*)/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    if (match[1]) {
+      parts.push(<strong key={`b${match.index}`} className="font-semibold">{match[2]}</strong>);
+    } else if (match[3]) {
+      parts.push(<code key={`c${match.index}`} className="bg-gray-100 text-pink-600 px-1 py-0.5 rounded text-xs">{match[4]}</code>);
+    } else if (match[5]) {
+      parts.push(<em key={`i${match.index}`}>{match[6]}</em>);
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+  return parts;
+}
+
+/* --- Thinking Block (ChatGPT style) --- */
+function ThinkingBlock({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const thinkingEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll thinking area during streaming
+  useEffect(() => {
+    if (isStreaming && thinkingEndRef.current) {
+      thinkingEndRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [content, isStreaming]);
+
+  // Auto-collapse when streaming ends and there is content
+  useEffect(() => {
+    if (!isStreaming && content) {
+      setCollapsed(true);
+    }
+  }, [isStreaming, content]);
+
+  if (!content && !isStreaming) return null;
+
+  const showBody = !collapsed;
+
+  return (
+    <div className="mb-3 border border-purple-200 rounded-xl overflow-hidden bg-gradient-to-b from-purple-50 to-white">
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-purple-700 hover:bg-purple-100/40 transition-colors"
+      >
+        <Brain className={"w-4 h-4 " + (isStreaming ? "animate-pulse text-purple-500" : "text-purple-400")} />
+        <span className="font-semibold">{isStreaming ? "\u6b63\u5728\u601d\u8003..." : "\u601d\u8003\u5b8c\u6210"}</span>
+        {isStreaming && (
+          <div className="flex gap-0.5 ml-1">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: i * 0.2 + "s" }} />
+            ))}
+          </div>
+        )}
+        <span className="ml-auto text-purple-400">
+          {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </span>
+      </button>
+      {showBody && (
+        <div className="px-3 pb-3 border-t border-purple-100 max-h-72 overflow-y-auto">
+          <div className="text-xs text-purple-600/80 leading-relaxed whitespace-pre-wrap pt-2">
+            {content || "\u601d\u8003\u4e2d..."}
+            {isStreaming && <span className="inline-block w-1 h-3 bg-purple-400 ml-0.5 animate-pulse" />}
+            <div ref={thinkingEndRef} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* --- Speech Recognition Hook --- */
+function useSpeechRecognition(onResult: (text: string) => void) {
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<ReturnType<typeof Object> | null>(null);
+
+  const supported = typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
+
+  const start = useCallback(() => {
+    if (!supported) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const recognition = new SR();
+    recognition.lang = "zh-CN";
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (e: any) => {
+      const transcript = e.results[0]?.[0]?.transcript;
+      if (transcript) onResult(transcript);
+    };
+    recognition.onerror = () => setListening(false);
+    recognition.onend = () => setListening(false);
+    recognitionRef.current = recognition;
+    recognition.start();
+    setListening(true);
+  }, [supported, onResult]);
+
+  const stop = useCallback(() => {
+    if (recognitionRef.current && typeof (recognitionRef.current as Record<string, unknown>).stop === "function") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (recognitionRef.current as any).stop();
+    }
+    setListening(false);
+  }, []);
+
+  return { listening, supported, start, stop };
+}
+
+/* --- Main Component --- */
 export function AIAssistant() {
+  const welcomeContent = [
+    "\u60a8\u597d\uff01\u6211\u662f**\u519c\u4e8b\u667a\u80fd\u52a9\u624b** \ud83c\udf31",
+    "",
+    "\u6211\u5df2\u8bfb\u53d6 **" + currentData.gh + "** \u7684\u5b9e\u65f6\u76d1\u6d4b\u6570\u636e\u4f5c\u4e3a\u4e0a\u4e0b\u6587\uff0c\u53ef\u4ee5\u4e3a\u60a8\u63d0\u4f9b\u57fa\u4e8e\u5f53\u524d\u5927\u68da\u73af\u5883\u7684\u4e2a\u6027\u5316\u79cd\u690d\u5efa\u8bae\u3002",
+    "",
+    "\u60a8\u53ef\u4ee5\u95ee\u6211\uff1a\u4f5c\u7269\u7ba1\u7406\u3001\u75c5\u866b\u5bb3\u9632\u6cbb\u3001\u8bbe\u5907\u64cd\u4f5c\u3001\u73af\u5883\u8c03\u63a7\u7b49\u519c\u4e1a\u76f8\u5173\u95ee\u9898\u3002",
+  ].join("\n");
+
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "0",
       role: "assistant",
-      content: `您好！我是**农事智能助手** 🌱\n\n我已读取 **${currentData.gh}** 的实时监测数据作为上下文，可以为您提供基于当前大棚环境的个性化种植建议。\n\n您可以问我：作物管理、病虫害防治、设备操作、环境调控等农业相关问题。`,
+      content: welcomeContent,
+      thinking: "",
       timestamp: formatTime(new Date()),
       sources: [],
     },
@@ -60,36 +288,35 @@ export function AIAssistant() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
+  const [selectedImage, setSelectedImage] = useState<{ file: File; preview: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  function appendAssistantText(assistantId: string, text: string) {
+  const { listening, supported: speechSupported, start: startListening, stop: stopListening } =
+    useSpeechRecognition(useCallback((text: string) => {
+      setInput((prev) => prev + text);
+    }, []));
+
+  function appendField(assistantId: string, field: "content" | "thinking", text: string) {
     if (!text) return;
     setMessages((prev) =>
       prev.map((msg) =>
         msg.id === assistantId
-          ? {
-            ...msg,
-            content: `${msg.content}${text}`,
-          }
+          ? { ...msg, [field]: msg[field] + text }
           : msg,
       ),
     );
   }
 
-  function updateAssistantText(assistantId: string, text: string) {
+  function updateField(assistantId: string, field: "content" | "thinking", text: string) {
     setMessages((prev) =>
       prev.map((msg) =>
-        msg.id === assistantId
-          ? {
-            ...msg,
-            content: text,
-          }
-          : msg,
+        msg.id === assistantId ? { ...msg, [field]: text } : msg,
       ),
     );
   }
@@ -103,38 +330,51 @@ export function AIAssistant() {
       id: now.toString(),
       role: "user",
       content,
+      thinking: "",
       timestamp: formatTime(new Date()),
+      imagePreview: selectedImage?.preview,
     };
 
-    const assistantId = `${now + 1}`;
+    const assistantId = (now + 1).toString();
     const assistantMsg: Message = {
       id: assistantId,
       role: "assistant",
       content: "",
+      thinking: "",
       timestamp: formatTime(new Date()),
       sources: [],
     };
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInput("");
+    setSelectedImage(null);
     setLoading(true);
     setActiveAssistantId(assistantId);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
+    const questionText = selectedImage
+      ? "[\u7528\u6237\u4e0a\u4f20\u4e86\u4e00\u5f20\u56fe\u7247]\n" + content
+      : content;
+
     try {
       await streamAgriAgentChat(
         {
-          question: content,
+          question: questionText,
           userId: "agri-web-ui",
         },
         {
           onToken: (token) => {
-            appendAssistantText(assistantId, token);
+            // Strip ### noise lines from Coze output
+            const cleaned = token.replace(/^###\s*$/gm, "").replace(/^###\s*\n/gm, "");
+            if (cleaned) appendField(assistantId, "content", cleaned);
+          },
+          onThinking: (token) => {
+            appendField(assistantId, "thinking", token);
           },
           onError: (message) => {
-            updateAssistantText(assistantId, `服务异常：${message || "请稍后重试"}`);
+            updateField(assistantId, "content", "\u670d\u52a1\u5f02\u5e38\uff1a" + (message || "\u8bf7\u7a0d\u540e\u91cd\u8bd5"));
           },
         },
         controller.signal,
@@ -143,7 +383,7 @@ export function AIAssistant() {
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === assistantId && !msg.content.trim()
-            ? { ...msg, content: "已连接到智能助手，但本次未返回有效内容。" }
+            ? { ...msg, content: "\u5df2\u8fde\u63a5\u5230\u667a\u80fd\u52a9\u624b\uff0c\u4f46\u672c\u6b21\u672a\u8fd4\u56de\u6709\u6548\u5185\u5bb9\u3002" }
             : msg,
         ),
       );
@@ -152,13 +392,13 @@ export function AIAssistant() {
         setMessages((prev) =>
           prev.map((msg) =>
             msg.id === assistantId && !msg.content.trim()
-              ? { ...msg, content: "已停止生成。" }
+              ? { ...msg, content: "\u5df2\u505c\u6b62\u751f\u6210\u3002" }
               : msg,
           ),
         );
       } else {
-        const errText = error instanceof Error ? error.message : "网络请求失败";
-        updateAssistantText(assistantId, `请求失败：${errText}`);
+        const errText = error instanceof Error ? error.message : "\u7f51\u7edc\u8bf7\u6c42\u5931\u8d25";
+        updateField(assistantId, "content", "\u8bf7\u6c42\u5931\u8d25\uff1a" + errText);
       }
     } finally {
       abortRef.current = null;
@@ -171,22 +411,18 @@ export function AIAssistant() {
     abortRef.current?.abort();
   }
 
-  function renderContent(content: string) {
-    return content
-      .split("\n")
-      .map((line, i) => {
-        if (line.startsWith("**") && line.endsWith("**")) {
-          return <p key={i} className="font-semibold text-gray-800">{line.slice(2, -2)}</p>;
-        }
-        const parts = line.split(/\*\*(.*?)\*\*/g);
-        return (
-          <p key={i} className={`${line.startsWith("-") ? "ml-3" : ""} leading-relaxed`}>
-            {parts.map((part, j) =>
-              j % 2 === 1 ? <strong key={j}>{part}</strong> : part
-            )}
-          </p>
-        );
-      });
+  function handleImageSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return;
+    if (file.size > 10 * 1024 * 1024) return;
+    const preview = URL.createObjectURL(file);
+    setSelectedImage({ file, preview });
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function copyToClipboard(text: string) {
+    navigator.clipboard.writeText(text);
   }
 
   return (
@@ -195,15 +431,14 @@ export function AIAssistant() {
       <div className="p-6 pb-0">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h1 className="text-xl font-bold text-gray-800">农事智能问答</h1>
-
+            <h1 className="text-xl font-bold text-gray-800">{"\u519c\u4e8b\u667a\u80fd\u95ee\u7b54"}</h1>
           </div>
           <button
             onClick={() => setMessages((prev) => [prev[0]])}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
           >
             <RefreshCw className="w-3.5 h-3.5" />
-            清空对话
+            {"\u6e05\u7a7a\u5bf9\u8bdd"}
           </button>
         </div>
 
@@ -211,18 +446,18 @@ export function AIAssistant() {
         <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-100 rounded-xl p-3 mb-4">
           <div className="flex items-center gap-2 mb-2">
             <Sparkles className="w-4 h-4 text-green-600" />
-            <span className="text-xs font-medium text-green-700">已加载上下文：{currentData.gh}实时数据</span>
+            <span className="text-xs font-medium text-green-700">{"\u5df2\u52a0\u8f7d\u4e0a\u4e0b\u6587\uff1a" + currentData.gh + "\u5b9e\u65f6\u6570\u636e"}</span>
           </div>
           <div className="flex items-center gap-4 flex-wrap">
             {[
-              { icon: Thermometer, label: "温度", value: `${currentData.temp}°C`, color: "text-orange-500" },
-              { icon: Droplets, label: "湿度", value: `${currentData.humidity}%`, color: "text-blue-500" },
-              { icon: Sun, label: "光照", value: `${currentData.light}lux`, color: "text-yellow-500" },
-              { icon: Leaf, label: "作物", value: currentData.crop, color: "text-green-500" },
+              { icon: Thermometer, label: "\u6e29\u5ea6", value: currentData.temp + "\u00b0C", color: "text-orange-500" },
+              { icon: Droplets, label: "\u6e7f\u5ea6", value: currentData.humidity + "%", color: "text-blue-500" },
+              { icon: Sun, label: "\u5149\u7167", value: currentData.light + "lux", color: "text-yellow-500" },
+              { icon: Leaf, label: "\u4f5c\u7269", value: currentData.crop, color: "text-green-500" },
             ].map((item) => (
               <div key={item.label} className="flex items-center gap-1.5 text-xs text-gray-600">
-                <item.icon className={`w-3.5 h-3.5 ${item.color}`} />
-                <span className="text-gray-400">{item.label}：</span>
+                <item.icon className={"w-3.5 h-3.5 " + item.color} />
+                <span className="text-gray-400">{item.label + "\uff1a"}</span>
                 <span className="font-medium">{item.value}</span>
               </div>
             ))}
@@ -231,10 +466,10 @@ export function AIAssistant() {
 
         {/* RAG Pipeline */}
         <div className="flex items-center gap-2 text-xs text-gray-400 mb-4">
-          {["提问", "RAG检索知识库", "加载大棚数据", "AI生成建议", "个性化响应"].map((s, i) => (
+          {["\u63d0\u95ee", "RAG\u68c0\u7d22\u77e5\u8bc6\u5e93", "\u52a0\u8f7d\u5927\u68da\u6570\u636e", "AI\u751f\u6210\u5efa\u8bae", "\u4e2a\u6027\u5316\u54cd\u5e94"].map((s, i) => (
             <div key={s} className="flex items-center gap-2">
               <span className="bg-gray-100 text-gray-500 px-2 py-0.5 rounded-md">{s}</span>
-              {i < 4 && <span>→</span>}
+              {i < 4 && <span>{"\u2192"}</span>}
             </div>
           ))}
         </div>
@@ -243,11 +478,10 @@ export function AIAssistant() {
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto px-6 space-y-4 pb-4">
         {messages.map((msg) => (
-          <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
+          <div key={msg.id} className={"flex gap-3 " + (msg.role === "user" ? "flex-row-reverse" : "")}>
             {/* Avatar */}
             <div
-              className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${msg.role === "assistant" ? "bg-green-600" : "bg-blue-500"
-                }`}
+              className={"w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 " + (msg.role === "assistant" ? "bg-green-600" : "bg-blue-500")}
             >
               {msg.role === "assistant" ? (
                 <Bot className="w-4 h-4 text-white" />
@@ -257,15 +491,28 @@ export function AIAssistant() {
             </div>
 
             {/* Bubble */}
-            <div className={`max-w-2xl ${msg.role === "user" ? "items-end" : "items-start"} flex flex-col gap-1`}>
+            <div className={"max-w-2xl " + (msg.role === "user" ? "items-end" : "items-start") + " flex flex-col gap-1"}>
+              {/* User image preview */}
+              {msg.role === "user" && msg.imagePreview && (
+                <div className="rounded-xl overflow-hidden border border-blue-200 mb-1">
+                  <img src={msg.imagePreview} alt="upload" className="max-w-xs max-h-40 object-cover" />
+                </div>
+              )}
+
               <div
-                className={`rounded-2xl px-4 py-3 text-sm ${msg.role === "user"
+                className={"rounded-2xl px-4 py-3 text-sm " + (msg.role === "user"
                     ? "bg-blue-500 text-white rounded-tr-md"
                     : "bg-white border border-gray-100 shadow-sm text-gray-700 rounded-tl-md"
-                  }`}
+                  )}
               >
                 {msg.role === "assistant" ? (
-                  <div className="space-y-1">{renderContent(msg.content)}</div>
+                  <div className="space-y-1">
+                    <ThinkingBlock
+                      content={msg.thinking}
+                      isStreaming={loading && msg.id === activeAssistantId && !msg.content}
+                    />
+                    {renderMarkdown(msg.content)}
+                  </div>
                 ) : (
                   <p className="whitespace-pre-wrap">{msg.content}</p>
                 )}
@@ -274,27 +521,27 @@ export function AIAssistant() {
               {/* Sources */}
               {msg.sources && msg.sources.length > 0 && (
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-xs text-gray-400">知识来源：</span>
+                  <span className="text-xs text-gray-400">{"\u77e5\u8bc6\u6765\u6e90\uff1a"}</span>
                   {msg.sources.map((s) => (
                     <span key={s} className="text-xs bg-blue-50 text-blue-600 border border-blue-100 px-2 py-0.5 rounded-full">
-                      📄 {s}
+                      {"\ud83d\udcc4 " + s}
                     </span>
                   ))}
                 </div>
               )}
 
               {/* Actions */}
-              <div className={`flex items-center gap-2 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
+              <div className={"flex items-center gap-2 " + (msg.role === "user" ? "flex-row-reverse" : "")}>
                 <span className="text-xs text-gray-400">{msg.timestamp}</span>
-                {msg.role === "assistant" && (
+                {msg.role === "assistant" && msg.id !== "0" && (
                   <div className="flex items-center gap-1">
-                    <button className="p-1 text-gray-300 hover:text-gray-500 rounded transition-colors" title="复制">
+                    <button onClick={() => copyToClipboard(msg.content)} className="p-1 text-gray-300 hover:text-gray-500 rounded transition-colors" title="copy">
                       <Copy className="w-3 h-3" />
                     </button>
-                    <button className="p-1 text-gray-300 hover:text-green-500 rounded transition-colors" title="有帮助">
+                    <button className="p-1 text-gray-300 hover:text-green-500 rounded transition-colors" title="helpful">
                       <ThumbsUp className="w-3 h-3" />
                     </button>
-                    <button className="p-1 text-gray-300 hover:text-red-400 rounded transition-colors" title="没帮助">
+                    <button className="p-1 text-gray-300 hover:text-red-400 rounded transition-colors" title="not helpful">
                       <ThumbsDown className="w-3 h-3" />
                     </button>
                   </div>
@@ -305,27 +552,32 @@ export function AIAssistant() {
         ))}
 
         {/* Loading Indicator */}
-        {loading && (
-          <div className="flex gap-3">
-            <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center flex-shrink-0">
-              <Bot className="w-4 h-4 text-white" />
-            </div>
-            <div className="bg-white border border-gray-100 shadow-sm rounded-2xl rounded-tl-md px-4 py-3">
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-gray-400">AI正在分析大棚数据</span>
-                <div className="flex gap-1">
-                  {[0, 1, 2].map((i) => (
-                    <div
-                      key={i}
-                      className="w-1.5 h-1.5 bg-green-400 rounded-full animate-bounce"
-                      style={{ animationDelay: `${i * 0.15}s` }}
-                    />
-                  ))}
+        {loading && activeAssistantId && (() => {
+          const activeMsg = messages.find((m) => m.id === activeAssistantId);
+          const hasContent = activeMsg && (activeMsg.content || activeMsg.thinking);
+          if (hasContent) return null;
+          return (
+            <div className="flex gap-3">
+              <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center flex-shrink-0">
+                <Bot className="w-4 h-4 text-white" />
+              </div>
+              <div className="bg-white border border-gray-100 shadow-sm rounded-2xl rounded-tl-md px-4 py-3">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-gray-400">{"\u0041\u0049\u6b63\u5728\u5206\u6790\u5927\u68da\u6570\u636e"}</span>
+                  <div className="flex gap-1">
+                    {[0, 1, 2].map((i) => (
+                      <div
+                        key={i}
+                        className="w-1.5 h-1.5 bg-green-400 rounded-full animate-bounce"
+                        style={{ animationDelay: i * 0.15 + "s" }}
+                      />
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         <div ref={bottomRef} />
       </div>
@@ -333,7 +585,7 @@ export function AIAssistant() {
       {/* Suggested Questions */}
       {messages.length <= 2 && (
         <div className="px-6 mb-3">
-          <p className="text-xs text-gray-400 mb-2">💡 常见问题：</p>
+          <p className="text-xs text-gray-400 mb-2">{"\ud83d\udca1 \u5e38\u89c1\u95ee\u9898\uff1a"}</p>
           <div className="flex flex-wrap gap-2">
             {suggestedQuestions.map((q) => (
               <button
@@ -350,14 +602,57 @@ export function AIAssistant() {
         </div>
       )}
 
+      {/* Image preview bar */}
+      {selectedImage && (
+        <div className="px-6 mb-2">
+          <div className="inline-flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
+            <img src={selectedImage.preview} alt="preview" className="w-12 h-12 object-cover rounded-lg" />
+            <span className="text-xs text-gray-500 max-w-[120px] truncate">{selectedImage.file.name}</span>
+            <button
+              onClick={() => { setSelectedImage(null); }}
+              className="p-0.5 text-gray-400 hover:text-red-500 transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Input Area */}
       <div className="px-6 pb-6">
-        <div className="flex items-center gap-3 bg-white border-2 border-gray-200 rounded-2xl px-4 py-3 focus-within:border-green-400 transition-colors shadow-sm">
+        <div className="flex items-center gap-2 bg-white border-2 border-gray-200 rounded-2xl px-4 py-3 focus-within:border-green-400 transition-colors shadow-sm">
+          {/* Image upload */}
+          <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading}
+            className="p-1.5 text-gray-400 hover:text-green-600 rounded-lg hover:bg-green-50 transition-colors disabled:opacity-40"
+            title="upload image"
+          >
+            <ImagePlus className="w-5 h-5" />
+          </button>
+
+          {/* Voice input */}
+          {speechSupported && (
+            <button
+              onClick={() => { listening ? stopListening() : startListening(); }}
+              disabled={loading}
+              className={"p-1.5 rounded-lg transition-colors disabled:opacity-40 " + (
+                listening
+                  ? "text-red-500 bg-red-50 animate-pulse"
+                  : "text-gray-400 hover:text-green-600 hover:bg-green-50"
+              )}
+              title={listening ? "stop" : "voice input"}
+            >
+              {listening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            </button>
+          )}
+
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
-            placeholder="请输入您的农事问题，如：当前大棚温度是否适合番茄生长？"
+            placeholder={listening ? "\u6b63\u5728\u542c\u60a8\u8bf4\u8bdd..." : "\u8bf7\u8f93\u5165\u60a8\u7684\u519c\u4e8b\u95ee\u9898\uff0c\u5982\uff1a\u5f53\u524d\u5927\u68da\u6e29\u5ea6\u662f\u5426\u9002\u5408\u756a\u8304\u751f\u957f\uff1f"}
             className="flex-1 text-sm outline-none bg-transparent text-gray-700 placeholder-gray-400"
             disabled={loading}
           />
@@ -369,22 +664,22 @@ export function AIAssistant() {
               }
               void sendMessage();
             }}
-            disabled={!loading && !input.trim()}
-            className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all ${loading
+            disabled={!loading && !input.trim() && !selectedImage}
+            className={"w-9 h-9 rounded-xl flex items-center justify-center transition-all " + (loading
                 ? "bg-amber-500 text-white hover:bg-amber-600 shadow-sm"
-                : input.trim()
+                : input.trim() || selectedImage
                   ? "bg-green-600 text-white hover:bg-green-700 shadow-sm"
                   : "bg-gray-100 text-gray-300 cursor-not-allowed"
-              }`}
+              )}
           >
             {loading ? <Square className="w-4 h-4" /> : <Send className="w-4 h-4" />}
           </button>
         </div>
         {loading && activeAssistantId && (
-          <p className="text-xs text-amber-600 text-center mt-2">正在流式生成中，点击右侧方块按钮可中断本次回答。</p>
+          <p className="text-xs text-amber-600 text-center mt-2">{"\u6b63\u5728\u6d41\u5f0f\u751f\u6210\u4e2d\uff0c\u70b9\u51fb\u53f3\u4fa7\u65b9\u5757\u6309\u94ae\u53ef\u4e2d\u65ad\u672c\u6b21\u56de\u7b54\u3002"}</p>
         )}
         <p className="text-xs text-gray-400 text-center mt-2">
-          AI建议仅供参考，请结合实际情况判断。数据来源：本地农业知识库 + 大棚实时传感数据
+          {"AI\u5efa\u8bae\u4ec5\u4f9b\u53c2\u8003\uff0c\u8bf7\u7ed3\u5408\u5b9e\u9645\u60c5\u51b5\u5224\u65ad\u3002\u6570\u636e\u6765\u6e90\uff1a\u672c\u5730\u519c\u4e1a\u77e5\u8bc6\u5e93 + \u5927\u68da\u5b9e\u65f6\u4f20\u611f\u6570\u636e"}
         </p>
       </div>
     </div>

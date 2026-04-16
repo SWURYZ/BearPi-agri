@@ -13,6 +13,7 @@ interface StreamEvent {
 
 interface StreamCallbacks {
   onToken: (token: string) => void;
+  onThinking?: (token: string) => void;
   onDone?: (data: string) => void;
   onError?: (message: string) => void;
 }
@@ -94,6 +95,8 @@ export async function streamAgriAgentChat(
         if (event) {
           if (event.event === "token") {
             callbacks.onToken(event.data);
+          } else if (event.event === "thinking") {
+            callbacks.onThinking?.(event.data);
           } else if (event.event === "done") {
             doneReceived = true;
             callbacks.onDone?.(event.data);
