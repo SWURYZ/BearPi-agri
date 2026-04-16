@@ -1,0 +1,56 @@
+# Copyright (c) 2020 Huawei Device Co., Ltd.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+static_library("oc_mqtt") {
+    sources = [
+        "iot_cloud_oc_sample.c",
+        "src/wifi_connect.c",
+        "src/oc_mqtt.c",
+        "src/oc_mqtt_profile_package.c",
+        "src/E53_IA1.c",
+        "nfc/NT3H.c",
+        "nfc/nfc.c",
+        "nfc/ndef/rtd/nfcForum.c",
+        "nfc/ndef/rtd/rtdText.c",
+        "nfc/ndef/rtd/rtdUri.c",
+        "nfc/ndef/ndef.c",
+    ]
+    
+    cflags = [ "-Wno-unused-variable" ]
+    cflags += [ "-Wno-unused-but-set-variable" ]
+    cflags += [ "-Wno-unused-parameter" ]
+    
+    include_dirs = [
+        "//utils/native/lite/include",
+        "//kernel/liteos_m/components/cmsis/2.0",
+        "//base/iot_hardware/peripheral/interfaces/kits",
+        "//base/iot_hardware/interfaces/kits/wifiiot_lite",
+        "//foundation/communication/interfaces/kits/wifi_lite/wifiservice",
+        "//vendor/hisi/hi3861/hi3861/app/wifiiot_app/init/app_io_init",
+        "//vendor/hisi/hi3861/hi3861/third_party/lwip_sack/include/",
+        "//vendor/hisi/hi3861/hi3861/third_party/paho_mqtt",
+        "//third_party/cJSON",
+        "//third_party/paho_mqtt/MQTTPacket/src",
+        "//third_party/paho_mqtt/MQTTClient-C/src",
+        "//third_party/paho_mqtt/MQTTClient-C/src/liteOS",
+        "//third_party/paho_mqtt/MQTTPacket/samples",
+        "include",
+        "nfc",
+        "nfc/ndef",
+        "nfc/ndef/rtd",
+    ]
+    deps = [ 
+             "//third_party/paho_mqtt:pahomqtt_static",
+    ]
+
+}
