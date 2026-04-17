@@ -36,28 +36,28 @@ const greenhouses = [
     id: "GH-02",
     name: "2号大棚",
     crop: "黄瓜",
-    status: "告警",
-    statusColor: "red",
-    temp: 32.1,
-    humidity: 85,
-    light: 6200,
-    co2: 580,
+    status: "离线",
+    statusColor: "gray",
+    temp: "--",
+    humidity: "--",
+    light: "--",
+    co2: "--",
     deviceCount: 10,
-    onlineDevices: 9,
-    alerts: 2,
+    onlineDevices: 0,
+    alerts: 0,
   },
   {
     id: "GH-03",
     name: "3号大棚",
     crop: "草莓",
-    status: "正常",
-    statusColor: "green",
-    temp: 21.3,
-    humidity: 72,
-    light: 9100,
-    co2: 395,
+    status: "离线",
+    statusColor: "gray",
+    temp: "--",
+    humidity: "--",
+    light: "--",
+    co2: "--",
     deviceCount: 8,
-    onlineDevices: 8,
+    onlineDevices: 0,
     alerts: 0,
   },
   {
@@ -78,29 +78,29 @@ const greenhouses = [
     id: "GH-05",
     name: "5号大棚",
     crop: "生菜",
-    status: "正常",
-    statusColor: "green",
-    temp: 19.8,
-    humidity: 60,
-    light: 7800,
-    co2: 410,
+    status: "离线",
+    statusColor: "gray",
+    temp: "--",
+    humidity: "--",
+    light: "--",
+    co2: "--",
     deviceCount: 9,
-    onlineDevices: 9,
+    onlineDevices: 0,
     alerts: 0,
   },
   {
     id: "GH-06",
     name: "6号大棚",
     crop: "茄子",
-    status: "告警",
-    statusColor: "yellow",
-    temp: 28.9,
-    humidity: 55,
-    light: 11200,
-    co2: 445,
+    status: "离线",
+    statusColor: "gray",
+    temp: "--",
+    humidity: "--",
+    light: "--",
+    co2: "--",
     deviceCount: 11,
-    onlineDevices: 10,
-    alerts: 1,
+    onlineDevices: 0,
+    alerts: 0,
   },
 ];
 
@@ -205,24 +205,8 @@ export function Dashboard() {
     return `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
   }
 
-  function jitter(value: string | number, range: number, fixed = 1) {
-    if (typeof value !== "number") {
-      return value;
-    }
-    const next = value + (Math.random() - 0.5) * range;
-    return +next.toFixed(fixed);
-  }
-
   function handleRefresh() {
-    setGreenhouseData((prev) =>
-      prev.map((gh) => ({
-        ...gh,
-        temp: gh.id === "GH-01" ? gh.temp : jitter(gh.temp, 1.2, 1),
-        humidity: gh.id === "GH-01" ? gh.humidity : jitter(gh.humidity, 2, 0),
-        light: gh.id === "GH-01" ? gh.light : jitter(gh.light, 400, 0),
-        co2: gh.id === "GH-01" ? gh.co2 : jitter(gh.co2, 25, 0),
-      })),
-    );
+    // Only GH-01 is online for now; keep other greenhouses offline static.
     setLastUpdate(nowText());
     setRefreshNotice("刷新成功，已更新最新实时数据");
     window.setTimeout(() => setRefreshNotice(""), 2200);
