@@ -15,6 +15,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import * as auth from "../services/auth";
+import { speak } from "../lib/speech";
 
 type Mode = "login" | "register" | "face-login";
 
@@ -73,7 +74,8 @@ export function Login() {
     setError("");
     setLoading(true);
     try {
-      await auth.login(username, password);
+      const user = await auth.login(username, password);
+      speak(`${user.displayName || user.username}，欢迎您使用智慧农业管理系统`);
       navigate("/", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "登录失败");
@@ -88,7 +90,8 @@ export function Login() {
     setError("");
     setLoading(true);
     try {
-      await auth.register(username, password, displayName);
+      const user = await auth.register(username, password, displayName);
+      speak(`${user.displayName || user.username}，欢迎您使用智慧农业管理系统`);
       navigate("/", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "注册失败");
@@ -141,13 +144,14 @@ export function Login() {
 
           setScanStatus("比对中...");
           try {
-            await auth.loginByFace(blob);
+            const user = await auth.loginByFace(blob);
             if (timerRef.current) {
               clearInterval(timerRef.current);
               timerRef.current = null;
             }
             streamRef.current?.getTracks().forEach((t) => t.stop());
             streamRef.current = null;
+            speak(`${user.displayName || user.username}，欢迎您使用智慧农业管理系统`);
             navigate("/", { replace: true });
           } catch (loginErr) {
             const msg = loginErr instanceof Error ? loginErr.message : "识别失败";

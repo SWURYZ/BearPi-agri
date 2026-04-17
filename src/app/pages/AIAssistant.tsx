@@ -20,11 +20,14 @@ import {
   ChevronDown,
   ChevronRight,
   Brain,
-  ScanFace,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { streamAgriAgentChat } from "../services/agriAgent";
-import { FaceRecognitionPanel } from "../components/FaceRecognitionPanel";
 import { fetchRealtimeSnapshot } from "../services/realtime";
+import { sendManualControl } from "../services/deviceControl";
+import { speak, stopSpeaking, isTTSSupported } from "../lib/speech";
+import { getCurrentUser } from "../services/auth";
 
 interface Message {
   id: string;
@@ -384,38 +387,27 @@ export function AIAssistant() {
     const timer = setInterval(load, 30_000);
     return () => { cancelled = true; clearInterval(timer); };
   }, []);
-  const welcomeContent = [
-    "\u60a8\u597d\uff01\u6211\u662f**\u519c\u4e8b\u667a\u80fd\u52a9\u624b** \ud83c\udf31",
-    "",
-    "\u6211\u5df2\u8bfb\u53d6 **" + currentData.gh + "** \u7684\u5b9e\u65f6\u76d1\u6d4b\u6570\u636e\u4f5c\u4e3a\u4e0a\u4e0b\u6587\uff0c\u53ef\u4ee5\u4e3a\u60a8\u63d0\u4f9b\u57fa\u4e8e\u5f53\u524d\u5927\u68da\u73af\u5883\u7684\u4e2a\u6027\u5316\u79cd\u690d\u5efa\u8bae\u3002",
-    "",
-    "\u60a8\u53ef\u4ee5\u95ee\u6211\uff1a\u4f5c\u7269\u7ba1\u7406\u3001\u75c5\u866b\u5bb3\u9632\u6cbb\u3001\u8bbe\u5907\u64cd\u4f5c\u3001\u73af\u5883\u8c03\u63a7\u7b49\u519c\u4e1a\u76f8\u5173\u95ee\u9898\u3002",
-  ].join("\n");
+  function buildWelcome(userName: string | null, data: GreenhouseData) {
+    const greeting = userName ? `**${userName}**，您好！` : "您好！";
+    return [
+      `${greeting}我是**农事智能助手** 🌱`,
+      "",
+      `我已读取 **${data.gh}** 的实时监测数据作为上下文，可以为您提供基于当前大棚环境的个性化种植建议。`,
+      "",
+      "您可以问我：作物管理、病虫害防治、设备操作、环境调控等农业相关问题。",
+    ].join("\n");
+  }
 
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "0",
       role: "assistant",
-      content: welcomeContent,
+      content: buildWelcome(null, defaultData),
       thinking: "",
       timestamp: formatTime(new Date()),
       sources: [],
     },
   ]);
-
-  // Update welcome message when real data arrives
-  useEffect(() => {
-    const updatedWelcome = [
-      "\u60a8\u597d\uff01\u6211\u662f**\u519c\u4e8b\u667a\u80fd\u52a9\u624b** \ud83c\udf31",
-      "",
-      "\u6211\u5df2\u8bfb\u53d6 **" + currentData.gh + "** \u7684\u5b9e\u65f6\u76d1\u6d4b\u6570\u636e\u4f5c\u4e3a\u4e0a\u4e0b\u6587\uff0c\u53ef\u4ee5\u4e3a\u60a8\u63d0\u4f9b\u57fa\u4e8e\u5f53\u524d\u5927\u68da\u73af\u5883\u7684\u4e2a\u6027\u5316\u79cd\u690d\u5efa\u8bae\u3002",
-      "",
-      "\u60a8\u53ef\u4ee5\u95ee\u6211\uff1a\u4f5c\u7269\u7ba1\u7406\u3001\u75c5\u866b\u5bb3\u9632\u6cbb\u3001\u8bbe\u5907\u64cd\u4f5c\u3001\u73af\u5883\u8c03\u63a7\u7b49\u519c\u4e1a\u76f8\u5173\u95ee\u9898\u3002",
-    ].join("\n");
-    setMessages((prev) =>
-      prev.map((msg) => (msg.id === "0" ? { ...msg, content: updatedWelcome } : msg)),
-    );
-  }, [currentData]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
@@ -423,46 +415,45 @@ export function AIAssistant() {
   const [rememberedUserName, setRememberedUserName] = useState<string | null>(null);
   const [mustGreetFirst, setMustGreetFirst] = useState(false);
   const [selectedImage, setSelectedImage] = useState<{ file: File; preview: string } | null>(null);
-  const [showFacePanel, setShowFacePanel] = useState(false);
+  const [ttsEnabled, setTtsEnabled] = useState(true);
+
+  // Update welcome message when real data or user changes
+  useEffect(() => {
+    const updatedWelcome = buildWelcome(rememberedUserName, currentData);
+    setMessages((prev) =>
+      prev.map((msg) => (msg.id === "0" ? { ...msg, content: updatedWelcome } : msg)),
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentData, rememberedUserName]);
+  const [voiceMode, setVoiceMode] = useState(false); // 语音对话模式：识别后自动发送
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingTtsRef = useRef<string | null>(null);
 
+  // 自动从登录状态获取当前用户
   useEffect(() => {
-    try {
-      const savedName = localStorage.getItem("agri.ai.rememberedUserName");
-      if (savedName) {
-        setRememberedUserName(savedName);
-      }
-      const savedGreetRule = localStorage.getItem("agri.ai.mustGreetFirst");
-      if (savedGreetRule === "true") {
+    getCurrentUser().then((user) => {
+      if (user) {
+        setRememberedUserName(user.displayName || user.username);
         setMustGreetFirst(true);
       }
-    } catch {
-      // ignore localStorage access issues
-    }
+    });
   }, []);
 
-  useEffect(() => {
-    try {
-      if (rememberedUserName) {
-        localStorage.setItem("agri.ai.rememberedUserName", rememberedUserName);
-      } else {
-        localStorage.removeItem("agri.ai.rememberedUserName");
-      }
-      localStorage.setItem("agri.ai.mustGreetFirst", mustGreetFirst ? "true" : "false");
-    } catch {
-      // ignore localStorage access issues
-    }
-  }, [rememberedUserName, mustGreetFirst]);
+
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  const sendMessageRef = useRef<(text?: string) => Promise<void>>(async () => {});
+
   const { listening, supported: speechSupported, start: startListening, stop: stopListening } =
     useSpeechRecognition(useCallback((text: string) => {
-      setInput((prev) => prev + text);
+      setInput(text);
+      // 语音对话模式下自动发送
+      setTimeout(() => sendMessageRef.current(text), 100);
     }, []));
 
   function appendField(assistantId: string, field: "content" | "thinking", text: string) {
@@ -484,9 +475,67 @@ export function AIAssistant() {
     );
   }
 
+  /** 解析语音指令中的设备控制命令 */
+  function parseDeviceCommand(text: string): { commandType: string; action: string; label: string } | null {
+    const t = text.replace(/\s+/g, "");
+    // 补光灯
+    if (/(开|打开|开启|启动)(补光灯|灯|灯光)/.test(t)) return { commandType: "LIGHT_CONTROL", action: "ON", label: "补光灯开启" };
+    if (/(关|关闭|关掉|熄灭)(补光灯|灯|灯光)/.test(t)) return { commandType: "LIGHT_CONTROL", action: "OFF", label: "补光灯关闭" };
+    // 风扇/转机/电机
+    if (/(开|打开|开启|启动)(风扇|转机|电机|马达|通风)/.test(t)) return { commandType: "MOTOR_CONTROL", action: "ON", label: "风扇开启" };
+    if (/(关|关闭|关掉|停止)(风扇|转机|电机|马达|通风)/.test(t)) return { commandType: "MOTOR_CONTROL", action: "OFF", label: "风扇关闭" };
+    return null;
+  }
+
+  /** 执行设备控制命令（语音触发） */
+  async function executeVoiceDeviceCommand(cmd: { commandType: string; action: string; label: string }) {
+    const now = Date.now();
+    const userMsg: Message = {
+      id: now.toString(),
+      role: "user",
+      content: `语音指令：${cmd.label}`,
+      thinking: "",
+      timestamp: formatTime(new Date()),
+    };
+    const assistantId = (now + 1).toString();
+    const assistantMsg: Message = {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+      thinking: "",
+      timestamp: formatTime(new Date()),
+    };
+    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+
+    try {
+      const result = await sendManualControl({
+        deviceId: "69d75b1d7f2e6c302f654fea_20031104",
+        commandType: cmd.commandType,
+        action: cmd.action,
+      });
+      const successText = `✅ ${cmd.label}指令已发送成功！\n\n- 请求ID：${result.requestId}\n- 状态：${result.status}\n- ${result.message}`;
+      updateField(assistantId, "content", successText);
+      if (ttsEnabled) speak(`${cmd.label}指令已发送成功`);
+    } catch (err) {
+      const errText = `❌ ${cmd.label}指令发送失败：${err instanceof Error ? err.message : "未知错误"}`;
+      updateField(assistantId, "content", errText);
+      if (ttsEnabled) speak(`${cmd.label}指令发送失败`);
+    }
+  }
+
   async function sendMessage(text?: string) {
     const content = text || input.trim();
     if (!content || loading) return;
+
+    // 语音设备控制指令检测
+    const deviceCmd = parseDeviceCommand(content);
+    if (deviceCmd) {
+      setInput("");
+      await executeVoiceDeviceCommand(deviceCmd);
+      // 语音模式下自动重新开始监听
+      if (voiceMode && speechSupported) setTimeout(() => startListening(), 500);
+      return;
+    }
 
     const now = Date.now();
     const userMsg: Message = {
@@ -576,6 +625,8 @@ export function AIAssistant() {
             : msg,
         ),
       );
+      // 流式结束后记录待朗读ID
+      pendingTtsRef.current = assistantId;
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         setMessages((prev) =>
@@ -593,8 +644,31 @@ export function AIAssistant() {
       abortRef.current = null;
       setLoading(false);
       setActiveAssistantId(null);
+      // TTS 朗读完成的回复
+      if (ttsEnabled && pendingTtsRef.current) {
+        const ttsId = pendingTtsRef.current;
+        pendingTtsRef.current = null;
+        setMessages((prev) => {
+          const target = prev.find((m) => m.id === ttsId);
+          if (target?.content) {
+            speak(target.content).then(() => {
+              // 语音模式下朗读完毕自动开始下一轮监听
+              if (voiceMode && speechSupported) startListening();
+            });
+          }
+          return prev;
+        });
+      } else if (voiceMode && speechSupported) {
+        // TTS 关闭但语音模式下仍重新监听
+        setTimeout(() => startListening(), 500);
+      }
     }
   }
+
+  // 保持 sendMessageRef 同步
+  useEffect(() => {
+    sendMessageRef.current = sendMessage;
+  });
 
   function stopStreaming() {
     abortRef.current?.abort();
@@ -623,25 +697,37 @@ export function AIAssistant() {
             <h1 className="text-xl font-bold text-gray-800">{"\u519c\u4e8b\u667a\u80fd\u95ee\u7b54"}</h1>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowFacePanel((v) => !v)}
-              className={"flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-lg transition-colors " + (showFacePanel ? "text-violet-600 border-violet-300 bg-violet-50" : "text-gray-500 border-gray-200 hover:bg-gray-50")}
-            >
-              <ScanFace className="w-3.5 h-3.5" />
-              {"\u4eba\u8138\u8bc6\u522b"}
-            </button>
+            {/* 语音播报开关 */}
+            {isTTSSupported() && (
+              <button
+                onClick={() => { setTtsEnabled((v) => !v); if (ttsEnabled) stopSpeaking(); }}
+                className={"flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-lg transition-colors " + (ttsEnabled ? "text-green-600 border-green-300 bg-green-50" : "text-gray-500 border-gray-200 hover:bg-gray-50")}
+                title={ttsEnabled ? "关闭语音播报" : "开启语音播报"}
+              >
+                {ttsEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+                {"语音播报"}
+              </button>
+            )}
+            {/* 语音对话模式 */}
+            {speechSupported && (
+              <button
+                onClick={() => {
+                  const next = !voiceMode;
+                  setVoiceMode(next);
+                  if (next) { setTtsEnabled(true); startListening(); }
+                  else { stopListening(); stopSpeaking(); }
+                }}
+                className={"flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-lg transition-colors " + (voiceMode ? "text-blue-600 border-blue-300 bg-blue-50 animate-pulse" : "text-gray-500 border-gray-200 hover:bg-gray-50")}
+                title={voiceMode ? "退出语音对话" : "语音对话模式"}
+              >
+                {voiceMode ? <Mic className="w-3.5 h-3.5" /> : <MicOff className="w-3.5 h-3.5" />}
+                {"语音对话"}
+              </button>
+            )}
             <button
               onClick={() => {
                 setMessages((prev) => [prev[0]]);
                 setConversationId(null);
-                setRememberedUserName(null);
-                setMustGreetFirst(false);
-                try {
-                  localStorage.removeItem("agri.ai.rememberedUserName");
-                  localStorage.removeItem("agri.ai.mustGreetFirst");
-                } catch {
-                  // ignore localStorage access issues
-                }
               }}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
             >
@@ -672,54 +758,6 @@ export function AIAssistant() {
             ))}
           </div>
         </div>
-
-        {/* Face Recognition Panel */}
-        {showFacePanel && (
-          <div className="mb-4">
-            <FaceRecognitionPanel
-              onRecognized={(personName, similarity) => {
-                // 记住用户姓名
-                setRememberedUserName(personName);
-                setMustGreetFirst(true);
-                setShowFacePanel(false);
-
-                // 生成本地欢迎消息（不调用 Coze）
-                const now = Date.now();
-                const userMsg: Message = {
-                  id: now.toString(),
-                  role: "user",
-                  content: `我是${personName}，刚刚通过人脸识别登录。`,
-                  thinking: "",
-                  timestamp: formatTime(new Date()),
-                };
-                const hour = new Date().getHours();
-                const timeGreeting = hour < 12 ? "上午好" : hour < 18 ? "下午好" : "晚上好";
-                const welcomeLines = [
-                  `${timeGreeting}，**${personName}**！🌱 人脸识别验证通过（相似度 ${(similarity * 100).toFixed(1)}%）。`,
-                  "",
-                  `欢迎回到智慧农业管理系统！当前为您加载的是 **${currentData.gh}** 的实时环境数据：`,
-                  "",
-                  `- 🌡️ 温度：**${currentData.temp}°C** | 💧 湿度：**${currentData.humidity}%**`,
-                  `- ☀️ 光照：**${currentData.light} lux** | 🌿 种植作物：**${currentData.crop}**`,
-                  "",
-                  `请问有什么我可以帮您的吗？比如：`,
-                  "- 查看当前大棚环境是否适合作物生长",
-                  "- 获取今日种植管理建议",
-                  "- 设备控制与自动化规则配置",
-                ].join("\n");
-                const assistantMsg: Message = {
-                  id: (now + 1).toString(),
-                  role: "assistant",
-                  content: welcomeLines,
-                  thinking: "",
-                  timestamp: formatTime(new Date()),
-                  sources: [],
-                };
-                setMessages((prev) => [...prev, userMsg, assistantMsg]);
-              }}
-            />
-          </div>
-        )}
 
         {/* RAG Pipeline */}
         <div className="flex items-center gap-2 text-xs text-gray-400 mb-4">
@@ -856,6 +894,23 @@ export function AIAssistant() {
               </button>
             ))}
           </div>
+          {/* 语音指令提示 */}
+          {speechSupported && (
+            <div className="mt-2">
+              <p className="text-xs text-gray-400 mb-1">{"\ud83c\udf99\ufe0f \u8bed\u97f3\u6307\u4ee4\u793a\u4f8b\uff1a"}</p>
+              <div className="flex flex-wrap gap-2">
+                {["\u5f00\u8865\u5149\u706f", "\u5173\u8865\u5149\u706f", "\u5f00\u98ce\u6247", "\u5173\u98ce\u6247"].map((cmd) => (
+                  <button
+                    key={cmd}
+                    onClick={() => void sendMessage(cmd)}
+                    className="text-xs px-3 py-1.5 bg-blue-50 border border-blue-200 text-blue-600 rounded-full hover:border-blue-400 hover:text-blue-700 transition-all"
+                  >
+                    {"\ud83d\udce2 " + cmd}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -909,7 +964,7 @@ export function AIAssistant() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
-            placeholder={listening ? "\u6b63\u5728\u542c\u60a8\u8bf4\u8bdd..." : "\u8bf7\u8f93\u5165\u60a8\u7684\u519c\u4e8b\u95ee\u9898\uff0c\u5982\uff1a\u5f53\u524d\u5927\u68da\u6e29\u5ea6\u662f\u5426\u9002\u5408\u756a\u8304\u751f\u957f\uff1f"}
+            placeholder={listening ? "\u6b63\u5728\u542c\u60a8\u8bf4\u8bdd\u2026\u8bd5\u8bd5\u201c\u5f00\u8865\u5149\u706f\u201d\u201c\u5f53\u524d\u6e29\u5ea6\u591a\u5c11\u201d" : voiceMode ? "\u8bed\u97f3\u5bf9\u8bdd\u6a21\u5f0f\u5df2\u5f00\u542f\uff0c\u8bf7\u8bf4\u51fa\u60a8\u7684\u95ee\u9898\u6216\u6307\u4ee4" : "\u8bf7\u8f93\u5165\u60a8\u7684\u519c\u4e8b\u95ee\u9898\uff0c\u5982\uff1a\u5f53\u524d\u5927\u68da\u6e29\u5ea6\u662f\u5426\u9002\u5408\u756a\u8304\u751f\u957f\uff1f"}
             className="flex-1 text-sm outline-none bg-transparent text-gray-700 placeholder-gray-400"
             disabled={loading}
           />
