@@ -1,0 +1,45 @@
+server:
+  port: 8085
+
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://47.108.58.107:3306/dream6?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:c0765083cd3f57ab}
+    hikari:
+      initialization-fail-timeout: -1
+  application:
+    name: threshold-alert-audit-service
+  jpa:
+    database-platform: ${SPRING_JPA_DATABASE_PLATFORM:org.hibernate.community.dialect.MySQLLegacyDialect}
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    show-sql: false
+  flyway:
+    enabled: ${APP_FLYWAY_ENABLED:false}
+    locations: classpath:db/migration
+    table: flyway_schema_history_threshold_alert_audit
+    baseline-on-migrate: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui/index.html
+
+threshold-alert:
+  auto-poll:
+    enabled: ${THRESHOLD_ALERT_AUTO_POLL_ENABLED:true}
+    default-interval-minutes: ${THRESHOLD_ALERT_AUTO_POLL_DEFAULT_INTERVAL_MINUTES:2}
+    scheduler-tick-ms: ${THRESHOLD_ALERT_AUTO_POLL_SCHEDULER_TICK_MS:5000}
+    initial-delay-ms: ${THRESHOLD_ALERT_AUTO_POLL_INITIAL_DELAY_MS:10000}
+    iot-latest-url-template: ${THRESHOLD_ALERT_IOT_LATEST_URL_TEMPLATE:http://localhost:8082/api/v1/iot/devices/%s/latest}
+  sound-alarm:
+    enabled: ${THRESHOLD_ALERT_SOUND_ALARM_ENABLED:true}
+    iot-command-url: ${THRESHOLD_ALERT_IOT_COMMAND_URL:http://localhost:8082/api/v1/iot/commands}
+    command-type: ${THRESHOLD_ALERT_SOUND_COMMAND_TYPE:LIGHT_CONTROL}
+    param-key: ${THRESHOLD_ALERT_SOUND_PARAM_KEY:Light}
+    param-value: ${THRESHOLD_ALERT_SOUND_PARAM_VALUE:ON}
+    param-off-value: ${THRESHOLD_ALERT_SOUND_PARAM_OFF_VALUE:OFF}
+    blink-interval-ms: ${THRESHOLD_ALERT_BLINK_INTERVAL_MS:5000}
+    on-duration-ms: ${THRESHOLD_ALERT_ON_DURATION_MS:1000}
