@@ -49,6 +49,10 @@ export default defineConfig(({ mode }) => {
             target: faceProxyTarget,
             changeOrigin: true,
           },
+          '/api/auth': {
+            target: faceProxyTarget,
+            changeOrigin: true,
+          },
           '/api/greenhouses': {
             target: historicalProxyTarget,
             changeOrigin: true,

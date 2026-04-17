@@ -12,7 +12,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import * as auth from "../services/auth";
-import { registerFace, listFaceRecords, deleteFaceRecord, type FaceRecordInfo } from "../services/faceRecognition";
+import { listFaceRecords, deleteFaceRecord, type FaceRecordInfo } from "../services/faceRecognition";
 import { SimpleModal } from "../components/ui/SimpleModal";
 
 type AddStep = "form" | "camera" | "uploading" | "done";
@@ -21,7 +21,7 @@ export function UserManagement() {
   const [users, setUsers] = useState<auth.User[]>([]);
   const [faceRecords, setFaceRecords] = useState<FaceRecordInfo[]>([]);
   const [faceError, setFaceError] = useState<string | null>(null);
-  const currentUser = auth.getCurrentUser();
+  const [currentUser, setCurrentUser] = useState<auth.User | null>(null);
   const isAdminUser = currentUser?.role === "admin";
 
   /* ---- 添加用户状态 ---- */
@@ -37,13 +37,24 @@ export function UserManagement() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
+  /* ---- 为已有用户注册人脸 ---- */
+  const [faceTarget, setFaceTarget] = useState<auth.User | null>(null);
+  const faceVideoRef = useRef<HTMLVideoElement>(null);
+  const faceCanvasRef = useRef<HTMLCanvasElement>(null);
+  const faceStreamRef = useRef<MediaStream | null>(null);
+  const [faceUploading, setFaceUploading] = useState(false);
+  const [faceStepDone, setFaceStepDone] = useState(false);
+  const [faceAddError, setFaceAddError] = useState("");
+
   /* ---- 删除确认 ---- */
   const [deleteTarget, setDeleteTarget] = useState<auth.User | null>(null);
   const [deleteFaceTarget, setDeleteFaceTarget] = useState<FaceRecordInfo | null>(null);
 
   /* ---- 加载数据 ---- */
-  const refreshUsers = useCallback(() => {
-    setUsers(auth.getAllUsers());
+  const refreshUsers = useCallback(async () => {
+    try {
+      setUsers(await auth.getAllUsers());
+    } catch { setUsers([]); }
   }, []);
 
   const refreshFaces = useCallback(async () => {
@@ -58,6 +69,7 @@ export function UserManagement() {
   }, []);
 
   useEffect(() => {
+    auth.getCurrentUser().then(setCurrentUser);
     refreshUsers();
     refreshFaces();
   }, [refreshUsers, refreshFaces]);
@@ -66,6 +78,7 @@ export function UserManagement() {
   useEffect(() => {
     return () => {
       streamRef.current?.getTracks().forEach((t) => t.stop());
+      faceStreamRef.current?.getTracks().forEach((t) => t.stop());
     };
   }, []);
 
@@ -116,15 +129,12 @@ export function UserManagement() {
     closeCamera();
 
     try {
-      // 1. 注册人脸到后端
-      const faceRes = await registerFace(blob, newDisplayName.trim());
-
-      // 2. 创建系统用户并关联人脸
+      // 直接通过后端创建用户（后端同时注册人脸）
       await auth.registerUserWithFace(
         newUsername.trim(),
         newPassword,
         newDisplayName.trim(),
-        faceRes.personId,
+        blob,
       );
 
       setAddStep("done");
@@ -135,6 +145,67 @@ export function UserManagement() {
       setAddStep("form");
     }
   }, [newUsername, newPassword, newDisplayName, closeCamera, refreshUsers, refreshFaces]);
+
+  /* ---- 为已有用户打开人脸注册弹窗 ---- */
+  const openFaceRegister = useCallback(async (user: auth.User) => {
+    setFaceTarget(user);
+    setFaceAddError("");
+    setFaceStepDone(false);
+    setFaceUploading(false);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false,
+      });
+      faceStreamRef.current = stream;
+      requestAnimationFrame(() => {
+        if (faceVideoRef.current) faceVideoRef.current.srcObject = stream;
+      });
+    } catch {
+      setFaceAddError("无法访问摄像头");
+    }
+  }, []);
+
+  const closeFaceRegister = useCallback(() => {
+    faceStreamRef.current?.getTracks().forEach((t) => t.stop());
+    faceStreamRef.current = null;
+    setFaceTarget(null);
+    setFaceAddError("");
+    setFaceStepDone(false);
+    setFaceUploading(false);
+  }, []);
+
+  const captureFaceForUser = useCallback(async () => {
+    const video = faceVideoRef.current;
+    const canvas = faceCanvasRef.current;
+    if (!video || !canvas || !faceTarget) return;
+
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((b) => resolve(b), "image/jpeg", 0.9),
+    );
+    if (!blob) { setFaceAddError("拍照失败"); return; }
+
+    setFaceUploading(true);
+    faceStreamRef.current?.getTracks().forEach((t) => t.stop());
+    faceStreamRef.current = null;
+
+    try {
+      await auth.updateUserFace(faceTarget.id, blob);
+      setFaceStepDone(true);
+      refreshUsers();
+      refreshFaces();
+    } catch (err) {
+      setFaceAddError(err instanceof Error ? err.message : "人脸注册失败");
+    } finally {
+      setFaceUploading(false);
+    }
+  }, [faceTarget, refreshUsers, refreshFaces]);
 
   /* ---- 取消添加 ---- */
   const cancelAdd = useCallback(() => {
@@ -149,9 +220,9 @@ export function UserManagement() {
 
   /* ---- 删除用户 ---- */
   const handleDeleteUser = useCallback(
-    (user: auth.User) => {
+    async (user: auth.User) => {
       try {
-        auth.deleteUser(user.id);
+        await auth.deleteUser(user.id);
         refreshUsers();
       } catch {
         /* ignore */
@@ -190,6 +261,7 @@ export function UserManagement() {
   return (
     <div className="h-full bg-gradient-to-br from-gray-50 to-green-50/30 p-6 overflow-y-auto">
       <canvas ref={canvasRef} className="hidden" />
+      <canvas ref={faceCanvasRef} className="hidden" />
 
       {/* 标题 */}
       <div className="flex items-center justify-between mb-6">
@@ -271,15 +343,26 @@ export function UserManagement() {
                     </div>
                   </div>
                 </div>
-                {u.id !== currentUser?.id && (
-                  <button
-                    onClick={() => setDeleteTarget(u)}
-                    className="p-2 text-gray-300 hover:text-red-500 transition-colors"
-                    title="删除用户"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )}
+                <div className="flex items-center gap-1">
+                  {!u.faceRegistered && (
+                    <button
+                      onClick={() => openFaceRegister(u)}
+                      className="p-2 text-violet-400 hover:text-violet-600 transition-colors"
+                      title="注册人脸"
+                    >
+                      <ScanFace className="w-4 h-4" />
+                    </button>
+                  )}
+                  {u.id !== currentUser?.id && (
+                    <button
+                      onClick={() => setDeleteTarget(u)}
+                      className="p-2 text-gray-300 hover:text-red-500 transition-colors"
+                      title="删除用户"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -458,6 +541,82 @@ export function UserManagement() {
                   >
                     完成
                   </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ====== 为已有用户注册人脸弹窗 ====== */}
+      {faceTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <h3 className="text-base font-semibold text-gray-800">
+                为「{faceTarget.displayName}」注册人脸
+              </h3>
+              <button onClick={closeFaceRegister} className="p-1 text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-5">
+              {faceStepDone ? (
+                <div className="py-8 text-center">
+                  <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto mb-3" />
+                  <p className="text-sm font-medium text-gray-700">人脸注册成功！</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {faceTarget.displayName} 现在可以使用人脸识别登录
+                  </p>
+                  <button
+                    onClick={closeFaceRegister}
+                    className="mt-4 px-6 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-all"
+                  >
+                    完成
+                  </button>
+                </div>
+              ) : faceUploading ? (
+                <div className="py-8 text-center">
+                  <Loader2 className="w-10 h-10 text-green-500 animate-spin mx-auto mb-3" />
+                  <p className="text-sm text-gray-600">正在注册人脸...</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="relative rounded-xl overflow-hidden bg-black aspect-video">
+                    <video
+                      ref={faceVideoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className="w-36 h-48 border-2 border-dashed border-white/50 rounded-[40%]" />
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 text-center">
+                    请让 <strong>{faceTarget.displayName}</strong> 面朝镜头，点击下方按钮拍照
+                  </p>
+                  {faceAddError && (
+                    <p className="text-xs text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                      {faceAddError}
+                    </p>
+                  )}
+                  <div className="flex gap-3">
+                    <button
+                      onClick={closeFaceRegister}
+                      className="flex-1 py-2.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      取消
+                    </button>
+                    <button
+                      onClick={captureFaceForUser}
+                      className="flex-1 py-2.5 bg-violet-600 text-white text-sm font-medium rounded-lg hover:bg-violet-700 transition-all flex items-center justify-center gap-2"
+                    >
+                      <Camera className="w-4 h-4" />
+                      拍照注册
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

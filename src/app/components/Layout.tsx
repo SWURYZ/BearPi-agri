@@ -1,4 +1,5 @@
 import { Outlet, NavLink, useLocation, useNavigate } from "react-router";
+import { useState, useEffect } from "react";
 import {
   LayoutDashboard,
   Activity,
@@ -13,7 +14,7 @@ import {
   Users,
   LogOut,
 } from "lucide-react";
-import { getCurrentUser, isAdmin, logout } from "../services/auth";
+import { getCurrentUser, logout, type User } from "../services/auth";
 
 const baseNavItems = [
   { to: "/", icon: LayoutDashboard, label: "总览大屏", desc: "多大棚统一监控" },
@@ -31,12 +32,17 @@ const adminNavItem = { to: "/users", icon: Users, label: "用户管理", desc: "
 export function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
-  const user = getCurrentUser();
-  const adminUser = isAdmin();
+  const [user, setUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    getCurrentUser().then(setUser);
+  }, []);
+
+  const adminUser = user?.role === "admin";
   const navItems = adminUser ? [...baseNavItems, adminNavItem] : baseNavItems;
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate("/login", { replace: true });
   };
 

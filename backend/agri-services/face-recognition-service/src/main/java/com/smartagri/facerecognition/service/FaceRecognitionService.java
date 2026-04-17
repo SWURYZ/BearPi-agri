@@ -6,6 +6,8 @@ import com.smartagri.facerecognition.dto.FaceRegisterResponse;
 import com.smartagri.facerecognition.dto.FaceRecordInfo;
 import com.smartagri.facerecognition.entity.FaceRecord;
 import com.smartagri.facerecognition.repository.FaceRecordRepository;
+import cn.smartjavaai.common.entity.face.LivenessResult;
+import cn.smartjavaai.common.enums.face.LivenessStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -29,7 +31,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class FaceRecognitionService {
 
-    private final OnnxModelService onnxModelService;
+    private final SmartAIModelService smartAIModelService;
     private final FaceRecordRepository faceRecordRepository;
     private final FaceRecognitionProperties properties;
 
@@ -38,7 +40,7 @@ public class FaceRecognitionService {
      */
     @Transactional
     public FaceRegisterResponse register(MultipartFile imageFile, String personName, String personId) {
-        if (!onnxModelService.isReady()) {
+        if (!smartAIModelService.isReady()) {
             throw new IllegalStateException("人脸识别模型未就绪");
         }
         if (personId == null || personId.isBlank()) {
@@ -54,11 +56,19 @@ public class FaceRecognitionService {
                 throw new IllegalArgumentException("无法解析图片文件，请上传 JPG/PNG 格式图片");
             }
 
-            // 提取特征向量
-            float[] embedding = onnxModelService.extractFeatures(image);
+            // 活体检测（如果启用）
+            performLivenessCheck(image, "人脸注册");
 
-            // 保存图片到磁盘
-            String imagePath = saveImage(imageFile, personId);
+            // 提取特征向量（SmartJavaAI：人脸检测 → 裁剪 → 对齐 → 特征提取）
+            float[] embedding = smartAIModelService.extractFeatures(image);
+
+            // 保存图片到磁盘（非关键操作，失败不影响注册）
+            String imagePath = null;
+            try {
+                imagePath = saveImage(imageFile, personId);
+            } catch (Exception imgEx) {
+                log.warn("人脸图片保存失败（不影响注册）: {}", imgEx.getMessage());
+            }
 
             // 保存到数据库
             FaceRecord record = new FaceRecord();
@@ -85,7 +95,7 @@ public class FaceRecognitionService {
      * 1:N 人脸识别 —— 在所有已注册人脸中找到最匹配的
      */
     public FaceRecognizeResponse recognize(MultipartFile imageFile) {
-        if (!onnxModelService.isReady()) {
+        if (!smartAIModelService.isReady()) {
             throw new IllegalStateException("人脸识别模型未就绪");
         }
 
@@ -95,7 +105,10 @@ public class FaceRecognitionService {
                 throw new IllegalArgumentException("无法解析图片文件");
             }
 
-            float[] queryEmbedding = onnxModelService.extractFeatures(image);
+            // 活体检测（如果启用）
+            performLivenessCheck(image, "人脸识别");
+
+            float[] queryEmbedding = smartAIModelService.extractFeatures(image);
             List<FaceRecord> allRecords = faceRecordRepository.findAll();
 
             if (allRecords.isEmpty()) {
@@ -115,7 +128,7 @@ public class FaceRecognitionService {
 
             for (FaceRecord record : allRecords) {
                 float[] storedEmbedding = bytesToFloats(record.getEmbedding());
-                double similarity = onnxModelService.cosineSimilarity(queryEmbedding, storedEmbedding);
+                double similarity = smartAIModelService.cosineSimilarity(queryEmbedding, storedEmbedding);
                 log.debug("人脸比对: person={}, similarity={}", record.getPersonId(), similarity);
                 if (similarity > bestSimilarity) {
                     bestSimilarity = similarity;
@@ -145,7 +158,7 @@ public class FaceRecognitionService {
      * 1:1 人脸验证 —— 验证上传的人脸是否与指定 personId 匹配
      */
     public FaceRecognizeResponse verify(MultipartFile imageFile, String personId) {
-        if (!onnxModelService.isReady()) {
+        if (!smartAIModelService.isReady()) {
             throw new IllegalStateException("人脸识别模型未就绪");
         }
 
@@ -158,9 +171,12 @@ public class FaceRecognitionService {
                 throw new IllegalArgumentException("无法解析图片文件");
             }
 
-            float[] queryEmbedding = onnxModelService.extractFeatures(image);
+            // 活体检测（如果启用）
+            performLivenessCheck(image, "人脸验证");
+
+            float[] queryEmbedding = smartAIModelService.extractFeatures(image);
             float[] storedEmbedding = bytesToFloats(record.getEmbedding());
-            double similarity = onnxModelService.cosineSimilarity(queryEmbedding, storedEmbedding);
+            double similarity = smartAIModelService.cosineSimilarity(queryEmbedding, storedEmbedding);
 
             double threshold = properties.getSimilarityThreshold();
             boolean matched = similarity >= threshold;
@@ -208,6 +224,46 @@ public class FaceRecognitionService {
     }
 
     // ======================== 工具方法 ========================
+
+    /**
+     * 执行活体检测校验。如果活体检测启用且检测到非真人，抛出异常。
+     */
+    private void performLivenessCheck(BufferedImage image, String scene) {
+        if (!properties.isLivenessEnabled() || !smartAIModelService.isLivenessReady()) {
+            return;
+        }
+        LivenessResult result = smartAIModelService.checkLiveness(image);
+        if (result == null) {
+            log.warn("{}活体检测无结果（未检测到人脸或检测异常），跳过", scene);
+            return;
+        }
+        LivenessStatus status = result.getStatus();
+        log.info("{}活体检测: status={}, score={}", scene, status.getDescription(), result.getScore());
+        if (status != LivenessStatus.LIVE) {
+            throw new IllegalArgumentException(
+                    String.format("活体检测未通过：%s（得分 %.4f）。请确保本人在摄像头前操作，不要使用照片或视频。",
+                            status.getDescription(), result.getScore()));
+        }
+    }
+
+    /**
+     * 独立的活体检测接口，供前端调用预检。
+     * @return LivenessResult 或 null（活体检测不可用）
+     */
+    public LivenessResult checkLiveness(MultipartFile imageFile) {
+        if (!properties.isLivenessEnabled() || !smartAIModelService.isLivenessReady()) {
+            return null;
+        }
+        try {
+            BufferedImage image = ImageIO.read(imageFile.getInputStream());
+            if (image == null) {
+                throw new IllegalArgumentException("无法解析图片文件");
+            }
+            return smartAIModelService.checkLiveness(image);
+        } catch (IOException e) {
+            throw new RuntimeException("活体检测失败: " + e.getMessage(), e);
+        }
+    }
 
     private String saveImage(MultipartFile file, String personId) throws IOException {
         Path storageDir = Paths.get(properties.getStoragePath()).toAbsolutePath();

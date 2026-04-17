@@ -32,11 +32,11 @@
         <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-core</artifactId></dependency>
         <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-mysql</artifactId></dependency>
 
-        <!-- ONNX Runtime for face model inference -->
+        <!-- SmartJavaAI 人脸识别 SDK（人脸检测 + 特征提取 + 比对） -->
         <dependency>
-            <groupId>com.microsoft.onnxruntime</groupId>
-            <artifactId>onnxruntime</artifactId>
-            <version>1.17.0</version>
+            <groupId>cn.smartjavaai</groupId>
+            <artifactId>smartjavaai-face</artifactId>
+            <version>1.0.23</version>
         </dependency>
 
         <!-- API Docs -->

@@ -12,9 +12,9 @@ import {
   Sprout,
   Sun,
   Droplets,
+  RotateCcw,
 } from "lucide-react";
 import * as auth from "../services/auth";
-import { recognizeFace } from "../services/faceRecognition";
 
 type Mode = "login" | "register" | "face-login";
 
@@ -38,8 +38,10 @@ export function Login() {
   const busyRef = useRef(false);
 
   useEffect(() => {
-    setIsFirst(auth.isFirstUser());
-    if (auth.getCurrentUser()) navigate("/", { replace: true });
+    auth.isFirstUser().then(setIsFirst);
+    auth.getCurrentUser().then((u) => {
+      if (u) navigate("/", { replace: true });
+    });
   }, [navigate]);
 
   useEffect(() => {
@@ -48,6 +50,22 @@ export function Login() {
       streamRef.current?.getTracks().forEach((t) => t.stop());
     };
   }, []);
+
+  /* ---- 系统初始化 ---- */
+  const handleReset = async () => {
+    if (!confirm("确定要清除所有用户数据并重新注册管理员吗？此操作不可恢复！")) return;
+    setError("");
+    setLoading(true);
+    try {
+      await auth.resetSystem();
+      setIsFirst(true);
+      setMode("register");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "初始化失败");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   /* ---- 密码登录 ---- */
   const handleLogin = async (e: React.FormEvent) => {
@@ -122,24 +140,24 @@ export function Login() {
           }
 
           setScanStatus("比对中...");
-          const result = await recognizeFace(blob);
-
-          if (result.matched && result.personId) {
+          try {
+            await auth.loginByFace(blob);
             if (timerRef.current) {
               clearInterval(timerRef.current);
               timerRef.current = null;
             }
             streamRef.current?.getTracks().forEach((t) => t.stop());
             streamRef.current = null;
-            try {
-              auth.loginByFace(result.personId);
-              navigate("/", { replace: true });
-            } catch {
-              setError("人脸已识别但未关联到系统用户");
-              setMode("login");
+            navigate("/", { replace: true });
+          } catch (loginErr) {
+            const msg = loginErr instanceof Error ? loginErr.message : "识别失败";
+            if (msg.includes("活体检测")) {
+              setScanStatus("⚠️ " + msg);
+            } else if (msg.includes("未识别") || msg.includes("未匹配")) {
+              setScanStatus("未匹配，继续扫描...");
+            } else {
+              setScanStatus(msg + "，重试中...");
             }
-          } else {
-            setScanStatus(`未匹配 (${(result.similarity * 100).toFixed(0)}%)，继续扫描...`);
           }
         } catch {
           setScanStatus("识别服务异常，重试中...");
@@ -325,9 +343,20 @@ export function Login() {
                     </button>
                   </p>
                 ) : (
-                  <p className="text-center text-xs text-gray-400">
-                    新用户请联系管理员添加账户
-                  </p>
+                  <div className="text-center space-y-2">
+                    <p className="text-xs text-gray-400">
+                      新用户请联系管理员添加账户
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleReset}
+                      disabled={loading}
+                      className="text-xs text-red-400 hover:text-red-600 transition-colors inline-flex items-center gap-1"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      系统初始化（清除所有用户重新注册）
+                    </button>
+                  </div>
                 )}
               </form>
             )}

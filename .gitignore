@@ -9,5 +9,8 @@ backend/**/replay_pid*.log
 # 大模型文件 (超过 GitHub 100MB 限制)
 *.onnx
 *.pt
-backend/**/face/
+backend/models/
+人脸检测模型/
 人脸识别模型/
+活体检测模型/
+smartai/

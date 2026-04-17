@@ -32,11 +32,31 @@ springdoc:
     path: /swagger-ui/index.html
 
 face-recognition:
-  # ONNX 模型路径（绝对路径或相对于工作目录的路径）
-  # ArcFace ResNet-100 (ONNX Model Zoo, LFW 99.77%, 512-dim embedding, 112x112 input)
-  model-path: ${FACE_MODEL_PATH:face/arcface/arcfaceresnet100-8.onnx}
-  # 人脸匹配相似度阈值 (余弦相似度 0~1)，值越高越严格
-  # ArcFace 推荐 0.4~0.5，ResNet-100 区分度高
-  similarity-threshold: ${FACE_SIMILARITY_THRESHOLD:0.45}
+  # ===== 人脸检测模型配置 =====
+  # 模型枚举：RETINA_FACE（高精度）/ ULTRA_LIGHT_FAST_GENERIC_FACE（极速）/ SEETA_FACE6_MODEL
+  det-model-enum: ${FACE_DET_MODEL_ENUM:RETINA_FACE}
+  # 模型文件路径（可留空，SDK 自动下载内置模型）
+  det-model-path: ${FACE_DET_MODEL_PATH:}
+
+  # ===== 人脸识别模型配置 =====
+  # 模型枚举：INSIGHT_FACE_MOBILE_FACENET_MODEL（高速）/ INSIGHT_FACE_IRSE50_MODEL（高精度）
+  rec-model-enum: ${FACE_REC_MODEL_ENUM:INSIGHT_FACE_IRSE50_MODEL}
+  # 模型文件路径（绝对路径）
+  rec-model-path: ${FACE_REC_MODEL_PATH:models/face_model/recognition/InsightFace/model_ir_se50.pt}
+
+  # 人脸匹配相似度阈值（InsightFace 推荐 0.62），值越高越严格
+  similarity-threshold: ${FACE_SIMILARITY_THRESHOLD:0.62}
+  # 人脸检测置信度阈值
+  confidence-threshold: ${FACE_CONFIDENCE_THRESHOLD:0.5}
   # 上传的人脸图片存储目录
   storage-path: ${FACE_STORAGE_PATH:data/face-images}
+
+  # ===== 活体检测模型配置 =====
+  # 是否启用活体检测（注册和登录时验证真人）
+  liveness-enabled: ${FACE_LIVENESS_ENABLED:true}
+  # 模型枚举：IIC_FL_MODEL（阿里通义实验室）/ MINI_VISION_MODEL（小视科技）
+  liveness-model-enum: ${FACE_LIVENESS_MODEL_ENUM:IIC_FL_MODEL}
+  # 活体检测模型文件路径
+  liveness-model-path: ${FACE_LIVENESS_MODEL_PATH:models/liveness/IIC_Fl.onnx}
+  # 活体检测阈值（超过此值判定为真人，默认 0.8）
+  liveness-threshold: ${FACE_LIVENESS_THRESHOLD:0.8}

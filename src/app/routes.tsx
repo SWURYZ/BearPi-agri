@@ -11,10 +11,22 @@ import { AIAssistant } from "./pages/AIAssistant";
 import { Login } from "./pages/Login";
 import { UserManagement } from "./pages/UserManagement";
 import { getCurrentUser } from "./services/auth";
+import { useState, useEffect } from "react";
 
 /** 认证守卫：未登录则跳转 /login */
 function AuthLayout() {
-  if (!getCurrentUser()) return <Navigate to="/login" replace />;
+  const [checking, setChecking] = useState(true);
+  const [authed, setAuthed] = useState(false);
+
+  useEffect(() => {
+    getCurrentUser().then((u) => {
+      setAuthed(!!u);
+      setChecking(false);
+    });
+  }, []);
+
+  if (checking) return null; // 或者 loading spinner
+  if (!authed) return <Navigate to="/login" replace />;
   return <Layout />;
 }
 
