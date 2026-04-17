@@ -15,7 +15,6 @@ export type SensorMetrics = Partial<Record<SensorKey, number>>;
 
 export type SensorPoint = {
   time: string;
-  timestamp: string;
   value: number;
 };
 
@@ -58,11 +57,9 @@ export async function fetchSensorHistory(
   greenhouse: string,
   sensor: SensorKey,
   range = "24h",
-  aggregate = true,
-  fixedSlots = false,
 ): Promise<SensorPoint[]> {
   const url = withApiBase(
-    `/api/greenhouses/${encodeURIComponent(greenhouse)}/history?sensor=${sensor}&range=${range}&aggregate=${aggregate}&fixedSlots=${fixedSlots}`,
+    `/api/greenhouses/${encodeURIComponent(greenhouse)}/history?sensor=${sensor}&range=${range}`,
   );
   const res = await fetch(url, { headers: { Accept: "application/json" } });
   if (!res.ok) {
@@ -81,15 +78,11 @@ export async function fetchSensorHistory(
       }
 
       const raw = point as Record<string, unknown>;
-      const timestamp =
-        typeof raw.timestamp === "string"
-          ? raw.timestamp
-          : "";
       const time =
         typeof raw.time === "string"
           ? raw.time
-          : timestamp
-            ? new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+          : typeof raw.timestamp === "string"
+            ? new Date(raw.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
             : "";
       const numericValue =
         typeof raw.value === "number"
@@ -104,7 +97,6 @@ export async function fetchSensorHistory(
 
       return {
         time,
-        timestamp,
         value: Number(numericValue),
       };
     })

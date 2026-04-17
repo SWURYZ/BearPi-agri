@@ -1,6 +1,5 @@
 const DEVICE_CONTROL_BASE = "http://localhost:8083/api/v1/device-control";
 const LIGHT_SCHEDULE_BASE = "http://localhost:8084/api/v1/light-schedule";
-const IOT_ACCESS_BASE = "http://localhost:8082/api/v1/iot";
 
 /* ==================== 业务三：设备远程手动控制 ==================== */
 
@@ -22,16 +21,6 @@ export interface DeviceStatusResponse {
   ledStatus: string;
   motorStatus: string;
   lastUpdated: string | null;
-}
-
-export interface RealtimeDeviceStatus {
-  deviceId: string;
-  reportTime: string | null;
-  led: string | null;
-  motor: string | null;
-  temperature: number | null;
-  humidity: number | null;
-  luminance: number | null;
 }
 
 export interface ControlCommand {
@@ -67,12 +56,6 @@ export async function sendManualControl(req: ManualControlRequest): Promise<Manu
 export async function fetchDeviceStatus(deviceId: string): Promise<DeviceStatusResponse> {
   const res = await fetch(`${DEVICE_CONTROL_BASE}/devices/${encodeURIComponent(deviceId)}/status`);
   const json: ApiResponse<DeviceStatusResponse> = await res.json();
-  return json.data;
-}
-
-export async function fetchRealtimeDeviceStatus(deviceId: string): Promise<RealtimeDeviceStatus> {
-  const res = await fetch(`${IOT_ACCESS_BASE}/devices/${encodeURIComponent(deviceId)}/status`);
-  const json: ApiResponse<RealtimeDeviceStatus> = await res.json();
   return json.data;
 }
 
