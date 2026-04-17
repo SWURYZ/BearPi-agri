@@ -12,6 +12,5 @@ import lombok.NoArgsConstructor;
 public class FaceRegisterResponse {
     private String personId;
     private String personName;
-    private String imagePath;
     private String message;
 }

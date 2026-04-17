@@ -19,9 +19,6 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -62,27 +59,17 @@ public class FaceRecognitionService {
             // 提取特征向量（SmartJavaAI：人脸检测 → 裁剪 → 对齐 → 特征提取）
             float[] embedding = smartAIModelService.extractFeatures(image);
 
-            // 保存图片到磁盘（非关键操作，失败不影响注册）
-            String imagePath = null;
-            try {
-                imagePath = saveImage(imageFile, personId);
-            } catch (Exception imgEx) {
-                log.warn("人脸图片保存失败（不影响注册）: {}", imgEx.getMessage());
-            }
-
-            // 保存到数据库
+            // 保存到数据库（只存特征向量，不保存照片）
             FaceRecord record = new FaceRecord();
             record.setPersonId(personId);
             record.setPersonName(personName);
             record.setEmbedding(floatsToBytes(embedding));
-            record.setImagePath(imagePath);
             faceRecordRepository.save(record);
 
             log.info("人脸注册成功: personId={}, personName={}, embeddingDim={}", personId, personName, embedding.length);
             return FaceRegisterResponse.builder()
                     .personId(personId)
                     .personName(personName)
-                    .imagePath(imagePath)
                     .message("注册成功")
                     .build();
         } catch (Exception e) {
@@ -204,7 +191,6 @@ public class FaceRecognitionService {
                         .id(r.getId())
                         .personId(r.getPersonId())
                         .personName(r.getPersonName())
-                        .imagePath(r.getImagePath())
                         .createdAt(r.getCreatedAt())
                         .updatedAt(r.getUpdatedAt())
                         .build())
@@ -263,21 +249,6 @@ public class FaceRecognitionService {
         } catch (IOException e) {
             throw new RuntimeException("活体检测失败: " + e.getMessage(), e);
         }
-    }
-
-    private String saveImage(MultipartFile file, String personId) throws IOException {
-        Path storageDir = Paths.get(properties.getStoragePath()).toAbsolutePath();
-        Files.createDirectories(storageDir);
-
-        String originalName = file.getOriginalFilename();
-        String ext = ".jpg";
-        if (originalName != null && originalName.contains(".")) {
-            ext = originalName.substring(originalName.lastIndexOf('.'));
-        }
-        String fileName = personId + ext;
-        Path target = storageDir.resolve(fileName);
-        Files.copy(file.getInputStream(), target);
-        return fileName;
     }
 
     static byte[] floatsToBytes(float[] floats) {

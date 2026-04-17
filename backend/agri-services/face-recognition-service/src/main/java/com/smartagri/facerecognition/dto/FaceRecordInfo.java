@@ -15,7 +15,6 @@ public class FaceRecordInfo {
     private Long id;
     private String personId;
     private String personName;
-    private String imagePath;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

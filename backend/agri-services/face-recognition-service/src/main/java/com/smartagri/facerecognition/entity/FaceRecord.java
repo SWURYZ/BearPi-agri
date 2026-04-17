@@ -29,10 +29,6 @@ public class FaceRecord {
     @Column(name = "embedding", nullable = false, columnDefinition = "LONGBLOB")
     private byte[] embedding;
 
-    /** 存储的人脸图片相对路径 */
-    @Column(name = "image_path", length = 512)
-    private String imagePath;
-
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
