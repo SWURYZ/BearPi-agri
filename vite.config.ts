@@ -21,6 +21,7 @@ export default defineConfig(({ mode }) => {
   const apiProxyTarget = env.VITE_API_PROXY_TARGET || 'http://localhost:8082'
   const agriAgentProxyTarget = env.VITE_AGRI_AGENT_PROXY_TARGET || 'http://localhost:8085'
   const historicalProxyTarget = env.VITE_HISTORICAL_PROXY_TARGET || 'http://localhost:8087'
+  const faceProxyTarget = env.VITE_FACE_PROXY_TARGET || 'http://localhost:8087'
 
   return {
     plugins: [
@@ -48,6 +49,10 @@ export default defineConfig(({ mode }) => {
             target: historicalProxyTarget,
             changeOrigin: true,
             ws: true,
+          },
+          '/api/face': {
+            target: faceProxyTarget,
+            changeOrigin: true,
           },
           '/api': {
             target: apiProxyTarget,
