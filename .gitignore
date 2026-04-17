@@ -5,3 +5,9 @@ backend/**/data/*.trace.db
 .runtime/
 backend/**/hs_err_pid*.log
 backend/**/replay_pid*.log
+
+# 大模型文件 (超过 GitHub 100MB 限制)
+*.onnx
+*.pt
+backend/**/face/
+人脸识别模型/

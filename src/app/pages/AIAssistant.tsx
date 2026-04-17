@@ -20,8 +20,11 @@ import {
   ChevronDown,
   ChevronRight,
   Brain,
+  ScanFace,
 } from "lucide-react";
 import { streamAgriAgentChat } from "../services/agriAgent";
+import { FaceRecognitionPanel } from "../components/FaceRecognitionPanel";
+import { fetchRealtimeSnapshot } from "../services/realtime";
 
 interface Message {
   id: string;
@@ -33,14 +36,24 @@ interface Message {
   imagePreview?: string;
 }
 
-const currentData = {
-  temp: 24.5,
-  humidity: 68,
-  light: 8500,
-  co2: 420,
-  soilHumidity: 45,
-  gh: "\u0031\u53f7\u5927\u68da",
-  crop: "\u756a\u8304",
+interface GreenhouseData {
+  temp: number;
+  humidity: number;
+  light: number;
+  co2: number;
+  soilHumidity: number;
+  gh: string;
+  crop: string;
+}
+
+const defaultData: GreenhouseData = {
+  temp: 0,
+  humidity: 0,
+  light: 0,
+  co2: 0,
+  soilHumidity: 0,
+  gh: "1号大棚",
+  crop: "番茄",
 };
 
 const suggestedQuestions = [
@@ -345,6 +358,32 @@ function useSpeechRecognition(onResult: (text: string) => void) {
 
 /* --- Main Component --- */
 export function AIAssistant() {
+  const [currentData, setCurrentData] = useState<GreenhouseData>(defaultData);
+
+  // Fetch real-time greenhouse data on mount and every 30s
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const metrics = await fetchRealtimeSnapshot("1号大棚");
+        if (!cancelled) {
+          setCurrentData((prev) => ({
+            ...prev,
+            temp: metrics.temp ?? prev.temp,
+            humidity: metrics.humidity ?? prev.humidity,
+            light: metrics.light ?? prev.light,
+            co2: metrics.co2 ?? prev.co2,
+            soilHumidity: metrics.soilHumidity ?? prev.soilHumidity,
+          }));
+        }
+      } catch {
+        // keep previous data on error
+      }
+    }
+    load();
+    const timer = setInterval(load, 30_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
   const welcomeContent = [
     "\u60a8\u597d\uff01\u6211\u662f**\u519c\u4e8b\u667a\u80fd\u52a9\u624b** \ud83c\udf31",
     "",
@@ -363,6 +402,20 @@ export function AIAssistant() {
       sources: [],
     },
   ]);
+
+  // Update welcome message when real data arrives
+  useEffect(() => {
+    const updatedWelcome = [
+      "\u60a8\u597d\uff01\u6211\u662f**\u519c\u4e8b\u667a\u80fd\u52a9\u624b** \ud83c\udf31",
+      "",
+      "\u6211\u5df2\u8bfb\u53d6 **" + currentData.gh + "** \u7684\u5b9e\u65f6\u76d1\u6d4b\u6570\u636e\u4f5c\u4e3a\u4e0a\u4e0b\u6587\uff0c\u53ef\u4ee5\u4e3a\u60a8\u63d0\u4f9b\u57fa\u4e8e\u5f53\u524d\u5927\u68da\u73af\u5883\u7684\u4e2a\u6027\u5316\u79cd\u690d\u5efa\u8bae\u3002",
+      "",
+      "\u60a8\u53ef\u4ee5\u95ee\u6211\uff1a\u4f5c\u7269\u7ba1\u7406\u3001\u75c5\u866b\u5bb3\u9632\u6cbb\u3001\u8bbe\u5907\u64cd\u4f5c\u3001\u73af\u5883\u8c03\u63a7\u7b49\u519c\u4e1a\u76f8\u5173\u95ee\u9898\u3002",
+    ].join("\n");
+    setMessages((prev) =>
+      prev.map((msg) => (msg.id === "0" ? { ...msg, content: updatedWelcome } : msg)),
+    );
+  }, [currentData]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeAssistantId, setActiveAssistantId] = useState<string | null>(null);
@@ -370,6 +423,7 @@ export function AIAssistant() {
   const [rememberedUserName, setRememberedUserName] = useState<string | null>(null);
   const [mustGreetFirst, setMustGreetFirst] = useState(false);
   const [selectedImage, setSelectedImage] = useState<{ file: File; preview: string } | null>(null);
+  const [showFacePanel, setShowFacePanel] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -568,24 +622,33 @@ export function AIAssistant() {
           <div>
             <h1 className="text-xl font-bold text-gray-800">{"\u519c\u4e8b\u667a\u80fd\u95ee\u7b54"}</h1>
           </div>
-          <button
-            onClick={() => {
-              setMessages((prev) => [prev[0]]);
-              setConversationId(null);
-              setRememberedUserName(null);
-              setMustGreetFirst(false);
-              try {
-                localStorage.removeItem("agri.ai.rememberedUserName");
-                localStorage.removeItem("agri.ai.mustGreetFirst");
-              } catch {
-                // ignore localStorage access issues
-              }
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            {"\u6e05\u7a7a\u5bf9\u8bdd"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowFacePanel((v) => !v)}
+              className={"flex items-center gap-1.5 px-3 py-1.5 text-sm border rounded-lg transition-colors " + (showFacePanel ? "text-violet-600 border-violet-300 bg-violet-50" : "text-gray-500 border-gray-200 hover:bg-gray-50")}
+            >
+              <ScanFace className="w-3.5 h-3.5" />
+              {"\u4eba\u8138\u8bc6\u522b"}
+            </button>
+            <button
+              onClick={() => {
+                setMessages((prev) => [prev[0]]);
+                setConversationId(null);
+                setRememberedUserName(null);
+                setMustGreetFirst(false);
+                try {
+                  localStorage.removeItem("agri.ai.rememberedUserName");
+                  localStorage.removeItem("agri.ai.mustGreetFirst");
+                } catch {
+                  // ignore localStorage access issues
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              {"\u6e05\u7a7a\u5bf9\u8bdd"}
+            </button>
+          </div>
         </div>
 
         {/* Context Bar */}
@@ -609,6 +672,54 @@ export function AIAssistant() {
             ))}
           </div>
         </div>
+
+        {/* Face Recognition Panel */}
+        {showFacePanel && (
+          <div className="mb-4">
+            <FaceRecognitionPanel
+              onRecognized={(personName, similarity) => {
+                // 记住用户姓名
+                setRememberedUserName(personName);
+                setMustGreetFirst(true);
+                setShowFacePanel(false);
+
+                // 生成本地欢迎消息（不调用 Coze）
+                const now = Date.now();
+                const userMsg: Message = {
+                  id: now.toString(),
+                  role: "user",
+                  content: `我是${personName}，刚刚通过人脸识别登录。`,
+                  thinking: "",
+                  timestamp: formatTime(new Date()),
+                };
+                const hour = new Date().getHours();
+                const timeGreeting = hour < 12 ? "上午好" : hour < 18 ? "下午好" : "晚上好";
+                const welcomeLines = [
+                  `${timeGreeting}，**${personName}**！🌱 人脸识别验证通过（相似度 ${(similarity * 100).toFixed(1)}%）。`,
+                  "",
+                  `欢迎回到智慧农业管理系统！当前为您加载的是 **${currentData.gh}** 的实时环境数据：`,
+                  "",
+                  `- 🌡️ 温度：**${currentData.temp}°C** | 💧 湿度：**${currentData.humidity}%**`,
+                  `- ☀️ 光照：**${currentData.light} lux** | 🌿 种植作物：**${currentData.crop}**`,
+                  "",
+                  `请问有什么我可以帮您的吗？比如：`,
+                  "- 查看当前大棚环境是否适合作物生长",
+                  "- 获取今日种植管理建议",
+                  "- 设备控制与自动化规则配置",
+                ].join("\n");
+                const assistantMsg: Message = {
+                  id: (now + 1).toString(),
+                  role: "assistant",
+                  content: welcomeLines,
+                  thinking: "",
+                  timestamp: formatTime(new Date()),
+                  sources: [],
+                };
+                setMessages((prev) => [...prev, userMsg, assistantMsg]);
+              }}
+            />
+          </div>
+        )}
 
         {/* RAG Pipeline */}
         <div className="flex items-center gap-2 text-xs text-gray-400 mb-4">

@@ -21,5 +21,6 @@
         <module>agri-agent-service</module>
         <module>composite-condition-service</module>
         <module>greenhouse-monitor-service</module>
+        <module>face-recognition-service</module>
     </modules>
 </project>

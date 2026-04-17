@@ -20,6 +20,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const apiProxyTarget = env.VITE_API_PROXY_TARGET || 'http://localhost:8082'
   const agriAgentProxyTarget = env.VITE_AGRI_AGENT_PROXY_TARGET || 'http://localhost:8085'
+  const faceProxyTarget = env.VITE_FACE_PROXY_TARGET || 'http://localhost:8090'
   const historicalProxyTarget = env.VITE_HISTORICAL_PROXY_TARGET || 'http://localhost:8087'
 
   return {
@@ -43,6 +44,10 @@ export default defineConfig(({ mode }) => {
             target: agriAgentProxyTarget,
             changeOrigin: true,
             ws: true,
+          },
+          '/api/face': {
+            target: faceProxyTarget,
+            changeOrigin: true,
           },
           '/api/greenhouses': {
             target: historicalProxyTarget,
