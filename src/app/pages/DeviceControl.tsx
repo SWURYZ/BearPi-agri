@@ -152,6 +152,7 @@ export function DeviceControl() {
     const device = devices[deviceIndex];
     const prevStatus = device.status;
     const targetAction = prevStatus === "on" ? "OFF" : "ON";
+    const requestAt = Date.now();
 
     setDevices((prev) =>
       prev.map((d, i) => (i === deviceIndex ? { ...d, status: "loading" as DeviceStatus, feedback: undefined } : d))
@@ -183,26 +184,35 @@ export function DeviceControl() {
         )
       );
 
-      // Background sync only, do not block button interaction.
-      window.setTimeout(async () => {
+      // Two-phase background sync: avoid stale telemetry immediately overriding optimistic UI.
+      const syncStatus = async (strict: boolean) => {
         try {
           const realtime = await fetchRealtimeDeviceStatus(device.id);
           setDevices((prev) =>
             prev.map((d, i) => {
               if (i !== deviceIndex) return d;
-              if (d.commandType === "LIGHT_CONTROL" && realtime.led) {
-                return { ...d, status: realtime.led === "ON" ? "on" : "off" };
+
+              const raw = d.commandType === "LIGHT_CONTROL" ? realtime.led : realtime.motor;
+              if (!raw) return d;
+
+              const observedAction = raw === "ON" ? "ON" : "OFF";
+              const observedStatus: DeviceStatus = observedAction === "ON" ? "on" : "off";
+
+              // In the early window, ignore stale opposite telemetry to prevent "must click twice".
+              if (!strict && Date.now() - requestAt < 3500 && observedAction !== targetAction) {
+                return d;
               }
-              if (d.commandType === "MOTOR_CONTROL" && realtime.motor) {
-                return { ...d, status: realtime.motor === "ON" ? "on" : "off" };
-              }
-              return d;
+
+              return { ...d, status: observedStatus };
             })
           );
         } catch {
           // Ignore background sync failure.
         }
-      }, 1200);
+      };
+
+      window.setTimeout(() => { void syncStatus(false); }, 1200);
+      window.setTimeout(() => { void syncStatus(true); }, 4200);
     } catch (err) {
       setDevices((prev) =>
         prev.map((d, i) =>
@@ -363,11 +373,12 @@ export function DeviceControl() {
                         <span
                           className={`text-xs font-medium ${
                             device.status === "on" ? "text-green-600" :
+                            device.status === "error" ? "text-red-500" :
                             device.status === "loading" ? "text-gray-400" :
                             "text-gray-400"
                           }`}
                         >
-                          {device.status === "on" ? "运行中" : device.status === "loading" ? "执行中..." : "已停止"}
+                          {device.status === "on" ? "运行中" : device.status === "loading" ? "执行中..." : device.status === "error" ? "控制失败" : "已停止"}
                         </span>
                         <button
                           onClick={() => handleToggle(idx)}
@@ -381,18 +392,22 @@ export function DeviceControl() {
                           }`}
                         >
                           {device.status === "on" ? (
-                            <><ToggleRight className="w-3.5 h-3.5" />关闭</>
+                            <><ToggleLeft className="w-3.5 h-3.5" />关闭</>
                           ) : device.status === "loading" ? (
                             <><Loader className="w-3.5 h-3.5 animate-spin" />执行中</>
                           ) : (
-                            <><ToggleLeft className="w-3.5 h-3.5" />开启</>
+                            <><ToggleRight className="w-3.5 h-3.5" />开启</>
                           )}
                         </button>
                       </div>
 
                       {device.feedback && (
-                        <div className="mt-2 text-xs text-green-600 bg-green-50 rounded-lg px-2 py-1 truncate">
-                          ✓ {device.feedback}
+                        <div className={`mt-2 text-xs rounded-lg px-2 py-1 truncate ${
+                          device.status === "error"
+                            ? "text-red-600 bg-red-50"
+                            : "text-green-600 bg-green-50"
+                        }`}>
+                          {device.status === "error" ? "✕" : "✓"} {device.feedback}
                         </div>
                       )}
                     </div>

@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 const COMPOSITE_BASE = "http://localhost:8088/api/v1/composite-condition";
+=======
+const COMPOSITE_BASE = "http://localhost:8087/api/v1/composite-condition";
+>>>>>>> 7cff49c3a5a4125c8d3e4397b73053a8d596060a
 
 interface ApiResponse<T> {
   code: number;

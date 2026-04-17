@@ -20,8 +20,13 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const apiProxyTarget = env.VITE_API_PROXY_TARGET || 'http://localhost:8082'
   const agriAgentProxyTarget = env.VITE_AGRI_AGENT_PROXY_TARGET || 'http://localhost:8085'
+<<<<<<< HEAD
   const faceProxyTarget = env.VITE_FACE_PROXY_TARGET || 'http://localhost:8090'
   const historicalProxyTarget = env.VITE_HISTORICAL_PROXY_TARGET || 'http://localhost:8087'
+=======
+  const historicalProxyTarget = env.VITE_HISTORICAL_PROXY_TARGET || 'http://localhost:8087'
+  const faceProxyTarget = env.VITE_FACE_PROXY_TARGET || 'http://localhost:8087'
+>>>>>>> 7cff49c3a5a4125c8d3e4397b73053a8d596060a
 
   return {
     plugins: [
@@ -45,15 +50,25 @@ export default defineConfig(({ mode }) => {
             changeOrigin: true,
             ws: true,
           },
+<<<<<<< HEAD
           '/api/face': {
             target: faceProxyTarget,
             changeOrigin: true,
           },
+=======
+>>>>>>> 7cff49c3a5a4125c8d3e4397b73053a8d596060a
           '/api/greenhouses': {
             target: historicalProxyTarget,
             changeOrigin: true,
             ws: true,
           },
+<<<<<<< HEAD
+=======
+          '/api/face': {
+            target: faceProxyTarget,
+            changeOrigin: true,
+          },
+>>>>>>> 7cff49c3a5a4125c8d3e4397b73053a8d596060a
           '/api': {
             target: apiProxyTarget,
             changeOrigin: true,

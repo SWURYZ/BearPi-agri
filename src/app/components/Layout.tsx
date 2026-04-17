@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useLocation } from "react-router";
+import { Outlet, NavLink, useLocation, useNavigate } from "react-router";
 import {
   LayoutDashboard,
   Activity,
@@ -10,9 +10,12 @@ import {
   Bot,
   Leaf,
   ChevronRight,
+  Users,
+  LogOut,
 } from "lucide-react";
+import { getCurrentUser, isAdmin, logout } from "../services/auth";
 
-const navItems = [
+const baseNavItems = [
   { to: "/", icon: LayoutDashboard, label: "总览大屏", desc: "多大棚统一监控" },
   { to: "/monitor", icon: Activity, label: "实时监测", desc: "全指标实时环境" },
   { to: "/alerts", icon: BellRing, label: "阈值告警", desc: "温湿度预警审计" },
@@ -23,8 +26,19 @@ const navItems = [
   { to: "/ai", icon: Bot, label: "农事问答", desc: "AI智能助手" },
 ];
 
+const adminNavItem = { to: "/users", icon: Users, label: "用户管理", desc: "用户与人脸管理" };
+
 export function Layout() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const user = getCurrentUser();
+  const adminUser = isAdmin();
+  const navItems = adminUser ? [...baseNavItems, adminNavItem] : baseNavItems;
+
+  const handleLogout = () => {
+    logout();
+    navigate("/login", { replace: true });
+  };
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
@@ -81,14 +95,27 @@ export function Layout() {
 
         {/* Footer */}
         <div className="px-4 py-4 border-t border-green-700">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-full bg-green-500 flex items-center justify-center text-white text-xs font-bold">
-              管
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 rounded-full bg-green-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                {user?.displayName?.charAt(0) || "?"}
+              </div>
+              <div className="min-w-0">
+                <div className="text-white text-xs font-medium truncate">
+                  {user?.displayName || "未知"}
+                </div>
+                <div className="text-green-400 text-xs truncate">
+                  {user?.role === "admin" ? "管理员" : "普通用户"}
+                </div>
+              </div>
             </div>
-            <div>
-              <div className="text-white text-xs font-medium">管理员</div>
-              <div className="text-green-400 text-xs">admin@farm.com</div>
-            </div>
+            <button
+              onClick={handleLogout}
+              className="p-1.5 text-green-400 hover:text-white hover:bg-green-700 rounded-lg transition-colors flex-shrink-0"
+              title="退出登录"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </aside>

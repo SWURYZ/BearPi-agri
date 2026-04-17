@@ -21,6 +21,10 @@
         <module>agri-agent-service</module>
         <module>composite-condition-service</module>
         <module>greenhouse-monitor-service</module>
+<<<<<<< HEAD
         <module>face-recognition-service</module>
+=======
+        <module>historical-analysis-service</module>
+>>>>>>> 7cff49c3a5a4125c8d3e4397b73053a8d596060a
     </modules>
 </project>

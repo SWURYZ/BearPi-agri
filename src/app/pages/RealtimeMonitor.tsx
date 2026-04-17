@@ -79,7 +79,7 @@ const sensorConfigs = [
     borderColor: "border-yellow-200",
     min: 0,
     max: 15000,
-    normal: [3000, 12000],
+    normal: [50, 1000],
     defaultValue: 8500,
     defaultData: generateData(8500, 2000, 24),
   },
@@ -130,7 +130,7 @@ const sensorConfigs = [
   },
 ] as const;
 
-type ConnectionMode = "live" | "waiting" | "mock";
+type ConnectionMode = "live" | "waiting" | "offline";
 
 const REALTIME_ONLY_GREENHOUSE = "1号大棚";
 
@@ -193,7 +193,7 @@ export function RealtimeMonitor() {
   );
   const [sensorSeries, setSensorSeries] = useState<Record<SensorKey, SensorPoint[]>>(defaultSensorSeries);
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>(
-    safeInitialGH === REALTIME_ONLY_GREENHOUSE ? "waiting" : "mock",
+    safeInitialGH === REALTIME_ONLY_GREENHOUSE ? "waiting" : "offline",
   );
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
 
@@ -201,23 +201,6 @@ export function RealtimeMonitor() {
     () => sensorConfigs.find((s) => s.key === selectedSensor)!,
     [selectedSensor],
   );
-
-  useEffect(() => {
-    const ghInUrl = searchParams.get("gh");
-    if (ghInUrl && greenhouses.includes(ghInUrl) && ghInUrl !== selectedGH) {
-      setSelectedGH(ghInUrl);
-    }
-  }, [searchParams, selectedGH]);
-
-  useEffect(() => {
-    const ghInUrl = searchParams.get("gh");
-    if (ghInUrl === selectedGH) {
-      return;
-    }
-    const next = new URLSearchParams(searchParams);
-    next.set("gh", selectedGH);
-    setSearchParams(next, { replace: true });
-  }, [selectedGH, searchParams, setSearchParams]);
 
   useEffect(() => {
     let disposed = false;
@@ -234,9 +217,18 @@ export function RealtimeMonitor() {
         return next;
       });
     } else {
-      setConnectionMode("mock");
-      setSensorValues(defaultSensorValues);
-      setSensorSeries(defaultSensorSeries);
+      setConnectionMode("offline");
+      setSensorValues(emptySensorValues);
+      setSensorSeries((prev) => {
+        const next = { ...prev };
+        for (const key of SENSOR_KEYS) {
+          next[key] = [];
+        }
+        return next;
+      });
+      return () => {
+        disposed = true;
+      };
     }
 
     async function hydrateFromBackend() {
@@ -301,53 +293,16 @@ export function RealtimeMonitor() {
       },
       () => {
         if (!disposed) {
-          setConnectionMode(realtimeOnly ? "waiting" : "mock");
+          setConnectionMode(realtimeOnly ? "waiting" : "offline");
         }
       },
     );
-
-    if (!stream.connected && !realtimeOnly) {
-      setConnectionMode("mock");
-    }
 
     return () => {
       disposed = true;
       stream.close();
     };
   }, [selectedGH]);
-
-  useEffect(() => {
-    if (connectionMode !== "mock") {
-      return;
-    }
-
-    const timer = setInterval(() => {
-      setSensorValues((prev) => {
-        const next = { ...prev };
-        for (const sensor of sensorConfigs) {
-          const key = sensor.key as SensorKey;
-          const variance = key === "light" ? 80 : key === "co2" ? 5 : 0.3;
-          const value = next[key] + (Math.random() - 0.5) * variance;
-          next[key] = +value.toFixed(key === "light" || key === "co2" ? 0 : 2);
-        }
-
-        setSensorSeries((prevSeries) => {
-          const nextSeries = { ...prevSeries };
-          for (const sensor of sensorConfigs) {
-            const key = sensor.key as SensorKey;
-            nextSeries[key] = rollSeries(nextSeries[key] || [], next[key]);
-          }
-          return nextSeries;
-        });
-
-        return next;
-      });
-
-      setLastUpdated(new Date());
-    }, 3000);
-
-    return () => clearInterval(timer);
-  }, [connectionMode]);
 
   return (
     <div className="p-6 space-y-5">
@@ -364,7 +319,7 @@ export function RealtimeMonitor() {
                 ? "text-green-600 bg-green-50 border-green-200"
                 : connectionMode === "waiting"
                   ? "text-blue-700 bg-blue-50 border-blue-200"
-                  : "text-amber-700 bg-amber-50 border-amber-200"
+                  : "text-gray-600 bg-gray-50 border-gray-200"
             }`}
           >
             <Wifi className={`w-3.5 h-3.5 ${connectionMode === "live" ? "animate-pulse" : ""}`} />
@@ -372,7 +327,7 @@ export function RealtimeMonitor() {
               ? "实时数据已连接"
               : connectionMode === "waiting"
                 ? "等待真实数据"
-                : "模拟数据模式"}
+                : "离线"}
           </div>
           <div className="flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-lg">
             <Activity className="w-3.5 h-3.5" />
@@ -387,10 +342,15 @@ export function RealtimeMonitor() {
         {greenhouses.map((gh) => (
           <button
             key={gh}
-            onClick={() => setSelectedGH(gh)}
+            onClick={() => {
+              setSelectedGH(gh);
+              const next = new URLSearchParams(searchParams);
+              next.set("gh", gh);
+              setSearchParams(next, { replace: true });
+            }}
             className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
               selectedGH === gh
-                ? "bg-green-600 text-white shadow-sm"
+                ? "bg-green-600 text-white"
                 : "bg-white border border-gray-200 text-gray-600 hover:border-green-400"
             }`}
           >
@@ -504,18 +464,18 @@ export function RealtimeMonitor() {
             {
               step: "MQTT上传",
               status: connectionMode === "live" ? "ok" : "pending",
-              desc: connectionMode === "live" ? "云平台网关" : connectionMode === "waiting" ? "等待设备上报" : "后端未接入，模拟中",
+              desc: connectionMode === "live" ? "云平台网关" : connectionMode === "waiting" ? "等待设备上报" : "设备离线",
             },
             {
               step: "后端解析",
               status: connectionMode === "live" ? "ok" : "pending",
-              desc: connectionMode === "live" ? "数据合法性校验" : connectionMode === "waiting" ? "等待真实数据源" : "等待真实数据源",
+              desc: connectionMode === "live" ? "数据合法性校验" : connectionMode === "waiting" ? "等待真实数据源" : "无上报数据",
             },
             { step: "缓存写入", status: "ok", desc: "Redis + InfluxDB" },
             {
               step: "前端展示",
               status: "ok",
-              desc: connectionMode === "live" ? "HTTP实时拉取" : connectionMode === "waiting" ? "显示空态，禁用模拟值" : "本地模拟推送",
+              desc: connectionMode === "live" ? "HTTP实时拉取" : connectionMode === "waiting" ? "显示空态，禁用模拟值" : "离线空态",
             },
           ].map((s, i) => (
             <div key={i} className="flex items-center gap-2 flex-1">

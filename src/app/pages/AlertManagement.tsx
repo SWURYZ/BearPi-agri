@@ -27,7 +27,7 @@ const thresholdSettings = [
   { sensor: "空气湿度", min: 50, max: 80, unit: "%", icon: Droplets, color: "blue" },
   { sensor: "土壤温度", min: 15, max: 28, unit: "°C", icon: Thermometer, color: "red" },
   { sensor: "土壤湿度", min: 30, max: 70, unit: "%", icon: Droplets, color: "cyan" },
-  { sensor: "光照强度", min: 2000, max: 10000, unit: "lux", icon: Settings, color: "yellow" },
+  { sensor: "光照强度", min: 50, max: 1000, unit: "lux", icon: Settings, color: "yellow" },
   { sensor: "CO₂浓度", min: 350, max: 600, unit: "ppm", icon: Settings, color: "green" },
 ];
 

@@ -20,11 +20,16 @@ import {
   ChevronDown,
   ChevronRight,
   Brain,
+<<<<<<< HEAD
   ScanFace,
 } from "lucide-react";
 import { streamAgriAgentChat } from "../services/agriAgent";
 import { FaceRecognitionPanel } from "../components/FaceRecognitionPanel";
 import { fetchRealtimeSnapshot } from "../services/realtime";
+=======
+} from "lucide-react";
+import { streamAgriAgentChat } from "../services/agriAgent";
+>>>>>>> 7cff49c3a5a4125c8d3e4397b73053a8d596060a
 
 interface Message {
   id: string;
@@ -36,6 +41,7 @@ interface Message {
   imagePreview?: string;
 }
 
+<<<<<<< HEAD
 interface GreenhouseData {
   temp: number;
   humidity: number;
@@ -54,6 +60,16 @@ const defaultData: GreenhouseData = {
   soilHumidity: 0,
   gh: "1号大棚",
   crop: "番茄",
+=======
+const currentData = {
+  temp: 24.5,
+  humidity: 68,
+  light: 8500,
+  co2: 420,
+  soilHumidity: 45,
+  gh: "\u0031\u53f7\u5927\u68da",
+  crop: "\u756a\u8304",
+>>>>>>> 7cff49c3a5a4125c8d3e4397b73053a8d596060a
 };
 
 const suggestedQuestions = [
@@ -358,6 +374,7 @@ function useSpeechRecognition(onResult: (text: string) => void) {
 
 /* --- Main Component --- */
 export function AIAssistant() {
+<<<<<<< HEAD
   const [currentData, setCurrentData] = useState<GreenhouseData>(defaultData);
 
   // Fetch real-time greenhouse data on mount and every 30s
@@ -384,6 +401,8 @@ export function AIAssistant() {
     const timer = setInterval(load, 30_000);
     return () => { cancelled = true; clearInterval(timer); };
   }, []);
+=======
+>>>>>>> 7cff49c3a5a4125c8d3e4397b73053a8d596060a
   const welcomeContent = [
     "\u60a8\u597d\uff01\u6211\u662f**\u519c\u4e8b\u667a\u80fd\u52a9\u624b** \ud83c\udf31",
     "",
@@ -423,7 +442,10 @@ export function AIAssistant() {
   const [rememberedUserName, setRememberedUserName] = useState<string | null>(null);
   const [mustGreetFirst, setMustGreetFirst] = useState(false);
   const [selectedImage, setSelectedImage] = useState<{ file: File; preview: string } | null>(null);
+<<<<<<< HEAD
   const [showFacePanel, setShowFacePanel] = useState(false);
+=======
+>>>>>>> 7cff49c3a5a4125c8d3e4397b73053a8d596060a
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -621,6 +643,7 @@ export function AIAssistant() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-xl font-bold text-gray-800">{"\u519c\u4e8b\u667a\u80fd\u95ee\u7b54"}</h1>
+<<<<<<< HEAD
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -649,6 +672,27 @@ export function AIAssistant() {
               {"\u6e05\u7a7a\u5bf9\u8bdd"}
             </button>
           </div>
+=======
+          </div>
+          <button
+            onClick={() => {
+              setMessages((prev) => [prev[0]]);
+              setConversationId(null);
+              setRememberedUserName(null);
+              setMustGreetFirst(false);
+              try {
+                localStorage.removeItem("agri.ai.rememberedUserName");
+                localStorage.removeItem("agri.ai.mustGreetFirst");
+              } catch {
+                // ignore localStorage access issues
+              }
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            {"\u6e05\u7a7a\u5bf9\u8bdd"}
+          </button>
+>>>>>>> 7cff49c3a5a4125c8d3e4397b73053a8d596060a
         </div>
 
         {/* Context Bar */}
