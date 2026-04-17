@@ -22,5 +22,6 @@
         <module>composite-condition-service</module>
         <module>greenhouse-monitor-service</module>
         <module>face-recognition-service</module>
+        <module>smart-decision-service</module>
     </modules>
 </project>

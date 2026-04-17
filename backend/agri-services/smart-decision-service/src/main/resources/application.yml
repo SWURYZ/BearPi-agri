@@ -1,0 +1,28 @@
+server:
+  port: 8089
+
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://47.108.58.107:3306/dream6?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:c0765083cd3f57ab}
+  application:
+    name: smart-decision-service
+  jpa:
+    database-platform: org.hibernate.community.dialect.MySQLLegacyDialect
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+
+coze:
+  api:
+    base-url: ${COZE_API_BASE_URL:https://api.coze.cn}
+    chat-path: ${COZE_API_CHAT_PATH:/v3/chat}
+    bot-id: ${COZE_BOT_ID:7628415950198980648}
+    pat: ${COZE_PAT:pat_xTeTK1pvxkZYBMaL7JAJYV8Vq7ZybUo9AVmU4cmTC5oMjFfTV52BceIKRkBKrLjc}
+    timeout-seconds: ${COZE_TIMEOUT_SECONDS:60}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui/index.html

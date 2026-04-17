@@ -22,6 +22,7 @@ export default defineConfig(({ mode }) => {
   const agriAgentProxyTarget = env.VITE_AGRI_AGENT_PROXY_TARGET || 'http://localhost:8085'
   const faceProxyTarget = env.VITE_FACE_PROXY_TARGET || 'http://localhost:8090'
   const historicalProxyTarget = env.VITE_HISTORICAL_PROXY_TARGET || 'http://localhost:8087'
+  const smartDecisionProxyTarget = env.VITE_SMART_DECISION_PROXY_TARGET || 'http://localhost:8089'
 
   return {
     plugins: [
@@ -44,6 +45,10 @@ export default defineConfig(({ mode }) => {
             target: agriAgentProxyTarget,
             changeOrigin: true,
             ws: true,
+          },
+          '/api/v1/smart-decision': {
+            target: smartDecisionProxyTarget,
+            changeOrigin: true,
           },
           '/api/face': {
             target: faceProxyTarget,
