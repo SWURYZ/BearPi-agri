@@ -7,6 +7,7 @@ import com.smartagri.facerecognition.entity.LoginLog;
 import com.smartagri.facerecognition.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -32,21 +33,21 @@ public class AuthController {
 
     @Operation(summary = "注册（首次注册为管理员）")
     @PostMapping("/register")
-    public ResponseEntity<AuthResponse> register(@RequestBody Map<String, String> body) {
+    public ResponseEntity<AuthResponse> register(@RequestBody Map<String, String> body, HttpServletRequest request) {
         return ResponseEntity.ok(userService.register(
-                body.get("username"), body.get("password"), body.get("displayName")));
+                body.get("username"), body.get("password"), body.get("displayName"), getClientIp(request)));
     }
 
     @Operation(summary = "密码登录")
     @PostMapping("/login")
-    public ResponseEntity<AuthResponse> login(@RequestBody Map<String, String> body) {
-        return ResponseEntity.ok(userService.login(body.get("username"), body.get("password")));
+    public ResponseEntity<AuthResponse> login(@RequestBody Map<String, String> body, HttpServletRequest request) {
+        return ResponseEntity.ok(userService.login(body.get("username"), body.get("password"), getClientIp(request)));
     }
 
     @Operation(summary = "人脸登录")
     @PostMapping(value = "/face-login", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<AuthResponse> faceLogin(@RequestParam("image") MultipartFile image) {
-        return ResponseEntity.ok(userService.loginByFace(image));
+    public ResponseEntity<AuthResponse> faceLogin(@RequestParam("image") MultipartFile image, HttpServletRequest request) {
+        return ResponseEntity.ok(userService.loginByFace(image, getClientIp(request)));
     }
 
     @Operation(summary = "获取当前用户")
@@ -80,6 +81,16 @@ public class AuthController {
         AppUser operator = requireLogin(auth);
         return ResponseEntity.ok(
                 userService.registerUserWithFace(username, password, displayName, image, operator.getId()));
+    }
+
+    @Operation(summary = "修改用户角色（管理员）")
+    @PutMapping("/users/{id}/role")
+    public ResponseEntity<UserResponse> updateUserRole(
+            @RequestHeader("Authorization") String auth,
+            @PathVariable("id") Long id,
+            @RequestBody Map<String, String> body) {
+        AppUser admin = requireAdmin(auth);
+        return ResponseEntity.ok(userService.updateUserRole(id, body.get("role"), admin.getId()));
     }
 
     @Operation(summary = "删除用户（管理员）")
@@ -137,5 +148,18 @@ public class AuthController {
             throw new IllegalArgumentException("仅管理员可执行此操作");
         }
         return user;
+    }
+
+    /** 获取真实客户端 IP（兼容反向代理） */
+    private String getClientIp(HttpServletRequest request) {
+        String ip = request.getHeader("X-Forwarded-For");
+        if (ip != null && !ip.isBlank() && !"unknown".equalsIgnoreCase(ip)) {
+            return ip.split(",")[0].trim();
+        }
+        ip = request.getHeader("X-Real-IP");
+        if (ip != null && !ip.isBlank() && !"unknown".equalsIgnoreCase(ip)) {
+            return ip.trim();
+        }
+        return request.getRemoteAddr();
     }
 }

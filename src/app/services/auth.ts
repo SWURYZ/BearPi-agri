@@ -19,7 +19,8 @@ export interface LoginLog {
   userId: number;
   username: string;
   displayName: string;
-  loginType: "password" | "face";
+  loginType: "password" | "face" | "register";
+  clientIp?: string;
   loginTime: string;
 }
 
@@ -192,6 +193,17 @@ export async function updateUserFace(userId: number, imageBlob: Blob): Promise<U
   form.append("image", imageBlob, "face.jpg");
   const res = await authFetch(`${API_BASE}/users/${userId}/face`, { method: "PUT", body: form });
   if (!res.ok) throw new Error(await parseError(res, "人脸注册失败"));
+  return res.json();
+}
+
+/** 管理员修改用户角色 */
+export async function updateUserRole(userId: number, role: "admin" | "user"): Promise<User> {
+  const res = await authFetch(`${API_BASE}/users/${userId}/role`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role }),
+  });
+  if (!res.ok) throw new Error(await parseError(res, "修改角色失败"));
   return res.json();
 }
 

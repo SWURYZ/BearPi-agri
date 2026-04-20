@@ -356,6 +356,8 @@ function useSpeechRecognition(onResult: (text: string) => void) {
 /* --- Main Component --- */
 export function AIAssistant() {
   const [currentData, setCurrentData] = useState<GreenhouseData>(defaultData);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [feedbackMap, setFeedbackMap] = useState<Record<string, "up" | "down">>({});
 
   // Fetch real-time greenhouse data on mount and every 30s
   useEffect(() => {
@@ -676,8 +678,36 @@ export function AIAssistant() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  function copyToClipboard(text: string) {
-    navigator.clipboard.writeText(text);
+  async function copyToClipboard(messageId: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+
+    setCopiedMessageId(messageId);
+    window.setTimeout(() => {
+      setCopiedMessageId((prev) => (prev === messageId ? null : prev));
+    }, 1200);
+  }
+
+  function setFeedback(messageId: string, next: "up" | "down") {
+    setFeedbackMap((prev) => {
+      const current = prev[messageId];
+      if (current === next) {
+        const { [messageId]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [messageId]: next };
+    });
   }
 
   return (
@@ -821,13 +851,31 @@ export function AIAssistant() {
                 <span className="text-xs text-gray-400">{msg.timestamp}</span>
                 {msg.role === "assistant" && msg.id !== "0" && (
                   <div className="flex items-center gap-1">
-                    <button onClick={() => copyToClipboard(msg.content)} className="p-1 text-gray-300 hover:text-gray-500 rounded transition-colors" title="copy">
+                    <button
+                      onClick={() => { void copyToClipboard(msg.id, msg.content); }}
+                      className={"p-1 rounded transition-colors " + (copiedMessageId === msg.id
+                        ? "text-green-600 bg-green-50"
+                        : "text-gray-300 hover:text-gray-500")}
+                      title={copiedMessageId === msg.id ? "copied" : "copy"}
+                    >
                       <Copy className="w-3 h-3" />
                     </button>
-                    <button className="p-1 text-gray-300 hover:text-green-500 rounded transition-colors" title="helpful">
+                    <button
+                      onClick={() => setFeedback(msg.id, "up")}
+                      className={"p-1 rounded transition-colors " + (feedbackMap[msg.id] === "up"
+                        ? "text-green-600 bg-green-50"
+                        : "text-gray-300 hover:text-green-500")}
+                      title="helpful"
+                    >
                       <ThumbsUp className="w-3 h-3" />
                     </button>
-                    <button className="p-1 text-gray-300 hover:text-red-400 rounded transition-colors" title="not helpful">
+                    <button
+                      onClick={() => setFeedback(msg.id, "down")}
+                      className={"p-1 rounded transition-colors " + (feedbackMap[msg.id] === "down"
+                        ? "text-red-500 bg-red-50"
+                        : "text-gray-300 hover:text-red-400")}
+                      title="not helpful"
+                    >
                       <ThumbsDown className="w-3 h-3" />
                     </button>
                   </div>
