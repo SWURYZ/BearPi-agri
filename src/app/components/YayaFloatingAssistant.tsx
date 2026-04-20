@@ -907,22 +907,76 @@ export function YayaFloatingAssistant() {
         {/* Particle canvas */}
         <ParticleCanvas active={alwaysListening} voiceState={voiceState} />
 
-        {/* Avatar button */}
+        {/* Avatar button – floating mascot, no container */}
         <button
           onClick={() => {
             setOpen((v) => !v);
             if (!alwaysListening && speechSupported) startAlwaysListening();
           }}
-          className="relative z-[1] flex h-28 w-28 items-center justify-center rounded-full border border-emerald-200/60 bg-white/80 backdrop-blur-md"
+          className="relative z-[1] flex h-28 w-28 items-center justify-center"
           style={{
+            background: "none",
+            border: "none",
+            padding: 0,
+            cursor: "pointer",
             animation:
               voiceState === "speaking"
-                ? "yaya-float-mini 0.6s ease-in-out infinite, yaya-glow-speak 1.0s ease-in-out infinite"
-                : "yaya-float-mini 3.6s ease-in-out infinite, yaya-glow 3.2s ease-in-out infinite",
+                ? "yaya-float-mini 0.5s ease-in-out infinite"
+                : "yaya-float-mini 3.6s ease-in-out infinite",
           }}
           aria-label="打开芽芽助手"
         >
           <YayaAvatar speaking={voiceState === "speaking"} />
+
+          {/* Ground shadow glow beneath feet */}
+          <div
+            style={{
+              position: "absolute",
+              bottom: 2,
+              left: "50%",
+              transform: "translateX(-50%)",
+              width: 64,
+              height: 16,
+              borderRadius: "50%",
+              background:
+                voiceState === "speaking"
+                  ? "radial-gradient(ellipse, rgba(239,68,68,0.5) 0%, transparent 70%)"
+                  : "radial-gradient(ellipse, rgba(74,222,128,0.55) 0%, transparent 70%)",
+              filter: "blur(7px)",
+              pointerEvents: "none",
+              transition: "background 0.5s ease",
+            }}
+          />
+
+          {/* Status indicator dot */}
+          <div
+            style={{
+              position: "absolute",
+              bottom: 18,
+              right: 8,
+              width: 13,
+              height: 13,
+              borderRadius: "50%",
+              background:
+                voiceState === "speaking"
+                  ? "#ef4444"
+                  : voiceState === "thinking"
+                    ? "#f59e0b"
+                    : alwaysListening
+                      ? "#22c55e"
+                      : "#6b7280",
+              border: "2.5px solid rgba(255,255,255,0.88)",
+              boxShadow:
+                voiceState === "speaking"
+                  ? "0 0 8px rgba(239,68,68,0.85)"
+                  : voiceState === "thinking"
+                    ? "0 0 8px rgba(245,158,11,0.85)"
+                    : alwaysListening
+                      ? "0 0 8px rgba(34,197,94,0.9)"
+                      : "none",
+              transition: "all 0.3s ease",
+            }}
+          />
         </button>
       </div>
 
