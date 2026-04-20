@@ -2,6 +2,9 @@
 @import './tailwind.css';
 @import './theme.css';
 
+html, body { height: 100%; margin: 0; }
+#root { height: 100%; }
+
 /* ===== WelcomeOverlay iOS-style animations ===== */
 @keyframes wOverlayIn {
   from { opacity: 0; }

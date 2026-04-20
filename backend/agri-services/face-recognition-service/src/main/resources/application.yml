@@ -42,7 +42,7 @@ face-recognition:
   # 模型枚举：INSIGHT_FACE_MOBILE_FACENET_MODEL（高速）/ INSIGHT_FACE_IRSE50_MODEL（高精度）
   rec-model-enum: ${FACE_REC_MODEL_ENUM:INSIGHT_FACE_IRSE50_MODEL}
   # 模型文件路径（绝对路径）
-  rec-model-path: ${FACE_REC_MODEL_PATH:models/face_model/recognition/InsightFace/model_ir_se50.pt}
+  rec-model-path: ${FACE_REC_MODEL_PATH:D:/BearPi-agri/backend/models/face_model/recognition/InsightFace/model_ir_se50.pt}
 
   # 人脸匹配相似度阈值（InsightFace 推荐 0.62），值越高越严格
   similarity-threshold: ${FACE_SIMILARITY_THRESHOLD:0.62}
@@ -57,6 +57,6 @@ face-recognition:
   # 模型枚举：IIC_FL_MODEL（阿里通义实验室）/ MINI_VISION_MODEL（小视科技）
   liveness-model-enum: ${FACE_LIVENESS_MODEL_ENUM:IIC_FL_MODEL}
   # 活体检测模型文件路径
-  liveness-model-path: ${FACE_LIVENESS_MODEL_PATH:models/liveness/IIC_Fl.onnx}
+  liveness-model-path: ${FACE_LIVENESS_MODEL_PATH:D:/BearPi-agri/backend/models/liveness/IIC_Fl.onnx}
   # 活体检测阈值（超过此值判定为真人，默认 0.8）
   liveness-threshold: ${FACE_LIVENESS_THRESHOLD:0.8}

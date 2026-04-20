@@ -17,6 +17,7 @@ import {
   ClipboardList,
 } from "lucide-react";
 import { getCurrentUser, logout, type User } from "../services/auth";
+import { YayaFloatingAssistant } from "./YayaFloatingAssistant";
 
 const baseNavItems = [
   { to: "/", icon: LayoutDashboard, label: "总览大屏", desc: "多大棚统一监控" },
@@ -136,6 +137,7 @@ export function Layout() {
       <main className="flex-1 overflow-y-auto">
         <Outlet />
       </main>
+      <YayaFloatingAssistant />
     </div>
   );
 }

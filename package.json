@@ -4,6 +4,7 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
+    "prepare:face-models": "node scripts/download-face-models.mjs",
     "build": "vite build",
     "dev": "vite",
     "preview": "vite preview --host"

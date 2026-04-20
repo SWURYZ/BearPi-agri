@@ -1,7 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Mic, Square } from "lucide-react";
-import { executeDecision } from "../services/smartDecision";
+import { useNavigate } from "react-router";
+import { executeDecision, type SensorSnapshot } from "../services/smartDecision";
 import { streamAgriAgentChat } from "../services/agriAgent";
+import { sendManualControl } from "../services/deviceControl";
 
 type VoiceState = "idle" | "listening" | "thinking" | "speaking";
 
@@ -426,15 +428,116 @@ function quickReply(text: string): string | null {
   return null;
 }
 
+type DeviceCommand = {
+  commandType: "LIGHT_CONTROL" | "MOTOR_CONTROL";
+  action: "ON" | "OFF";
+  label: string;
+};
+
+function parseDeviceCommand(text: string): DeviceCommand | null {
+  const t = text.replace(/\s+/g, "");
+
+  if (/(开|打开|开启|启动)(补光灯|灯|灯光)/.test(t)) {
+    return { commandType: "LIGHT_CONTROL", action: "ON", label: "补光灯" };
+  }
+  if (/(关|关闭|关掉|熄灭)(补光灯|灯|灯光)/.test(t)) {
+    return { commandType: "LIGHT_CONTROL", action: "OFF", label: "补光灯" };
+  }
+
+  if (/(开|打开|开启|启动)(风机|风扇|通风|电机|马达)/.test(t)) {
+    return { commandType: "MOTOR_CONTROL", action: "ON", label: "风机/电机" };
+  }
+  if (/(关|关闭|关掉|停止)(风机|风扇|通风|电机|马达)/.test(t)) {
+    return { commandType: "MOTOR_CONTROL", action: "OFF", label: "风机/电机" };
+  }
+
+  return null;
+}
+
+function buildEnvAdvice(snapshot: SensorSnapshot): string[] {
+  const advice: string[] = [];
+  const temp = snapshot.temperature;
+  const humidity = snapshot.humidity;
+  const light = snapshot.luminance;
+
+  if (typeof temp === "number") {
+    if (temp >= 32) {
+      advice.push("温度偏高，建议优先通风降温并避免正午灌溉。");
+    } else if (temp <= 15) {
+      advice.push("温度偏低，建议夜间保温，减少大通风时长。");
+    }
+  }
+
+  if (typeof humidity === "number") {
+    if (humidity >= 85) {
+      advice.push("湿度偏高，建议开启风机短时除湿，预防病害。");
+    } else if (humidity <= 45) {
+      advice.push("湿度偏低，建议小水量补灌并关注蒸腾过快问题。");
+    }
+  }
+
+  if (typeof light === "number") {
+    if (light <= 250) {
+      advice.push("当前光照偏弱，建议按作物生长期补光。");
+    }
+  }
+
+  return advice;
+}
+
+function mergeDecisionWithAdvice(decision: string, snapshot: SensorSnapshot): string {
+  const advice = buildEnvAdvice(snapshot);
+  if (advice.length === 0) {
+    return decision;
+  }
+  return `${decision}\n\n【基于当前环境的补充建议】\n- ${advice.join("\n- ")}`;
+}
+
+type NavCommand = {
+  to: string;
+  label: string;
+};
+
+const NAV_COMMANDS: Array<NavCommand & { aliases: string[] }> = [
+  { to: "/", label: "总览大屏", aliases: ["总览大屏", "总览", "首页", "主页面", "主界面", "大屏"] },
+  { to: "/monitor", label: "实时监测", aliases: ["实时监测", "实时监控", "实时数据", "监测页面"] },
+  { to: "/alerts", label: "阈值告警", aliases: ["阈值告警", "告警页面", "报警页面", "预警页面"] },
+  { to: "/control", label: "设备控制", aliases: ["设备控制", "控制页面", "控制中心", "手动控制"] },
+  { to: "/automation", label: "联动规则", aliases: ["联动规则", "自动化", "规则页面", "联动页面"] },
+  { to: "/history", label: "历史分析", aliases: ["历史分析", "历史数据", "趋势分析", "历史页面"] },
+  { to: "/devices", label: "设备管理", aliases: ["设备管理", "设备页面", "设备列表"] },
+  { to: "/ai", label: "农事问答", aliases: ["农事问答", "问答助手", "AI问答", "智能问答"] },
+  { to: "/decision", label: "智控决策", aliases: ["智控决策", "决策页面", "芽芽助手", "芽芽"] },
+  { to: "/users", label: "用户管理", aliases: ["用户管理", "用户页面", "账号管理"] },
+  { to: "/logs", label: "登录日志", aliases: ["登录日志", "日志页面", "用户日志"] },
+];
+
+function parseNavigationCommand(text: string): NavCommand | null {
+  const t = text.replace(/\s+/g, "");
+  const hasNavVerb = /(打开|进入|跳到|跳转到|切到|切换到|去|前往|到)/.test(t);
+
+  for (const item of NAV_COMMANDS) {
+    if (item.aliases.some((alias) => t.includes(alias))) {
+      if (hasNavVerb || /页面|界面|大屏/.test(t) || t.length <= 10) {
+        return { to: item.to, label: item.label };
+      }
+    }
+  }
+
+  return null;
+}
+
 // ─── Main component ─────────────────────────────────────────────────────────
 export function SmartDecision() {
   const [vs, setVS]           = useState<VoiceState>("idle");
   const [userText, setUserText] = useState("");
   const [aiText,   setAiText]   = useState("");
   const [supported, setSupported] = useState(true);
+  const navigate = useNavigate();
 
   const vsRef  = useRef<VoiceState>("idle");
   const recRef = useRef<ISpeechRecognition | null>(null);
+  const deviceIdRef = useRef("69d75b1d7f2e6c302f654fea_20031104");
 
   // Unified state setter that keeps the ref in sync
   const go = useCallback((s: VoiceState) => {
@@ -513,6 +616,41 @@ export function SmartDecision() {
       setAiText("");
       go("thinking");
 
+      // ── Voice navigation path: jump to requested page ──
+      const nav = parseNavigationCommand(text);
+      if (nav) {
+        navigate(nav.to);
+        const reply = `好的，已为你打开${nav.label}页面。`;
+        setAiText(reply);
+        go("speaking");
+        speakText(reply);
+        return;
+      }
+
+      // ── Device control path: keep existing features and expand control ability ──
+      const cmd = parseDeviceCommand(text);
+      if (cmd) {
+        try {
+          const result = await sendManualControl({
+            deviceId: deviceIdRef.current,
+            commandType: cmd.commandType,
+            action: cmd.action,
+          });
+          const actionText = cmd.action === "ON" ? "开启" : "关闭";
+          const reply = `${cmd.label}${actionText}指令已发送。状态：${result.status}。`;
+          setAiText(reply);
+          go("speaking");
+          speakText(reply);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "未知错误";
+          const reply = `抱歉，${cmd.label}控制失败：${msg}`;
+          setAiText(reply);
+          go("speaking");
+          speakText(reply);
+        }
+        return;
+      }
+
       // ── Fast path: local quick reply for casual conversation ──
       const quick = quickReply(text);
       if (quick) {
@@ -550,10 +688,11 @@ export function SmartDecision() {
 
       // ── Agri path: call backend smart decision ──
       try {
-        const res = await executeDecision({ query: text });
-        setAiText(res.decision);
+        const res = await executeDecision({ query: text, deviceId: deviceIdRef.current });
+        const enhanced = mergeDecisionWithAdvice(res.decision, res.sensorSnapshot);
+        setAiText(enhanced);
         go("speaking");
-        speakText(res.decision);
+        speakText(enhanced);
       } catch {
         const errMsg =
           "\u62b1\u6b49\uff0c\u6211\u9047\u5230\u4e86\u4e00\u4e9b\u95ee\u9898\uff0c\u8bf7\u7a0d\u540e\u518d\u8bd5\u4e00\u6b21";
@@ -573,7 +712,7 @@ export function SmartDecision() {
     setUserText("");
     setAiText("");
     try { rec.start(); } catch { go("idle"); }
-  }, [go, speakText]);
+  }, [go, navigate, speakText]);
 
   const handleMic = useCallback(() => {
     const state = vsRef.current;

@@ -10,9 +10,11 @@
  */
 import * as faceapi from "@vladmandic/face-api";
 
-/** CDN 远程模型地址（jsDelivr，国内可访问） */
-const MODEL_URL =
-  "https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model";
+/**
+ * 本地模型地址（由 scripts/download-face-models.mjs 下载到 public/models/face-api）。
+ * 浏览器从 http://localhost:5173/models/face-api 读取，不再每次走远端。
+ */
+const MODEL_URL = "/models/face-api";
 
 export type Expression =
   | "happy"
@@ -124,8 +126,8 @@ let modelsLoaded = false;
 let loadingPromise: Promise<void> | null = null;
 
 /**
- * 预加载表情识别所需的两个轻量模型（从 CDN 远程下载，约 500 KB）。
- * 多次调用只加载一次，浏览器自动缓存。
+ * 预加载表情识别所需的两个轻量模型。
+ * 若本地模型已提前下载到 D 盘项目目录，会优先从本地加载。
  */
 export async function loadExpressionModels(): Promise<void> {
   if (modelsLoaded) return;
