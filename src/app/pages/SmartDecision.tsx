@@ -23,6 +23,7 @@ interface ISpeechRecognition extends EventTarget {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
+  maxAlternatives: number;
   start(): void;
   stop(): void;
   abort(): void;
@@ -391,20 +392,74 @@ function SpeakBars() {
 
 // ─── Quick local response (non-agri queries) ────────────────────────────────
 
+// ─── Chinese ASR homophone correction ───────────────────────────────────────
+// 农业场景常见同音字/近音字误识别修正
+const HOMOPHONE_FIXES: Array<[RegExp, string]> = [
+  [/大蓬|大篷/g,           "大棚"],
+  [/贯盖|灌盖|管盖|惯盖/g, "灌溉"],
+  [/不光灯|布光灯|补框灯/g, "补光灯"],
+  [/同封|通封|痛风/g,       "通风"],
+  [/疯鸡|丰机|封机|风击/g,  "风机"],
+  [/点击电机|点机|电击/g,   "电机"],
+  [/彩收|菜收|采手/g,       "采收"],
+  [/博种|薄种|拨种/g,       "播种"],
+  [/是度|十度(?!以)/g,      "湿度"],
+  [/温独|文度|纹度/g,       "温度"],
+  [/师肥|是肥|失肥/g,       "施肥"],
+  [/教水|浇谁|焦水/g,       "浇水"],
+  [/光召|广照|光找/g,       "光照"],
+  [/传感期|传感旗/g,        "传感器"],
+  [/病冲害|病昆害/g,        "病虫害"],
+];
+
+function correctASR(text: string): string {
+  let result = text;
+  for (const [pattern, fix] of HOMOPHONE_FIXES) {
+    result = result.replace(pattern, fix);
+  }
+  return result;
+}
+
+/** 对候选文本打分：分越高越可能是有效指令 */
+function scoreCandidate(text: string): number {
+  if (isSensorDataQuery(text))        return 4;
+  if (parseNavigationCommand(text))   return 3;
+  if (parseDeviceCommand(text))       return 3;
+  if (isAgriQuery(text))              return 2;
+  if (quickReply(text))               return 1;
+  return 0;
+}
+
 const AGRI_KEYWORDS = [
-  "\u704c\u6e89", "\u65bd\u8098", "\u6e29\u5ea6", "\u6e7f\u5ea6", "\u5149\u7167", "\u5149\u5f3a", "\u8865\u5149",
-  "\u75c5\u866b\u5bb3", "\u75c5\u866b", "\u866b\u5bb3", "\u6444\u6c0f", "\u767e\u83cc",
-  "\u91c7\u6536", "\u6536\u6536", "\u5347\u6e29", "\u964d\u6e29", "\u901a\u98ce", "\u98ce\u673a",
-  "\u4f20\u611f\u5668", "\u6e29\u5ba4", "\u5927\u68da", "\u571f\u58e4", "\u6c34\u5206",
-  "\u8425\u517b", "\u80a5\u6599", "\u6c2e\u78f7\u9492", "\u5206\u679d", "\u4fee\u526a",
-  "\u79cd\u690d", "\u64ad\u79cd", "\u53d1\u82bd", "\u5f00\u82b1", "\u7ed3\u679c",
-  "\u75c5\u5bb3", "\u6742\u8349", "\u67af\u840e", "\u9ec4\u53f6", "\u71c3\u7126", "\u6e0d\u6c34",
-  "\u5f02\u5e38", "\u9884\u8b66", "\u62a5\u8b66", "\u51b3\u7b56", "\u5efa\u8bae",
-  "\u68c0\u6d4b", "\u76d1\u63a7", "\u6570\u636e", "\u5206\u6790",
+  // 核心操作
+  "灌溉", "施肥", "浇水", "施药", "除草", "修剪", "分枝", "播种", "种植", "采收", "收获",
+  // 环境指标
+  "温度", "湿度", "光照", "光强", "气温", "光合", "蒸腾", "补光",
+  // 病虫害
+  "病虫害", "病虫", "虫害", "摄氏", "百菌", "病害", "杂草", "枯萎", "黄叶", "燃焦", "渗水",
+  // 温控
+  "升温", "降温", "通风", "风机", "干旱", "缺水",
+  // 设施/设备
+  "传感器", "温室", "大棚", "土壤", "水分", "电机", "马达", "灯光",
+  // 肥料/养分
+  "营养", "肥料", "氮磷钾", "养分",
+  // 生长周期
+  "发芽", "开花", "结果", "生长", "长势", "成熟",
+  // 作物类型（口语）
+  "植物", "作物", "庄稼", "蔬菜", "水果", "花卉",
+  // 管理/决策
+  "异常", "预警", "报警", "决策", "建议", "检测", "监控", "数据", "分析",
 ];
 
 function isAgriQuery(text: string): boolean {
-  return AGRI_KEYWORDS.some((kw) => text.includes(kw));
+  if (AGRI_KEYWORDS.some((kw) => text.includes(kw))) return true;
+  // 口语化决策询问："需要浇水吗"、"该施肥了吗"、"要不要通风"
+  if (/(需要|该|要不要|有没有必要|应该).*(浇|施|通|种|收|除|整|修|喷|换|补)/.test(text)) return true;
+  // 怎么养/种/管护
+  if (/(怎么|如何|怎样).*(养|种|管|护|防|治|施|浇|种)/.test(text)) return true;
+  // 大棚/温室状态询问
+  if (/(大棚|温室|温度|湿度|光照).*(怎么样|如何|正常吗|有问题|多少|几度)/.test(text)) return true;
+  return false;
 }
 
 const GREETINGS: Record<string, string> = {
@@ -514,11 +569,12 @@ const NAV_COMMANDS: Array<NavCommand & { aliases: string[] }> = [
 
 function parseNavigationCommand(text: string): NavCommand | null {
   const t = text.replace(/\s+/g, "");
-  const hasNavVerb = /(打开|进入|跳到|跳转到|切到|切换到|去|前往|到)/.test(t);
+  const hasNavVerb = /(打开|进入|跳到|跳转到|切到|切换到|去|前往|到|显示|看看|看一下|查看)/.test(t);
 
   for (const item of NAV_COMMANDS) {
     if (item.aliases.some((alias) => t.includes(alias))) {
-      if (hasNavVerb || /页面|界面|大屏/.test(t) || t.length <= 10) {
+      // 有导航动词、或包含页面关键词、或句子较短且不含疑问词
+      if (hasNavVerb || /页面|界面|大屏/.test(t) || (t.length <= 12 && !/多少|是否|怎么|如何|几度|吗/.test(t))) {
         return { to: item.to, label: item.label };
       }
     }
@@ -527,16 +583,172 @@ function parseNavigationCommand(text: string): NavCommand | null {
   return null;
 }
 
+// ─── Sensor data direct-query detection ─────────────────────────────────────
+
+/** 匹配"查询当前传感器数值"意图，应直接报数而非给决策建议 */
+function isSensorDataQuery(text: string): boolean {
+  const t = text.replace(/\s+/g, "");
+  if (/(温度|湿度|光照|光强|气温).*(是多少|多少|几度|怎么样|如何|多高|多低|正常吗|高不高|低不低|呢|了)/.test(t)) return true;
+  if (/多少度|几度了|几度啊|多少度了/.test(t)) return true;  // "现在多少度" 不含具体指标词
+  if (/(当前|现在|最新|目前).*(温度|湿度|光照|传感|数据|大棚|环境|状态)/.test(t)) return true;
+  if (/(传感器|大棚|环境|温室).*(数据|状态|情况|参数|读数|是多少|怎么样|如何|怎么了|正常吗|有没有问题)/.test(t)) return true;
+  if (/(看看|查看|显示|告诉我|汇报|报告).*(数据|温度|湿度|光照|传感|大棚|情况|状态)/.test(t)) return true;
+  if (/(设备|风机|风扇|补光灯).*(状态|情况|开了吗|关了吗|是开的|是关的|怎么样)/.test(t)) return true;
+  if (/(有没有|是否).*(异常|问题|报警|告警)/.test(t)) return true;
+  if (/大棚(怎么样|怎样|如何|好吗|正常吗|没事吧|情况)/.test(t)) return true;
+  return false;
+}
+
+/** 从快照提取一行传感器摘要，用于在决策建议前播报当前数值 */
+function buildSensorSummary(snapshot: SensorSnapshot): string {
+  if (!snapshot || snapshot.reportTime === null) return "";
+  const parts: string[] = [];
+  if (snapshot.temperature != null) parts.push(`温度${snapshot.temperature.toFixed(1)}℃`);
+  if (snapshot.humidity    != null) parts.push(`湿度${snapshot.humidity.toFixed(1)}%`);
+  if (snapshot.luminance   != null) parts.push(`光照${Math.round(snapshot.luminance)}lux`);
+  if (parts.length === 0) return "";
+  return `当前大棚：${parts.join("，")}。`;
+}
+
+/** 将传感器快照格式化为直接口语化答复 */
+function formatSensorDirectAnswer(snapshot: SensorSnapshot): string {
+  if (!snapshot || snapshot.reportTime === null) {
+    return "当前暂无传感器数据，请确认设备已正常连接并上传数据。";
+  }
+  const temp  = snapshot.temperature != null ? `${snapshot.temperature.toFixed(1)}℃`   : "暂无";
+  const humi  = snapshot.humidity    != null ? `${snapshot.humidity.toFixed(1)}%`      : "暂无";
+  const light = snapshot.luminance   != null ? `${Math.round(snapshot.luminance)} lux` : "暂无";
+  const led   = snapshot.ledStatus   ?? "未知";
+  const motor = snapshot.motorStatus ?? "未知";
+  return `当前大棚温度${temp}，湿度${humi}，光照强度${light}。` +
+    `补光灯${led}，风机${motor}。已为你切换到总览大屏。`;
+}
+
+// ─── Intent normalization ────────────────────────────────────────────────────
+
+type TopicTag = "SENSOR" | "IRRIGATION" | "LIGHT" | "MOTOR" | "PEST" | "FERTILIZE" | "HARVEST" | "GENERAL";
+
+interface NormalizeResult {
+  text: string;          // 规范化后的文本，用于路由和后端
+  topicTag: TopicTag;    // 本轮话题标签，供下轮上下文参考
+  displayHint?: string;  // 展示给用户看的"芽芽理解为：xxx"
+}
+
+/**
+ * 将模糊的口语表达映射为场景化的标准意图描述。
+ * lastTopic: 上一轮话题，用于处理"再看一下"等指代。
+ */
+function normalizeIntent(raw: string, lastTopic: TopicTag | null): NormalizeResult {
+  const t = raw.replace(/\s+/g, "");
+
+  // ── 1. 纯状态查询（无具体指标）──
+  if (/^(帮我)?(看看|瞧瞧|查查|看一下|查一下|了解一下|汇报)(一下|下|下情况)?$/.test(t) ||
+      /^(现在|当前|目前)(怎么样|咋样|如何|情况)?$/.test(t) ||
+      /^大棚(怎么样|咋样|如何|情况|好吗|正常吗|没事吧)?$/.test(t) ||
+      /^(有没有|有啥|有什么)(问题|异常|情况)$/.test(t)) {
+    return { text: "当前大棚传感器数据是什么", topicTag: "SENSOR",
+             displayHint: "查看大棚当前传感器数据" };
+  }
+
+  // ── 2. 指代上一轮话题（再/还/继续/另外） ──
+  if (/(再|还|继续|另外)(看看|查查|问问|说说|看一下|查一下)/.test(t) && lastTopic) {
+    const topicMap: Record<TopicTag, string> = {
+      SENSOR:    "大棚当前传感器数据",
+      IRRIGATION:"当前是否需要灌溉",
+      LIGHT:     "当前光照情况及补光建议",
+      MOTOR:     "当前通风状态",
+      PEST:      "当前病虫害防治建议",
+      FERTILIZE: "当前施肥建议",
+      HARVEST:   "当前采收时机建议",
+      GENERAL:   raw,
+    };
+    return { text: topicMap[lastTopic], topicTag: lastTopic,
+             displayHint: `继续查看：${topicMap[lastTopic]}` };
+  }
+
+  // ── 3. 灌溉类 ──
+  if (/(需要|该|要不要|有没有必要|应该)(浇水|灌溉|补水)/.test(t) ||
+      /浇水(吗|呢|嘛|没有)?$/.test(t) ||
+      /(水分|土壤水分|缺水)(怎么样|如何|多少|正常吗)/.test(t)) {
+    return { text: "当前土壤水分状态如何，是否需要灌溉，给出具体建议", topicTag: "IRRIGATION",
+             displayHint: "分析灌溉需求" };
+  }
+
+  // ── 4. 光照/补光类 ──
+  if (/(需要|该|要不要)(开灯|补光|开补光灯|打开灯)/.test(t) ||
+      /(补光灯|光照)(要|需要|应该|怎么)(开|关|调|处理)/.test(t) ||
+      /光照(够吗|足吗|弱吗|强吗|正常吗|怎么样)/.test(t)) {
+    return { text: "当前光照强度是否足够，是否需要开启补光灯", topicTag: "LIGHT",
+             displayHint: "分析光照与补光需求" };
+  }
+
+  // ── 5. 通风/降温类 ──
+  if (/(需要|该|要不要)(通风|开风机|散热|降温|开电机)/.test(t) ||
+      /(风机|电机|通风)(要|需要|应该|怎么)(开|关|处理)/.test(t) ||
+      /温度(太高|太热|偏高|高吗|正常吗|降一下)/.test(t)) {
+    return { text: "当前温度和通风状态如何，是否需要开启风机降温", topicTag: "MOTOR",
+             displayHint: "分析通风降温需求" };
+  }
+
+  // ── 6. 病虫害类 ──
+  if (/(有没有|是否|有)(病虫害|虫害|病害|虫子|病了)/.test(t) ||
+      /(植物|作物|蔬菜)(有没有|是否)(问题|异常|病了|不对)/.test(t) ||
+      /病虫害(怎么|如何)(防|治|处理|预防)/.test(t)) {
+    return { text: "当前大棚是否存在病虫害风险，给出防治建议", topicTag: "PEST",
+             displayHint: "分析病虫害防治" };
+  }
+
+  // ── 7. 施肥类 ──
+  if (/(需要|该|要不要)(施肥|施氮|补肥|追肥|施药)/.test(t) ||
+      /施肥(了吗|了没|一下|建议|计划)/.test(t)) {
+    return { text: "当前作物营养状况如何，是否需要施肥，给出施肥建议", topicTag: "FERTILIZE",
+             displayHint: "分析施肥需求" };
+  }
+
+  // ── 8. 采收类 ──
+  if (/(可以|能|该|要)(采收|收了|收获|摘了|摘下来)/.test(t) ||
+      /采收(时间|时机|了吗|了没|建议)/.test(t)) {
+    return { text: "当前作物是否达到采收标准，给出采收时机建议", topicTag: "HARVEST",
+             displayHint: "分析采收时机" };
+  }
+
+  // ── 9. 模糊动作（弄/搞/处理 + 模糊对象） ──
+  if (/(弄一下|搞一下|处理一下|整一下)(.*)?/.test(t)) {
+    const obj = t.replace(/(弄一下|搞一下|处理一下|整一下)/, "").trim();
+    if (obj) {
+      return { text: `${obj}相关的处理建议`, topicTag: "GENERAL",
+               displayHint: `处理"${obj}"` };
+    }
+    // 完全没有对象，fallback 到传感器
+    return { text: "当前大棚传感器数据是什么", topicTag: "SENSOR",
+             displayHint: "查看大棚当前状态" };
+  }
+
+  // ── 10. 无法归类：原样返回，但尝试推断 topicTag ──
+  const tag: TopicTag =
+    /(灌溉|浇水|水分)/.test(t) ? "IRRIGATION" :
+    /(光照|补光|灯)/.test(t)   ? "LIGHT" :
+    /(通风|风机|降温|电机)/.test(t) ? "MOTOR" :
+    /(病虫|虫害|病害)/.test(t) ? "PEST" :
+    /(施肥|肥料|营养)/.test(t) ? "FERTILIZE" :
+    /(采收|收获)/.test(t)      ? "HARVEST" :
+    /(温度|湿度|传感|大棚|数据)/.test(t) ? "SENSOR" : "GENERAL";
+
+  return { text: raw, topicTag: tag };
+}
+
 // ─── Main component ─────────────────────────────────────────────────────────
 export function SmartDecision() {
   const [vs, setVS]           = useState<VoiceState>("idle");
   const [userText, setUserText] = useState("");
   const [aiText,   setAiText]   = useState("");
+  const [normalizedHint, setNormalizedHint] = useState<string | null>(null);
   const [supported, setSupported] = useState(true);
   const navigate = useNavigate();
 
-  const vsRef  = useRef<VoiceState>("idle");
-  const recRef = useRef<ISpeechRecognition | null>(null);
+  const vsRef       = useRef<VoiceState>("idle");
+  const recRef      = useRef<ISpeechRecognition | null>(null);
+  const lastTopicRef = useRef<TopicTag | null>(null);
   const deviceIdRef = useRef("69d75b1d7f2e6c302f654fea_20031104");
 
   // Unified state setter that keeps the ref in sync
@@ -630,21 +842,56 @@ export function SmartDecision() {
     if (!SR) { setSupported(false); return; }
 
     const rec = new SR();
-    rec.lang           = "zh-CN";
-    rec.continuous     = false;
-    rec.interimResults = false;
-    recRef.current     = rec;
+    rec.lang             = "zh-CN";
+    rec.continuous       = false;
+    rec.interimResults   = false;
+    rec.maxAlternatives  = 3;   // get up to 3 candidates, pick best match
+    recRef.current       = rec;
 
     rec.onresult = async (e: ISpeechRecognitionEvent) => {
-      const text = Array.from(e.results)
-        .map((r) => r[0].transcript)
-        .join("");
+      // ── Collect all alternatives, apply homophone correction, score each ──
+      const firstResult = e.results[0];
+      const candidates = Array.from({ length: firstResult.length }, (_, i) => ({
+        transcript: correctASR(firstResult[i].transcript),
+        confidence: firstResult[i].confidence ?? 1,
+      }));
+
+      // Pick candidate with highest score; ties broken by confidence
+      const best = candidates.reduce((prev, curr) => {
+        const ps = scoreCandidate(prev.transcript);
+        const cs = scoreCandidate(curr.transcript);
+        if (cs > ps) return curr;
+        if (cs === ps && curr.confidence > prev.confidence) return curr;
+        return prev;
+      });
+
+      const text = best.transcript;
+      const confidence = best.confidence;
+
+      // ── Very low confidence + no pattern matched → ask to repeat ──
+      if (confidence < 0.4 && scoreCandidate(text) === 0) {
+        const retry = "抱歉，我没听清楚，能再说一遍吗？";
+        setUserText(text);
+        setAiText(retry);
+        go("speaking");
+        speakText(retry);
+        return;
+      }
+
       setUserText(text);
       setAiText("");
+      setNormalizedHint(null);
       go("thinking");
 
+      // ── Semantic normalization: map vague speech to canonical intent ──
+      const norm = normalizeIntent(text, lastTopicRef.current);
+      const query = norm.text;          // use normalized text for all routing below
+      if (norm.displayHint && norm.text !== text) {
+        setNormalizedHint(norm.displayHint);
+      }
+
       // ── Voice navigation path: jump to requested page ──
-      const nav = parseNavigationCommand(text);
+      const nav = parseNavigationCommand(query);
       if (nav) {
         navigate(nav.to);
         const reply = `好的，已为你打开${nav.label}页面。`;
@@ -655,7 +902,7 @@ export function SmartDecision() {
       }
 
       // ── Device control path: keep existing features and expand control ability ──
-      const cmd = parseDeviceCommand(text);
+      const cmd = parseDeviceCommand(query);
       if (cmd) {
         try {
           const result = await sendManualControl({
@@ -679,7 +926,7 @@ export function SmartDecision() {
       }
 
       // ── Fast path: local quick reply for casual conversation ──
-      const quick = quickReply(text);
+      const quick = quickReply(query);
       if (quick) {
         setAiText(quick);
         go("speaking");
@@ -687,12 +934,31 @@ export function SmartDecision() {
         return;
       }
 
+      // ── Sensor direct-read path (must come BEFORE !isAgriQuery so "多少度" etc. are caught) ──
+      if (isSensorDataQuery(query)) {
+        try {
+          const res = await executeDecision({ query, deviceId: deviceIdRef.current });
+          const answer = formatSensorDirectAnswer(res.sensorSnapshot);
+          setAiText(answer);
+          lastTopicRef.current = "SENSOR";
+          go("speaking");
+          navigate("/");
+          speakText(answer);
+        } catch {
+          const errMsg = "抱歉，获取传感器数据失败，请稍后再试。";
+          setAiText(errMsg);
+          go("speaking");
+          speakText(errMsg);
+        }
+        return;
+      }
+
       // ── Casual path: non-agri query → streaming LLM quick reply ──
-      if (!isAgriQuery(text)) {
+      if (!isAgriQuery(query)) {
         let accumulated = "";
         try {
           await streamAgriAgentChat(
-            { question: text },
+            { question: query },
             {
               onToken: (token) => { accumulated += token; },
               onDone: () => {},
@@ -700,12 +966,12 @@ export function SmartDecision() {
             },
           );
           const reply = accumulated.trim() ||
-            "\u6211\u6682\u65f6\u8fd8\u4e0d\u592a\u61c2\u8fd9\u4e2a\u95ee\u9898\uff0c\u4f46\u6709\u519c\u4e8b\u95ee\u9898\u5c3d\u7ba1\u95ee\u6211\uff01";
+            "我暂时还不太懂这个问题，但有农事问题尽管问我！";
           setAiText(reply);
           go("speaking");
           speakText(reply);
         } catch {
-          const fallback = "\u6211\u6682\u65f6\u8fd8\u4e0d\u592a\u61c2\u8fd9\u4e2a\u95ee\u9898\uff0c\u4f46\u706c\u6e89\u3001\u65bd\u8098\u3001\u5149\u7167\u7b49\u519c\u4e8b\u95ee\u9898\u6211\u64c5\u957f\uff01";
+          const fallback = "我暂时还不太懂这个问题，但灌溉、施肥、光照等农事问题我擅长！";
           setAiText(fallback);
           go("speaking");
           speakText(fallback);
@@ -713,16 +979,18 @@ export function SmartDecision() {
         return;
       }
 
-      // ── Agri path: call backend smart decision ──
+      // ── Agri decision path: call backend smart decision, prefix with live sensor data ──
       try {
-        const res = await executeDecision({ query: text, deviceId: deviceIdRef.current });
+        const res = await executeDecision({ query, deviceId: deviceIdRef.current });
+        const sensorPrefix = buildSensorSummary(res.sensorSnapshot);
         const enhanced = mergeDecisionWithAdvice(res.decision, res.sensorSnapshot);
-        setAiText(enhanced);
+        const fullReply = sensorPrefix ? `${sensorPrefix}\n\n${enhanced}` : enhanced;
+        lastTopicRef.current = norm.topicTag;
+        setAiText(fullReply);
         go("speaking");
-        speakText(enhanced);
+        speakText(fullReply);
       } catch {
-        const errMsg =
-          "\u62b1\u6b49\uff0c\u6211\u9047\u5230\u4e86\u4e00\u4e9b\u95ee\u9898\uff0c\u8bf7\u7a0d\u540e\u518d\u8bd5\u4e00\u6b21";
+        const errMsg = "抱歉，我遇到了一些问题，请稍后再试一次";
         setAiText(errMsg);
         go("speaking");
         speakText(errMsg);
@@ -850,6 +1118,17 @@ export function SmartDecision() {
             animation: "sub-in 0.4s ease",
           }}>
             &ldquo;{userText}&rdquo;
+          </p>
+        )}
+        {normalizedHint && vs !== "idle" && (
+          <p style={{
+            fontSize: 12,
+            color: "rgba(74,222,128,0.55)",
+            maxWidth: 500,
+            lineHeight: 1.4,
+            animation: "sub-in 0.3s ease",
+          }}>
+            芽芽理解为：{normalizedHint}
           </p>
         )}
         {aiText && vs !== "idle" && (
