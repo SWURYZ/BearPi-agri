@@ -36,7 +36,7 @@ public class UserService {
 
     /** 注册（第一个用户自动为管理员） */
     @Transactional
-    public AuthResponse register(String username, String password, String displayName) {
+    public AuthResponse register(String username, String password, String displayName, String clientIp) {
         validateRegistration(username, password, displayName);
 
         boolean isFirst = userRepository.count() == 0;
@@ -50,12 +50,13 @@ public class UserService {
         userRepository.save(user);
 
         String token = tokenStore.createToken(user.getId());
+        recordLoginLog(user, "register", clientIp);
         log.info("用户注册成功: username={}, role={}", username, user.getRole());
         return AuthResponse.builder().token(token).user(toResponse(user)).build();
     }
 
     /** 密码登录 */
-    public AuthResponse login(String username, String password) {
+    public AuthResponse login(String username, String password, String clientIp) {
         AppUser user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new IllegalArgumentException("用户名或密码错误"));
 
@@ -64,13 +65,13 @@ public class UserService {
         }
 
         String token = tokenStore.createToken(user.getId());
-        recordLoginLog(user, "password");
-        log.info("用户登录成功: username={}", username);
+        recordLoginLog(user, "password", clientIp);
+        log.info("用户登录成功: username={}, ip={}", username, clientIp);
         return AuthResponse.builder().token(token).user(toResponse(user)).build();
     }
 
     /** 人脸登录：后端完成识别 + 匹配用户 */
-    public AuthResponse loginByFace(MultipartFile imageFile) {
+    public AuthResponse loginByFace(MultipartFile imageFile, String clientIp) {
         if (!smartAIModelService.isReady()) {
             throw new IllegalStateException("人脸识别模型未就绪");
         }
@@ -84,8 +85,8 @@ public class UserService {
                 .orElseThrow(() -> new IllegalArgumentException("人脸已识别但未关联到系统用户"));
 
         String token = tokenStore.createToken(user.getId());
-        recordLoginLog(user, "face");
-        log.info("人脸登录成功: username={}", user.getUsername());
+        recordLoginLog(user, "face", clientIp);
+        log.info("人脸登录成功: username={}, ip={}", user.getUsername(), clientIp);
         return AuthResponse.builder().token(token).user(toResponse(user)).build();
     }
 
@@ -197,6 +198,28 @@ public class UserService {
         log.info("用户已删除: userId={}, username={}", userId, target.getUsername());
     }
 
+    /** 管理员修改用户角色 */
+    @Transactional
+    public UserResponse updateUserRole(Long userId, String newRole, Long adminUserId) {
+        if (!"admin".equals(newRole) && !"user".equals(newRole)) {
+            throw new IllegalArgumentException("无效的角色值");
+        }
+        AppUser admin = userRepository.findById(adminUserId)
+                .orElseThrow(() -> new IllegalArgumentException("管理员不存在"));
+        if (!"admin".equals(admin.getRole())) {
+            throw new IllegalArgumentException("仅管理员可修改用户角色");
+        }
+        if (userId.equals(adminUserId)) {
+            throw new IllegalArgumentException("不能修改自己的角色");
+        }
+        AppUser target = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
+        target.setRole(newRole);
+        userRepository.save(target);
+        log.info("用户角色已修改: userId={}, newRole={}, byAdmin={}", userId, newRole, admin.getUsername());
+        return toResponse(target);
+    }
+
     /** 登出 */
     public void logout(String token) {
         tokenStore.removeToken(token);
@@ -255,16 +278,18 @@ public class UserService {
                 .build();
     }
 
-    private void recordLoginLog(AppUser user, String loginType) {
+    private void recordLoginLog(AppUser user, String loginType, String clientIp) {
         try {
             loginLogRepository.save(LoginLog.builder()
                     .userId(user.getId())
                     .username(user.getUsername())
                     .displayName(user.getDisplayName())
                     .loginType(loginType)
+                    .clientIp(clientIp)
                     .build());
         } catch (Exception e) {
-            log.warn("登录日志记录失败: {}", e.getMessage());
+            log.error("登录日志记录失败: username={}, type={}, ip={}, error={}",
+                    user.getUsername(), loginType, clientIp, e.getMessage(), e);
         }
     }
 }

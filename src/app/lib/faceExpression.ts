@@ -21,7 +21,7 @@ type FaceApiWithTf = typeof faceapi & {
 };
 
 /** 优先本地模型目录；若本地缺失再回退到 CDN。 */
-const LOCAL_MODEL_URL = "/models/face-expression";
+const LOCAL_MODEL_URL = "/models/face-api";
 const CDN_MODEL_URL =
   "https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model";
 

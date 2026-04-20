@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ClipboardList, Monitor, ScanFace, RefreshCw } from "lucide-react";
+import { ClipboardList, Monitor, ScanFace, RefreshCw, UserPlus } from "lucide-react";
 import { getLoginLogs, type LoginLog } from "../services/auth";
 
 function formatTime(iso: string) {
@@ -61,7 +61,7 @@ export function LoginLogs() {
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
           <div className="text-2xl font-bold text-gray-800">{logs.length}</div>
-          <div className="text-xs text-gray-500 mt-1">总登录次数</div>
+          <div className="text-xs text-gray-500 mt-1">总记录数</div>
         </div>
         <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
           <div className="text-2xl font-bold text-blue-600">
@@ -97,8 +97,9 @@ export function LoginLogs() {
                   <th className="px-5 py-3 text-left font-medium">#</th>
                   <th className="px-5 py-3 text-left font-medium">用户名</th>
                   <th className="px-5 py-3 text-left font-medium">姓名</th>
-                  <th className="px-5 py-3 text-left font-medium">登录方式</th>
-                  <th className="px-5 py-3 text-left font-medium">登录时间</th>
+                  <th className="px-5 py-3 text-left font-medium">操作类型</th>
+                  <th className="px-5 py-3 text-left font-medium">客户端 IP</th>
+                  <th className="px-5 py-3 text-left font-medium">时间</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -115,6 +116,11 @@ export function LoginLogs() {
                           <ScanFace className="w-3.5 h-3.5" />
                           人脸识别
                         </span>
+                      ) : log.loginType === "register" ? (
+                        <span className="inline-flex items-center gap-1.5 text-xs bg-green-100 text-green-700 px-2.5 py-1 rounded-full font-medium">
+                          <UserPlus className="w-3.5 h-3.5" />
+                          首次注册
+                        </span>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 text-xs bg-blue-100 text-blue-700 px-2.5 py-1 rounded-full font-medium">
                           <Monitor className="w-3.5 h-3.5" />
@@ -122,6 +128,7 @@ export function LoginLogs() {
                         </span>
                       )}
                     </td>
+                    <td className="px-5 py-3 text-gray-400 text-xs font-mono">{log.clientIp || "—"}</td>
                     <td className="px-5 py-3 text-gray-500 text-xs">{formatTime(log.loginTime)}</td>
                   </tr>
                 ))}

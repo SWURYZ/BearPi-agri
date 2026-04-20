@@ -6,6 +6,8 @@ import {
   Camera,
   ScanFace,
   Shield,
+  ShieldCheck,
+  ShieldOff,
   X,
   Loader2,
   CheckCircle2,
@@ -49,6 +51,9 @@ export function UserManagement() {
   /* ---- 删除确认 ---- */
   const [deleteTarget, setDeleteTarget] = useState<auth.User | null>(null);
   const [deleteFaceTarget, setDeleteFaceTarget] = useState<FaceRecordInfo | null>(null);
+
+  /* ---- 角色变更确认 ---- */
+  const [roleChangeTarget, setRoleChangeTarget] = useState<{ user: auth.User; newRole: "admin" | "user" } | null>(null);
 
   /* ---- 加载数据 ---- */
   const refreshUsers = useCallback(async () => {
@@ -218,6 +223,20 @@ export function UserManagement() {
     setAddError("");
   }, [closeCamera]);
 
+  /* ---- 变更角色 ---- */
+  const handleRoleChange = useCallback(
+    async (user: auth.User, newRole: "admin" | "user") => {
+      try {
+        await auth.updateUserRole(user.id, newRole);
+        refreshUsers();
+      } catch {
+        /* ignore */
+      }
+      setRoleChangeTarget(null);
+    },
+    [refreshUsers],
+  );
+
   /* ---- 删除用户 ---- */
   const handleDeleteUser = useCallback(
     async (user: auth.User) => {
@@ -355,6 +374,23 @@ export function UserManagement() {
                       title="注册人脸"
                     >
                       <ScanFace className="w-4 h-4" />
+                    </button>
+                  )}
+                  {u.id !== currentUser?.id && isAdminUser && (
+                    <button
+                      onClick={() => setRoleChangeTarget({ user: u, newRole: u.role === "admin" ? "user" : "admin" })}
+                      className={`p-2 transition-colors ${
+                        u.role === "admin"
+                          ? "text-green-400 hover:text-orange-500"
+                          : "text-gray-300 hover:text-green-600"
+                      }`}
+                      title={u.role === "admin" ? "撤销管理员" : "设为管理员"}
+                    >
+                      {u.role === "admin" ? (
+                        <ShieldOff className="w-4 h-4" />
+                      ) : (
+                        <ShieldCheck className="w-4 h-4" />
+                      )}
                     </button>
                   )}
                   {u.id !== currentUser?.id && isAdminUser && (
@@ -646,6 +682,20 @@ export function UserManagement() {
         confirmText="删除"
         onConfirm={() => deleteFaceTarget && handleDeleteFace(deleteFaceTarget)}
         onCancel={() => setDeleteFaceTarget(null)}
+      />
+
+      {/* 角色变更确认 */}
+      <SimpleModal
+        open={!!roleChangeTarget}
+        title={roleChangeTarget?.newRole === "admin" ? "设为管理员" : "撤销管理员"}
+        description={
+          roleChangeTarget?.newRole === "admin"
+            ? `确定将「${roleChangeTarget?.user.displayName}」设为管理员？管理员拥有删除用户等权限。`
+            : `确定撤销「${roleChangeTarget?.user.displayName}」的管理员权限？`
+        }
+        confirmText={roleChangeTarget?.newRole === "admin" ? "设为管理员" : "撤销"}
+        onConfirm={() => roleChangeTarget && handleRoleChange(roleChangeTarget.user, roleChangeTarget.newRole)}
+        onCancel={() => setRoleChangeTarget(null)}
       />
     </div>
   );
