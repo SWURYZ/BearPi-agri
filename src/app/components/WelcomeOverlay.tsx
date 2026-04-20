@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Leaf } from "lucide-react";
 import { speak } from "../lib/speech";
 import {
@@ -11,18 +11,10 @@ import {
 
 interface Props {
   displayName: string;
-  /** 浜鸿劯鐧诲綍鏃朵紶鍏ュ凡鎹曡幏鐨?canvas锛屽瘑鐮佺櫥褰曟椂浼?null/undefined锛堝皢灏濊瘯鎽勫儚澶达級 */
   faceCanvas?: HTMLCanvasElement | null;
   onDone: () => void;
 }
 
-/**
- * iOS 椋庢牸鐧诲綍娆㈣繋鍔ㄧ敾 + 浜鸿劯琛ㄦ儏鎰熺煡銆?
- *
- * - 鎸傝浇鍗冲紑濮嬭〃鎯呮娴嬶紙妯″瀷浠?CDN 杩滅▼涓嬭浇锛岀害 500 KB锛屾祻瑙堝櫒鑷姩缂撳瓨锛?
- * - 妫€娴嬬粨鏋滃埌杈惧悗浠ヤ釜鎬у寲闂€欒 + TTS 鍛堢幇
- * - 绾?3.5s 鍚庨€€鍑哄苟璺宠浆涓荤晫闈?
- */
 export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
   const [exiting, setExiting] = useState(false);
   const [exprResult, setExprResult] = useState<ExpressionResult | null>(null);
@@ -30,11 +22,9 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;
 
-  // 鈹€鈹€鈹€ 琛ㄦ儏妫€娴?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   useEffect(() => {
     let cancelled = false;
-
-    loadExpressionModels().catch(() => {/* 妯″瀷鍔犺浇澶辫触涓嶉樆鏂祦绋?*/});
+    loadExpressionModels().catch(() => {});
 
     async function runDetect() {
       try {
@@ -57,27 +47,18 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
     return () => { cancelled = true; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 鈹€鈹€鈹€ TTS 璇煶鎾姤 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   useEffect(() => {
     const expression = exprResult?.expression ?? "neutral";
     const config = EXPRESSION_CONFIG[expression];
     const delay = exprResult ? 100 : 1500;
-
-    const speakTimer = setTimeout(() => {
-      speak(config.speech(displayName));
-    }, delay);
-
+    const speakTimer = setTimeout(() => { speak(config.speech(displayName)); }, delay);
     return () => clearTimeout(speakTimer);
   }, [exprResult, displayName]);
 
-  // 鈹€鈹€鈹€ 閫€鍦烘椂搴?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   useEffect(() => {
     const exitTimer = setTimeout(() => setExiting(true), 3200);
     const doneTimer = setTimeout(() => onDoneRef.current(), 3750);
-    return () => {
-      clearTimeout(exitTimer);
-      clearTimeout(doneTimer);
-    };
+    return () => { clearTimeout(exitTimer); clearTimeout(doneTimer); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const expression = exprResult?.expression ?? "neutral";
@@ -97,7 +78,6 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
           : "wOverlayIn 0.35s ease-out forwards",
       }}
     >
-      {/* 姣涚幓鐠冭儗鏅?*/}
       <div
         style={{
           position: "absolute",
@@ -108,7 +88,6 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
         }}
       />
 
-      {/* 鑳屾櫙鍏夋檿锛堥殢琛ㄦ儏鍙樿壊锛?*/}
       <div
         style={{
           position: "absolute",
@@ -138,7 +117,6 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
         }}
       />
 
-      {/* 涓诲崱鐗囷紙iOS 椋庢牸寮瑰嚭锛?*/}
       <div
         style={{
           position: "relative",
@@ -151,7 +129,6 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
             : "wCardIn 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
         }}
       >
-        {/* 鈹€鈹€ 鍥炬爣鍖哄煙锛堝甫鑴夊啿鐜級 鈹€鈹€ */}
         <div
           style={{
             position: "relative",
@@ -161,7 +138,6 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
             marginBottom: 36,
           }}
         >
-          {/* 鑴夊啿鐜?1 */}
           <div
             style={{
               position: "absolute",
@@ -173,7 +149,6 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
               transition: "border-color 0.6s ease",
             }}
           />
-          {/* 鑴夊啿鐜?2 */}
           <div
             style={{
               position: "absolute",
@@ -185,8 +160,6 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
               transition: "border-color 0.6s ease",
             }}
           />
-
-          {/* 鍥炬爣鑳屾櫙鍏夋檿 */}
           <div
             style={{
               position: "absolute",
@@ -198,8 +171,6 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
               transition: "background 0.6s ease",
             }}
           />
-
-          {/* 鍥炬爣涓讳綋锛坕OS 鐜荤拑璐ㄦ劅锛?*/}
           <div
             style={{
               position: "relative",
@@ -218,7 +189,6 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
               overflow: "hidden",
             }}
           >
-            {/* 琛ㄦ儏妫€娴嬪墠锛氭樉绀哄彾瀛愬浘鏍囷紱妫€娴嬪悗锛氭贰鍑哄彾瀛愶紝娣″叆 emoji */}
             <Leaf
               style={{
                 width: 46,
@@ -245,14 +215,12 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
           </div>
         </div>
 
-        {/* 鈹€鈹€ 鏂囧瓧鍖哄煙 鈹€鈹€ */}
         <div
           style={{
             textAlign: "center",
             animation: "wTextIn 0.55s ease-out 0.48s both",
           }}
         >
-          {/* 琛ㄦ儏鏍囩 badge锛堟娴嬪畬鎴愬悗娣″叆锛?*/}
           <div
             style={{
               display: "inline-flex",
@@ -277,11 +245,10 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
                 transition: "color 0.5s ease",
               }}
             >
-              {exprVisible ? cfg.badge : "娆㈣繋鍥炴潵"}
+              {exprVisible ? cfg.badge : "\u6b22\u8fce\u56de\u6765"}
             </span>
           </div>
 
-          {/* 鐢ㄦ埛鍚?*/}
           <div
             style={{
               color: "#ffffff",
@@ -296,7 +263,6 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
             {displayName}
           </div>
 
-          {/* 涓€у寲闂€欒锛堣〃鎯呮娴嬪悗鏇存柊锛?*/}
           <div
             style={{
               color: exprVisible ? "rgba(255,255,255,0.85)" : "rgba(187,247,208,0.6)",
@@ -308,10 +274,9 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
               minHeight: 22,
             }}
           >
-            {exprVisible ? cfg.greeting : "鏅烘収鍐滀笟绠＄悊绯荤粺"}
+            {exprVisible ? cfg.greeting : "\u667a\u6167\u519c\u4e1a\u7ba1\u7406\u7cfb\u7edf"}
           </div>
 
-          {/* 琛ュ厖璇存槑锛堜粎鍦ㄨ〃鎯呮娴嬪悗鏄剧ず锛?*/}
           {exprVisible && (
             <div
               style={{
@@ -327,7 +292,6 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
           )}
         </div>
 
-        {/* 鈹€鈹€ 杩涘害鏉?鈹€鈹€ */}
         <div
           style={{
             marginTop: 44,
@@ -352,7 +316,6 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
           />
         </div>
 
-        {/* 鈹€鈹€ 琛ㄦ儏缃俊搴︽寚绀猴紙浠呭湪妫€娴嬪埌鏄庣‘琛ㄦ儏鏃舵樉绀猴級 鈹€鈹€ */}
         {exprVisible && exprResult && exprResult.expression !== "neutral" && (
           <div
             style={{
@@ -363,7 +326,7 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
               animation: "wTextIn 0.4s ease-out 0.1s both",
             }}
           >
-            琛ㄦ儏璇嗗埆 路 {Math.round(exprResult.confidence * 100)}% 缃俊搴?
+            {"\u8868\u60c5\u8bc6\u522b \u00b7 "}{Math.round(exprResult.confidence * 100)}{"% \u7f6e\u4fe1\u5ea6"}
           </div>
         )}
       </div>
