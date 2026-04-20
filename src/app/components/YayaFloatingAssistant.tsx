@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Send, Square, X } from "lucide-react";
+import { startGestureRecognition, stopGestureRecognition, describeGestureError, type GestureLabel, type GestureEvent } from "../services/gestureRecognition";
 import { sendManualControl } from "../services/deviceControl";
 import { createCompositeRule } from "../services/compositeCondition";
 import { createThresholdRule, runThresholdCheckNow } from "../services/thresholdAlert";
@@ -9,6 +10,7 @@ import { streamAgriAgentChat } from "../services/agriAgent";
 
 type Msg = { role: "user" | "assistant"; text: string };
 type VoiceState = "idle" | "listening" | "thinking" | "speaking";
+type GestureAnim = "none" | "summoning" | "dismissing" | "mic_opening" | "confirming" | "navigating";
 
 type Point = { x: number; y: number };
 
@@ -106,6 +108,94 @@ const KEYFRAMES = `
 @keyframes yaya-thinking-dot {
   0%,80%,100% { transform: scale(0.3); opacity: 0.3; }
   40%         { transform: scale(1);   opacity: 1;   }
+}
+
+/* ═══ Gesture Animations ════════════════════════════════════════════════ */
+
+/* Summoning (thumbs_up) — elastic pop-in + rainbow glow */
+@keyframes yaya-summon-pop {
+  0%   { transform: scale(0.15) rotate(-25deg); opacity: 0; }
+  50%  { transform: scale(1.22) rotate(8deg);   opacity: 1; }
+  75%  { transform: scale(0.93) rotate(-4deg); }
+  100% { transform: scale(1)    rotate(0deg);   }
+}
+@keyframes yaya-rainbow-glow {
+  0%   { filter: drop-shadow(0 0 22px #4ade80) drop-shadow(0 0 8px #4ade80); }
+  25%  { filter: drop-shadow(0 0 26px #facc15) drop-shadow(0 0 10px #f59e0b); }
+  50%  { filter: drop-shadow(0 0 26px #f87171) drop-shadow(0 0 10px #ef4444); }
+  75%  { filter: drop-shadow(0 0 26px #a78bfa) drop-shadow(0 0 10px #818cf8); }
+  100% { filter: drop-shadow(0 0 22px #4ade80) drop-shadow(0 0 8px #4ade80); }
+}
+@keyframes yaya-summon-ring {
+  0%   { transform: scale(0.9); opacity: 0.9; }
+  100% { transform: scale(3.8); opacity: 0;   }
+}
+@keyframes yaya-spark-out {
+  0%   { transform: rotate(var(--spark-angle)) translateX(0)   scale(1.2); opacity: 1; }
+  100% { transform: rotate(var(--spark-angle)) translateX(72px) scale(0);   opacity: 0; }
+}
+
+/* Dismissing (thumbs_down) — wave + sink */
+@keyframes yaya-bye-wave {
+  0%,100% { transform: rotate(0deg)   scale(1);    }
+  20%     { transform: rotate(-20deg) scale(1.05); }
+  40%     { transform: rotate(14deg)  scale(1.02); }
+  60%     { transform: rotate(-10deg) scale(0.97); }
+  80%     { transform: rotate(6deg)   scale(0.92); }
+}
+@keyframes yaya-sink-away {
+  0%   { transform: scale(1)    translateY(0);    opacity: 1;   }
+  40%  { transform: scale(0.88) translateY(8px);  opacity: 0.75; }
+  100% { transform: scale(0.4)  translateY(50px); opacity: 0;   }
+}
+
+/* Mic open (fist) — red radiate rings + body bounce */
+@keyframes yaya-mic-radiate {
+  0%   { transform: scale(1);   opacity: 0.85; }
+  100% { transform: scale(3.0); opacity: 0;    }
+}
+@keyframes yaya-mic-bounce {
+  0%,100% { transform: scale(1)    rotate(0deg); }
+  30%     { transform: scale(1.16) rotate(-7deg); }
+  65%     { transform: scale(1.08) rotate(5deg); }
+}
+
+/* OK confirm — spring pop + checkmark */
+@keyframes yaya-ok-spring {
+  0%   { transform: scale(1);    }
+  28%  { transform: scale(1.32) rotate(12deg); }
+  55%  { transform: scale(0.88) rotate(-5deg); }
+  78%  { transform: scale(1.12); }
+  100% { transform: scale(1)    rotate(0deg); }
+}
+@keyframes yaya-ok-check {
+  0%   { transform: scale(0) rotate(-30deg); opacity: 0; }
+  55%  { transform: scale(1.4) rotate(6deg);  opacity: 1; }
+  80%  { transform: scale(0.95); }
+  100% { transform: scale(1)    rotate(0deg); opacity: 0; }
+}
+
+/* Navigation jump (number gestures) */
+@keyframes yaya-nav-leap {
+  0%   { transform: translateY(0)    scale(1)    rotate(0deg); }
+  30%  { transform: translateY(-30px) scale(1.14) rotate(12deg); }
+  62%  { transform: translateY(-10px) scale(1.06) rotate(-5deg); }
+  100% { transform: translateY(0)    scale(1)    rotate(0deg); }
+}
+@keyframes yaya-badge-pop {
+  0%   { transform: scale(0)    rotate(-35deg); opacity: 0; }
+  55%  { transform: scale(1.28) rotate(8deg);   opacity: 1; }
+  80%  { transform: scale(0.95) rotate(-2deg); }
+  100% { transform: scale(1)    rotate(0deg);   opacity: 1; }
+}
+
+/* Gesture feedback toast */
+@keyframes yaya-gesture-toast {
+  0%   { opacity: 0; transform: translateX(-50%) translateY(10px) scale(0.88); }
+  18%  { opacity: 1; transform: translateX(-50%) translateY(0)    scale(1.04); }
+  22%  { transform: translateX(-50%) scale(1); }
+  80%  { opacity: 1; transform: translateX(-50%) translateY(0)    scale(1); }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-6px) scale(0.93); }
 }
 `;
 
@@ -543,6 +633,17 @@ export function YayaFloatingAssistant() {
   const suppressClickRef = useRef(false);
   const [panelSize, setPanelSize] = useState({ width: 360, height: 460 });
 
+  // ── Gesture recognition state ──────────────────────────────────────────
+  const [yayaGestureActive, setYayaGestureActive]   = useState(false);
+  const [gestureAnim, setGestureAnim]               = useState<GestureAnim>("none");
+  const [gestureFeedback, setGestureFeedback]       = useState<{ icon: string; text: string; color: string } | null>(null);
+  const [gestureNavNum, setGestureNavNum]           = useState(0);
+  const gestureCleanupRef                           = useRef<(() => void) | null>(null);
+  const gestureAnimTimerRef                         = useRef<number | null>(null);
+  // Ref mirrors — 让 stable callback 始终读到最新状态，而不重启识别引擎
+  const yayaGestureActiveRef                        = useRef(false);
+  const gestureHandlerRef                           = useRef<(e: GestureEvent) => void>(() => {});
+
   const speechSupported = useMemo(
     () => typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition),
     [],
@@ -959,23 +1060,151 @@ export function YayaFloatingAssistant() {
     }
   }, [handleContinuousTranscript, push]);
 
+  // ── Gesture recognition handler ────────────────────────────────────────────
+  const triggerGestureAnim = useCallback((anim: GestureAnim, duration: number) => {
+    if (gestureAnimTimerRef.current !== null) window.clearTimeout(gestureAnimTimerRef.current);
+    setGestureAnim(anim);
+    gestureAnimTimerRef.current = window.setTimeout(() => {
+      setGestureAnim("none");
+      gestureAnimTimerRef.current = null;
+    }, duration);
+  }, []);
+
+  const NAV_ROUTES = ["/", "/monitor", "/alerts", "/control", "/automation", "/history", "/devices", "/ai"];
+  const NAV_LABELS = ["总览大屏", "实时监测", "阈值告警", "设备控制", "联动规则", "历史分析", "设备管理", "农事问答"];
+  const NUM_KEYS: GestureLabel[] = ["one", "two", "three", "four", "five", "six", "seven", "eight"];
+  const NUM_ICONS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"];
+
+  // 手势语音播报（简短、人性化）
+  const gestureSpeak = useCallback((text: string) => {
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+    synth.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.lang = "zh-CN"; utt.rate = 1.1; utt.pitch = 1.15; utt.volume = 1;
+    // 播放前锁定麦克风：预估时长 = max(3s, 每字 150ms) + 缓冲
+    ignoreInputUntilRef.current = Date.now() + Math.max(3000, text.length * 150);
+    utt.onend  = () => { ignoreInputUntilRef.current = Date.now() + 1200; };
+    utt.onerror = () => { ignoreInputUntilRef.current = Date.now() + 500; };
+    const pickVoice = (vs: SpeechSynthesisVoice[]) => {
+      const zh = vs.filter(v => v.lang.startsWith("zh"));
+      return zh.find(v => /xiaoxiao|xiaoyi/i.test(v.name)) ?? zh.find(v => !/male|yunxi/i.test(v.name)) ?? zh[0];
+    };
+    const vs = synth.getVoices();
+    if (vs.length) { const v = pickVoice(vs); if (v) utt.voice = v; synth.speak(utt); }
+    else { synth.onvoiceschanged = () => { const v = pickVoice(synth.getVoices()); if (v) utt.voice = v; synth.speak(utt); synth.onvoiceschanged = null; }; }
+  }, []);
+
+  const handleGesture = useCallback((event: GestureEvent) => {
+    const { gesture } = event;
+
+    // 未唤醒时只响应 thumbs_up
+    if (!yayaGestureActiveRef.current && gesture !== "thumbs_up") return;
+
+    switch (gesture) {
+      case "thumbs_up":
+        yayaGestureActiveRef.current = true;
+        setYayaGestureActive(true);
+        setOpen(true);
+        triggerGestureAnim("summoning", 1100);
+        setGestureFeedback({ icon: "👍", text: "芽芽来啦！", color: "#4ade80" });
+        gestureSpeak("嗨～我是芽芽，有什么需要帮你的吗？");
+        break;
+
+      case "thumbs_down":
+        yayaGestureActiveRef.current = false;
+        setYayaGestureActive(false);
+        setOpen(false);
+        triggerGestureAnim("dismissing", 900);
+        setGestureFeedback({ icon: "👋", text: "芽芽休息啦，随时唤醒我~", color: "#f87171" });
+        gestureSpeak("好的，芽芽先休息了，拜拜～");
+        stopAlwaysListening();
+        break;
+
+      case "fist":
+        if (shouldListenRef.current) return; // 已在监听，忽略
+        triggerGestureAnim("mic_opening", 700);
+        setGestureFeedback({ icon: "✊", text: "我在听，请说话", color: "#ef4444" });
+        gestureSpeak("麦克风已打开，请说话");
+        window.setTimeout(() => { if (speechSupported) startAlwaysListening(); }, 1200);
+        break;
+
+      case "ok":
+        if (!shouldListenRef.current) return; // 未在监听，忽略
+        triggerGestureAnim("confirming", 750);
+        setGestureFeedback({ icon: "👌", text: "已停止监听", color: "#22c55e" });
+        gestureSpeak("好的，已收到，停止监听");
+        stopAlwaysListening();
+        break;
+
+      default: {
+        const numIdx = NUM_KEYS.indexOf(gesture);
+        if (numIdx >= 0) {
+          setGestureNavNum(numIdx + 1);
+          triggerGestureAnim("navigating", 750);
+          setGestureFeedback({
+            icon: NUM_ICONS[numIdx],
+            text: `前往 ${NAV_LABELS[numIdx]}`,
+            color: "#818cf8",
+          });
+          gestureSpeak(`好的，正在跳转到${NAV_LABELS[numIdx]}`);
+          window.setTimeout(() => navigate(NAV_ROUTES[numIdx]), 900);
+        }
+        break;
+      }
+    }
+  // 只依赖真正稳定的引用，不包含 state——state 通过 ref 读取
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [triggerGestureAnim, gestureSpeak, stopAlwaysListening, startAlwaysListening, speechSupported, navigate]);
+
+  // 每次渲染后更新 ref，不重启识别引擎
+  gestureHandlerRef.current = handleGesture;
+
+  // Stable wrapper — 身份永不改变，始终调用最新的 handleGesture
+  const stableGestureCallback = useCallback((e: GestureEvent) => {
+    gestureHandlerRef.current(e);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 空依赖 = 只创建一次
+
+  // ── Gesture recognition lifecycle（启动一次，永不重启）─────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    startGestureRecognition(stableGestureCallback)
+      .then((cleanup) => {
+        if (cancelled) { cleanup(); return; }
+        gestureCleanupRef.current = cleanup;
+      })
+      .catch((err: unknown) => {
+        console.error("[GestureRec]", err);
+        setGestureFeedback({ icon: "📷", text: describeGestureError(err), color: "#f87171" });
+      });
+    return () => {
+      cancelled = true;
+      gestureCleanupRef.current?.();
+      gestureCleanupRef.current = null;
+    };
+  // stableGestureCallback 身份永不变，此 effect 只在 mount 时执行一次
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Auto-dismiss gesture feedback toast ────────────────────────────────────
+  useEffect(() => {
+    if (!gestureFeedback) return;
+    const t = window.setTimeout(() => setGestureFeedback(null), 2200);
+    return () => window.clearTimeout(t);
+  }, [gestureFeedback]);
+
   useEffect(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
       supportedRef.current = false;
-      return;
     }
-
-    const timer = window.setTimeout(() => {
-      startAlwaysListening();
-    }, 400);
-
+    // 不自动启动监听：需通过 thumbs_up 唤醒芽芽后，再用 fist 手势开启
     return () => {
-      window.clearTimeout(timer);
       stopAlwaysListening();
       window.speechSynthesis?.cancel();
     };
-  }, [startAlwaysListening, stopAlwaysListening]);
+  }, [stopAlwaysListening]);
 
   useEffect(() => {
     const onResize = () => {
@@ -1057,6 +1286,7 @@ export function YayaFloatingAssistant() {
           top: fabPos.y,
           userSelect: "none",
           touchAction: "none",
+          overflow: "visible",
         }}
       >
         {/* Ripple rings while listening */}
@@ -1090,7 +1320,6 @@ export function YayaFloatingAssistant() {
               return;
             }
             setOpen((v) => !v);
-            if (!alwaysListening && speechSupported) startAlwaysListening();
           }}
           onPointerDown={onFabPointerDown}
           onPointerMove={onFabPointerMove}
@@ -1104,9 +1333,19 @@ export function YayaFloatingAssistant() {
             cursor: dragging ? "grabbing" : "grab",
             touchAction: "none",
             animation:
-              voiceState === "speaking"
-                ? "yaya-float-mini 0.5s ease-in-out infinite"
-                : "yaya-float-mini 3.6s ease-in-out infinite",
+              gestureAnim === "summoning"
+                ? "yaya-summon-pop 0.85s cubic-bezier(0.34,1.56,0.64,1) both"
+                : gestureAnim === "dismissing"
+                  ? "yaya-bye-wave 0.6s ease-in-out, yaya-sink-away 0.85s 0.1s ease-in forwards"
+                  : gestureAnim === "mic_opening"
+                    ? "yaya-mic-bounce 0.55s ease-in-out infinite"
+                    : gestureAnim === "confirming"
+                      ? "yaya-ok-spring 0.65s cubic-bezier(0.34,1.56,0.64,1)"
+                      : gestureAnim === "navigating"
+                        ? "yaya-nav-leap 0.75s cubic-bezier(0.34,1.56,0.64,1)"
+                        : voiceState === "speaking"
+                          ? "yaya-float-mini 0.5s ease-in-out infinite"
+                          : "yaya-float-mini 3.6s ease-in-out infinite",
           }}
           aria-label="打开芽芽助手"
         >
@@ -1162,6 +1401,106 @@ export function YayaFloatingAssistant() {
             }}
           />
         </button>
+
+        {/* ── Gesture: Summoning sparkles (thumbs_up) ── */}
+        {gestureAnim === "summoning" && (
+          <>
+            {/* Rainbow expanding rings */}
+            {[0, 0.22, 0.44].map((delay, i) => (
+              <div key={i} style={{
+                position: "absolute", inset: 14, borderRadius: "50%",
+                border: `3px solid ${["rgba(74,222,128,0.85)","rgba(250,204,21,0.75)","rgba(167,139,250,0.70)"][i]}`,
+                animation: `yaya-summon-ring 1.05s ease-out ${delay}s both`,
+                pointerEvents: "none",
+              }} />
+            ))}
+            {/* Sparkle particles */}
+            {[0,45,90,135,180,225,270,315].map((deg, i) => (
+              <div key={i} style={{
+                position: "absolute", left: "50%", top: "50%",
+                width: 11, height: 11, marginLeft: -5.5, marginTop: -5.5,
+                borderRadius: "50%", pointerEvents: "none",
+                background: ["#4ade80","#facc15","#f87171","#a78bfa","#22d3ee","#f97316","#a3e635","#fb7185"][i],
+                ["--spark-angle" as string]: `${deg}deg`,
+                animation: `yaya-spark-out 0.95s ease-out ${i * 0.05}s forwards`,
+              } as React.CSSProperties} />
+            ))}
+          </>
+        )}
+
+        {/* ── Gesture: Mic radiate rings (fist) ── */}
+        {gestureAnim === "mic_opening" && (
+          <>
+            {[0, 0.3, 0.6].map((delay, i) => (
+              <div key={i} style={{
+                position: "absolute", inset: 8, borderRadius: "50%",
+                border: "2.5px solid rgba(239,68,68,0.75)",
+                animation: `yaya-mic-radiate 1.1s ease-out ${delay}s infinite`,
+                pointerEvents: "none",
+              }} />
+            ))}
+          </>
+        )}
+
+        {/* ── Gesture: Navigation number badge (one-eight) ── */}
+        {gestureAnim === "navigating" && gestureNavNum > 0 && (
+          <div style={{
+            position: "absolute", top: -10, right: -8, zIndex: 10,
+            width: 36, height: 36, borderRadius: "50%",
+            background: "linear-gradient(135deg,#818cf8,#6366f1)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 18, fontWeight: 800, color: "#fff",
+            animation: "yaya-badge-pop 0.55s cubic-bezier(0.34,1.56,0.64,1) both",
+            boxShadow: "0 4px 18px rgba(99,102,241,0.7)",
+            pointerEvents: "none",
+          }}>
+            {gestureNavNum}
+          </div>
+        )}
+
+        {/* ── Gesture: OK confirm checkmark badge ── */}
+        {gestureAnim === "confirming" && (
+          <div style={{
+            position: "absolute", top: -8, right: -4, zIndex: 10,
+            width: 32, height: 32, borderRadius: "50%",
+            background: "linear-gradient(135deg,#22c55e,#16a34a)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 16, color: "#fff", fontWeight: 700,
+            animation: "yaya-ok-check 0.75s cubic-bezier(0.34,1.56,0.64,1) forwards",
+            boxShadow: "0 4px 16px rgba(34,197,94,0.7)",
+            pointerEvents: "none",
+          }}>
+            ✓
+          </div>
+        )}
+
+        {/* ── Gesture feedback toast (rises above FAB) ── */}
+        {gestureFeedback && (
+          <div style={{
+            position: "absolute",
+            bottom: FAB_SIZE + 12,
+            left: FAB_SIZE / 2,
+            whiteSpace: "nowrap",
+            display: "flex", alignItems: "center", gap: 8,
+            background: "rgba(10,20,40,0.84)",
+            backdropFilter: "blur(14px)",
+            WebkitBackdropFilter: "blur(14px)",
+            borderRadius: 28,
+            padding: "7px 18px 7px 13px",
+            border: `1px solid ${gestureFeedback.color}45`,
+            boxShadow: `0 8px 28px ${gestureFeedback.color}30, 0 2px 8px rgba(0,0,0,0.25)`,
+            animation: "yaya-gesture-toast 2.2s ease-out forwards",
+            pointerEvents: "none",
+            zIndex: 20,
+          }}>
+            <span style={{ fontSize: 22, lineHeight: 1 }}>{gestureFeedback.icon}</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: gestureFeedback.color, letterSpacing: 0.3 }}>
+              {gestureFeedback.text}
+            </span>
+          </div>
+        )}
+
+        {/* 手势识别常驻后台，无需按钮 */}
       </div>
 
       {/* ── iOS-style frosted-glass panel ── */}
@@ -1212,6 +1551,16 @@ export function YayaFloatingAssistant() {
                       : voiceState === "speaking" ? "播报中"
                         : alwaysListening ? "持续监听"
                           : "待机"}
+                  </span>
+                  <span style={{
+                    fontSize: 10, color: "#4ade80", fontWeight: 600,
+                    background: "rgba(74,222,128,0.12)",
+                    border: "1px solid rgba(74,222,128,0.3)",
+                    borderRadius: 8,
+                    padding: "0px 5px",
+                    marginLeft: 2,
+                  }}>
+                    手势识别中
                   </span>
                 </div>
               </div>
