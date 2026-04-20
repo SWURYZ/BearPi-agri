@@ -1,38 +1,91 @@
 import { useEffect, useRef, useState } from "react";
 import { Leaf } from "lucide-react";
 import { speak } from "../lib/speech";
+import {
+  type ExpressionResult,
+  EXPRESSION_CONFIG,
+  detectExpression,
+  detectExpressionFromCamera,
+  loadExpressionModels,
+} from "../lib/faceExpression";
 
 interface Props {
   displayName: string;
+  /** 人脸登录时传入已捕获的 canvas，密码登录时传 null/undefined（将尝试摄像头） */
+  faceCanvas?: HTMLCanvasElement | null;
   onDone: () => void;
 }
 
 /**
- * iOS 风格登录欢迎动画覆盖层。
- * 挂载后立即触发语音播报，约 2.8s 后调用 onDone（跳转主界面）。
+ * iOS 风格登录欢迎动画 + 人脸表情感知。
+ *
+ * - 挂载即开始表情检测（模型从 CDN 远程下载，约 500 KB，浏览器自动缓存）
+ * - 检测结果到达后以个性化问候语 + TTS 呈现
+ * - 约 3.5s 后退出并跳转主界面
  */
-export function WelcomeOverlay({ displayName, onDone }: Props) {
+export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
   const [exiting, setExiting] = useState(false);
+  const [exprResult, setExprResult] = useState<ExpressionResult | null>(null);
+  const [exprVisible, setExprVisible] = useState(false); // 表情区域是否已淡入
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;
 
+  // ─── 表情检测 ───────────────────────────────────────────────────────────
   useEffect(() => {
-    // 语音播报（延迟 200ms 等待浏览器 TTS 引擎就绪）
+    let cancelled = false;
+
+    // 预加载模型（CDN 远程下载，首次后缓存）
+    loadExpressionModels().catch(() => {/* 模型加载失败不阻断流程 */});
+
+    async function runDetect() {
+      try {
+        let result: ExpressionResult | null = null;
+        if (faceCanvas) {
+          // 人脸登录：直接对已有 canvas 检测（最快，< 200ms）
+          result = await detectExpression(faceCanvas);
+        } else {
+          // 密码登录：尝试摄像头拍摄单帧检测（可能失败，优雅降级）
+          result = await detectExpressionFromCamera();
+        }
+        if (!cancelled) {
+          setExprResult(result);
+          setTimeout(() => { if (!cancelled) setExprVisible(true); }, 80);
+        }
+      } catch {
+        // 检测失败：保持 null（使用默认 neutral 样式）
+        if (!cancelled) setExprVisible(true);
+      }
+    }
+
+    runDetect();
+    return () => { cancelled = true; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ─── TTS 语音播报（等表情确定后播报，最多等 1.5s） ──────────────────────
+  useEffect(() => {
+    const expression = exprResult?.expression ?? "neutral";
+    const config = EXPRESSION_CONFIG[expression];
+    const delay = exprResult ? 100 : 1500; // 有结果立刻播，否则等 1.5s 降级播
+
     const speakTimer = setTimeout(() => {
-      speak(`${displayName}，欢迎您使用智慧农业管理系统`);
-    }, 200);
+      speak(config.speech(displayName));
+    }, delay);
 
-    // 开始退场动画
-    const exitTimer = setTimeout(() => setExiting(true), 2500);
-    // 动画结束后导航
-    const doneTimer = setTimeout(() => onDoneRef.current(), 3050);
+    return () => clearTimeout(speakTimer);
+  }, [exprResult, displayName]);
 
+  // ─── 退场时序 ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const exitTimer = setTimeout(() => setExiting(true), 3200);
+    const doneTimer = setTimeout(() => onDoneRef.current(), 3750);
     return () => {
-      clearTimeout(speakTimer);
       clearTimeout(exitTimer);
       clearTimeout(doneTimer);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const expression = exprResult?.expression ?? "neutral";
+  const cfg = EXPRESSION_CONFIG[expression];
 
   return (
     <div
@@ -53,39 +106,39 @@ export function WelcomeOverlay({ displayName, onDone }: Props) {
         style={{
           position: "absolute",
           inset: 0,
-          background: "rgba(5, 46, 22, 0.88)",
+          background: "rgba(5, 46, 22, 0.90)",
           backdropFilter: "blur(28px)",
           WebkitBackdropFilter: "blur(28px)",
         }}
       />
 
-      {/* 背景光晕粒子 */}
+      {/* 背景光晕（随表情变色） */}
       <div
         style={{
           position: "absolute",
-          top: "20%",
-          left: "15%",
-          width: 320,
-          height: 320,
+          top: "18%",
+          left: "12%",
+          width: 360,
+          height: 360,
           borderRadius: "50%",
-          background:
-            "radial-gradient(circle, rgba(74,222,128,0.08) 0%, transparent 70%)",
-          filter: "blur(40px)",
+          background: `radial-gradient(circle, ${cfg.glowColor} 0%, transparent 70%)`,
+          filter: "blur(50px)",
           pointerEvents: "none",
+          transition: "background 0.8s ease",
         }}
       />
       <div
         style={{
           position: "absolute",
-          bottom: "15%",
-          right: "12%",
-          width: 240,
-          height: 240,
+          bottom: "12%",
+          right: "10%",
+          width: 260,
+          height: 260,
           borderRadius: "50%",
-          background:
-            "radial-gradient(circle, rgba(52,211,153,0.07) 0%, transparent 70%)",
-          filter: "blur(30px)",
+          background: `radial-gradient(circle, ${cfg.glowColor} 0%, transparent 70%)`,
+          filter: "blur(35px)",
           pointerEvents: "none",
+          transition: "background 0.8s ease",
         }}
       />
 
@@ -102,7 +155,7 @@ export function WelcomeOverlay({ displayName, onDone }: Props) {
             : "wCardIn 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
         }}
       >
-        {/* 图标区域（带脉冲环） */}
+        {/* ── 图标区域（带脉冲环） ── */}
         <div
           style={{
             position: "relative",
@@ -119,8 +172,9 @@ export function WelcomeOverlay({ displayName, onDone }: Props) {
               width: 160,
               height: 160,
               borderRadius: "50%",
-              border: "1.5px solid rgba(74,222,128,0.35)",
+              border: `1.5px solid ${cfg.rippleColor}`,
               animation: "wRipple 2.4s ease-out 0.8s infinite",
+              transition: "border-color 0.6s ease",
             }}
           />
           {/* 脉冲环 2 */}
@@ -130,8 +184,9 @@ export function WelcomeOverlay({ displayName, onDone }: Props) {
               width: 160,
               height: 160,
               borderRadius: "50%",
-              border: "1px solid rgba(74,222,128,0.2)",
+              border: `1px solid ${cfg.rippleColor.replace("0.4", "0.22")}`,
               animation: "wRipple 2.4s ease-out 1.35s infinite",
+              transition: "border-color 0.6s ease",
             }}
           />
 
@@ -142,9 +197,9 @@ export function WelcomeOverlay({ displayName, onDone }: Props) {
               width: 110,
               height: 110,
               borderRadius: "50%",
-              background:
-                "radial-gradient(circle, rgba(74,222,128,0.2) 0%, transparent 70%)",
+              background: `radial-gradient(circle, ${cfg.glowColor} 0%, transparent 70%)`,
               filter: "blur(14px)",
+              transition: "background 0.6s ease",
             }}
           />
 
@@ -162,34 +217,74 @@ export function WelcomeOverlay({ displayName, onDone }: Props) {
                 "linear-gradient(145deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.06) 100%)",
               backdropFilter: "blur(12px)",
               WebkitBackdropFilter: "blur(12px)",
-              boxShadow:
-                "0 12px 40px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.25), 0 0 0 1px rgba(255,255,255,0.1)",
+              boxShadow: `0 12px 40px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.25), 0 0 0 1px rgba(255,255,255,0.1)`,
               animation: "wIconIn 0.75s cubic-bezier(0.34, 1.56, 0.64, 1) 0.18s both",
+              overflow: "hidden",
             }}
           >
-            <Leaf style={{ width: 46, height: 46, color: "#4ade80" }} />
+            {/* 表情检测前：显示叶子图标；检测后：淡出叶子，淡入 emoji */}
+            <Leaf
+              style={{
+                width: 46,
+                height: 46,
+                color: cfg.accentColor,
+                position: "absolute",
+                transition: "opacity 0.4s ease, transform 0.4s ease",
+                opacity: exprVisible ? 0 : 1,
+                transform: exprVisible ? "scale(0.6)" : "scale(1)",
+              }}
+            />
+            <span
+              style={{
+                fontSize: 40,
+                lineHeight: 1,
+                position: "absolute",
+                transition: "opacity 0.4s ease 0.1s, transform 0.4s ease 0.1s",
+                opacity: exprVisible ? 1 : 0,
+                transform: exprVisible ? "scale(1)" : "scale(1.4)",
+              }}
+            >
+              {cfg.emoji}
+            </span>
           </div>
         </div>
 
-        {/* 文字区域 */}
+        {/* ── 文字区域 ── */}
         <div
           style={{
             textAlign: "center",
             animation: "wTextIn 0.55s ease-out 0.48s both",
           }}
         >
-          {/* 副标题 */}
+          {/* 表情标签 badge（检测完成后淡入） */}
           <div
             style={{
-              color: "rgba(187,247,208,0.72)",
-              fontSize: 11,
-              fontWeight: 600,
-              letterSpacing: "0.2em",
-              textTransform: "uppercase",
-              marginBottom: 12,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "3px 12px",
+              borderRadius: 20,
+              background: exprVisible
+                ? `${cfg.accentColor}22`
+                : "transparent",
+              border: exprVisible
+                ? `1px solid ${cfg.accentColor}44`
+                : "1px solid transparent",
+              marginBottom: 14,
+              transition: "all 0.5s ease",
             }}
           >
-            欢迎回来
+            <span
+              style={{
+                color: exprVisible ? cfg.accentColor : "rgba(187,247,208,0.72)",
+                fontSize: 11,
+                fontWeight: 600,
+                letterSpacing: "0.15em",
+                transition: "color 0.5s ease",
+              }}
+            >
+              {exprVisible ? cfg.badge : "欢迎回来"}
+            </span>
           </div>
 
           {/* 用户名 */}
@@ -207,20 +302,40 @@ export function WelcomeOverlay({ displayName, onDone }: Props) {
             {displayName}
           </div>
 
-          {/* 系统名称 */}
+          {/* 个性化问候语（表情检测后更新） */}
           <div
             style={{
-              color: "rgba(187,247,208,0.6)",
-              fontSize: 13,
-              fontWeight: 400,
-              letterSpacing: "0.02em",
+              color: exprVisible
+                ? "rgba(255,255,255,0.85)"
+                : "rgba(187,247,208,0.6)",
+              fontSize: exprVisible ? 15 : 13,
+              fontWeight: exprVisible ? 500 : 400,
+              letterSpacing: "0.01em",
+              marginBottom: exprVisible ? 4 : 0,
+              transition: "all 0.5s ease",
+              minHeight: 22,
             }}
           >
-            智慧农业管理系统
+            {exprVisible ? cfg.greeting : "智慧农业管理系统"}
           </div>
+
+          {/* 补充说明（仅在表情检测后显示） */}
+          {exprVisible && (
+            <div
+              style={{
+                color: "rgba(187,247,208,0.55)",
+                fontSize: 12,
+                fontWeight: 400,
+                letterSpacing: "0.02em",
+                animation: "wTextIn 0.4s ease-out both",
+              }}
+            >
+              {cfg.detail}
+            </div>
+          )}
         </div>
 
-        {/* 进度条 */}
+        {/* ── 进度条 ── */}
         <div
           style={{
             marginTop: 44,
@@ -236,12 +351,29 @@ export function WelcomeOverlay({ displayName, onDone }: Props) {
             style={{
               height: "100%",
               borderRadius: 2,
-              background: "linear-gradient(90deg, #4ade80, #86efac, #4ade80)",
+              background: `linear-gradient(90deg, ${cfg.accentColor}, ${cfg.accentColor}bb, ${cfg.accentColor})`,
               backgroundSize: "200% 100%",
-              animation: "wProgress 2.15s ease-out 0.8s both, wProgressShimmer 1.5s ease-in-out 1s infinite",
+              animation:
+                "wProgress 2.8s ease-out 0.8s both, wProgressShimmer 1.5s ease-in-out 1s infinite",
+              transition: "background 0.6s ease",
             }}
           />
         </div>
+
+        {/* ── 表情置信度指示（调试/UX 信息，仅在检测到明确表情时显示） ── */}
+        {exprVisible && exprResult && exprResult.expression !== "neutral" && (
+          <div
+            style={{
+              marginTop: 16,
+              color: `${cfg.accentColor}88`,
+              fontSize: 10,
+              letterSpacing: "0.1em",
+              animation: "wTextIn 0.4s ease-out 0.1s both",
+            }}
+          >
+            表情识别 · {Math.round(exprResult.confidence * 100)}% 置信度
+          </div>
+        )}
       </div>
     </div>
   );

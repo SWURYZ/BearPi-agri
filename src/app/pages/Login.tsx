@@ -30,6 +30,7 @@ export function Login() {
   const [loading, setLoading] = useState(false);
   const [isFirst, setIsFirst] = useState(false);
   const [welcomeUser, setWelcomeUser] = useState<string | null>(null);
+  const [welcomeCanvas, setWelcomeCanvas] = useState<HTMLCanvasElement | null>(null);
 
   /* ---- 人脸识别 ---- */
   const [scanStatus, setScanStatus] = useState("正在扫描人脸...");
@@ -150,6 +151,8 @@ export function Login() {
             }
             streamRef.current?.getTracks().forEach((t) => t.stop());
             streamRef.current = null;
+            // 保存人脸 canvas 供表情检测使用
+            setWelcomeCanvas(canvasRef.current);
             setWelcomeUser(user.displayName || user.username);
           } catch (loginErr) {
             const msg = loginErr instanceof Error ? loginErr.message : "识别失败";
@@ -190,6 +193,7 @@ export function Login() {
       {welcomeUser && (
         <WelcomeOverlay
           displayName={welcomeUser}
+          faceCanvas={welcomeCanvas}
           onDone={() => navigate("/", { replace: true })}
         />
       )}
