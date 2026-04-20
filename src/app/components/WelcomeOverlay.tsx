@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import { Leaf } from "lucide-react";
 import { speak } from "../lib/speech";
 import {
@@ -11,40 +11,37 @@ import {
 
 interface Props {
   displayName: string;
-  /** 人脸登录时传入已捕获的 canvas，密码登录时传 null/undefined（将尝试摄像头） */
+  /** 浜鸿劯鐧诲綍鏃朵紶鍏ュ凡鎹曡幏鐨?canvas锛屽瘑鐮佺櫥褰曟椂浼?null/undefined锛堝皢灏濊瘯鎽勫儚澶达級 */
   faceCanvas?: HTMLCanvasElement | null;
   onDone: () => void;
 }
 
 /**
- * iOS 风格登录欢迎动画 + 人脸表情感知。
+ * iOS 椋庢牸鐧诲綍娆㈣繋鍔ㄧ敾 + 浜鸿劯琛ㄦ儏鎰熺煡銆?
  *
- * - 挂载即开始表情检测（模型从 CDN 远程下载，约 500 KB，浏览器自动缓存）
- * - 检测结果到达后以个性化问候语 + TTS 呈现
- * - 约 3.5s 后退出并跳转主界面
+ * - 鎸傝浇鍗冲紑濮嬭〃鎯呮娴嬶紙妯″瀷浠?CDN 杩滅▼涓嬭浇锛岀害 500 KB锛屾祻瑙堝櫒鑷姩缂撳瓨锛?
+ * - 妫€娴嬬粨鏋滃埌杈惧悗浠ヤ釜鎬у寲闂€欒 + TTS 鍛堢幇
+ * - 绾?3.5s 鍚庨€€鍑哄苟璺宠浆涓荤晫闈?
  */
 export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
   const [exiting, setExiting] = useState(false);
   const [exprResult, setExprResult] = useState<ExpressionResult | null>(null);
-  const [exprVisible, setExprVisible] = useState(false); // 表情区域是否已淡入
+  const [exprVisible, setExprVisible] = useState(false);
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;
 
-  // ─── 表情检测 ───────────────────────────────────────────────────────────
+  // 鈹€鈹€鈹€ 琛ㄦ儏妫€娴?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   useEffect(() => {
     let cancelled = false;
 
-    // 预加载模型（CDN 远程下载，首次后缓存）
-    loadExpressionModels().catch(() => {/* 模型加载失败不阻断流程 */});
+    loadExpressionModels().catch(() => {/* 妯″瀷鍔犺浇澶辫触涓嶉樆鏂祦绋?*/});
 
     async function runDetect() {
       try {
         let result: ExpressionResult | null = null;
         if (faceCanvas) {
-          // 人脸登录：直接对已有 canvas 检测（最快，< 200ms）
           result = await detectExpression(faceCanvas);
         } else {
-          // 密码登录：尝试摄像头拍摄单帧检测（可能失败，优雅降级）
           result = await detectExpressionFromCamera();
         }
         if (!cancelled) {
@@ -52,7 +49,6 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
           setTimeout(() => { if (!cancelled) setExprVisible(true); }, 80);
         }
       } catch {
-        // 检测失败：保持 null（使用默认 neutral 样式）
         if (!cancelled) setExprVisible(true);
       }
     }
@@ -61,11 +57,11 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
     return () => { cancelled = true; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ─── TTS 语音播报（等表情确定后播报，最多等 1.5s） ──────────────────────
+  // 鈹€鈹€鈹€ TTS 璇煶鎾姤 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   useEffect(() => {
     const expression = exprResult?.expression ?? "neutral";
     const config = EXPRESSION_CONFIG[expression];
-    const delay = exprResult ? 100 : 1500; // 有结果立刻播，否则等 1.5s 降级播
+    const delay = exprResult ? 100 : 1500;
 
     const speakTimer = setTimeout(() => {
       speak(config.speech(displayName));
@@ -74,7 +70,7 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
     return () => clearTimeout(speakTimer);
   }, [exprResult, displayName]);
 
-  // ─── 退场时序 ────────────────────────────────────────────────────────────
+  // 鈹€鈹€鈹€ 閫€鍦烘椂搴?鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
   useEffect(() => {
     const exitTimer = setTimeout(() => setExiting(true), 3200);
     const doneTimer = setTimeout(() => onDoneRef.current(), 3750);
@@ -101,7 +97,7 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
           : "wOverlayIn 0.35s ease-out forwards",
       }}
     >
-      {/* 毛玻璃背景 */}
+      {/* 姣涚幓鐠冭儗鏅?*/}
       <div
         style={{
           position: "absolute",
@@ -112,7 +108,7 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
         }}
       />
 
-      {/* 背景光晕（随表情变色） */}
+      {/* 鑳屾櫙鍏夋檿锛堥殢琛ㄦ儏鍙樿壊锛?*/}
       <div
         style={{
           position: "absolute",
@@ -142,7 +138,7 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
         }}
       />
 
-      {/* 主卡片（iOS 风格弹出） */}
+      {/* 涓诲崱鐗囷紙iOS 椋庢牸寮瑰嚭锛?*/}
       <div
         style={{
           position: "relative",
@@ -155,7 +151,7 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
             : "wCardIn 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards",
         }}
       >
-        {/* ── 图标区域（带脉冲环） ── */}
+        {/* 鈹€鈹€ 鍥炬爣鍖哄煙锛堝甫鑴夊啿鐜級 鈹€鈹€ */}
         <div
           style={{
             position: "relative",
@@ -165,7 +161,7 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
             marginBottom: 36,
           }}
         >
-          {/* 脉冲环 1 */}
+          {/* 鑴夊啿鐜?1 */}
           <div
             style={{
               position: "absolute",
@@ -177,7 +173,7 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
               transition: "border-color 0.6s ease",
             }}
           />
-          {/* 脉冲环 2 */}
+          {/* 鑴夊啿鐜?2 */}
           <div
             style={{
               position: "absolute",
@@ -190,7 +186,7 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
             }}
           />
 
-          {/* 图标背景光晕 */}
+          {/* 鍥炬爣鑳屾櫙鍏夋檿 */}
           <div
             style={{
               position: "absolute",
@@ -203,7 +199,7 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
             }}
           />
 
-          {/* 图标主体（iOS 玻璃质感） */}
+          {/* 鍥炬爣涓讳綋锛坕OS 鐜荤拑璐ㄦ劅锛?*/}
           <div
             style={{
               position: "relative",
@@ -222,7 +218,7 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
               overflow: "hidden",
             }}
           >
-            {/* 表情检测前：显示叶子图标；检测后：淡出叶子，淡入 emoji */}
+            {/* 琛ㄦ儏妫€娴嬪墠锛氭樉绀哄彾瀛愬浘鏍囷紱妫€娴嬪悗锛氭贰鍑哄彾瀛愶紝娣″叆 emoji */}
             <Leaf
               style={{
                 width: 46,
@@ -249,14 +245,14 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
           </div>
         </div>
 
-        {/* ── 文字区域 ── */}
+        {/* 鈹€鈹€ 鏂囧瓧鍖哄煙 鈹€鈹€ */}
         <div
           style={{
             textAlign: "center",
             animation: "wTextIn 0.55s ease-out 0.48s both",
           }}
         >
-          {/* 表情标签 badge（检测完成后淡入） */}
+          {/* 琛ㄦ儏鏍囩 badge锛堟娴嬪畬鎴愬悗娣″叆锛?*/}
           <div
             style={{
               display: "inline-flex",
@@ -264,9 +260,7 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
               gap: 6,
               padding: "3px 12px",
               borderRadius: 20,
-              background: exprVisible
-                ? `${cfg.accentColor}22`
-                : "transparent",
+              background: exprVisible ? `${cfg.accentColor}22` : "transparent",
               border: exprVisible
                 ? `1px solid ${cfg.accentColor}44`
                 : "1px solid transparent",
@@ -283,11 +277,11 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
                 transition: "color 0.5s ease",
               }}
             >
-              {exprVisible ? cfg.badge : "欢迎回来"}
+              {exprVisible ? cfg.badge : "娆㈣繋鍥炴潵"}
             </span>
           </div>
 
-          {/* 用户名 */}
+          {/* 鐢ㄦ埛鍚?*/}
           <div
             style={{
               color: "#ffffff",
@@ -302,12 +296,10 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
             {displayName}
           </div>
 
-          {/* 个性化问候语（表情检测后更新） */}
+          {/* 涓€у寲闂€欒锛堣〃鎯呮娴嬪悗鏇存柊锛?*/}
           <div
             style={{
-              color: exprVisible
-                ? "rgba(255,255,255,0.85)"
-                : "rgba(187,247,208,0.6)",
+              color: exprVisible ? "rgba(255,255,255,0.85)" : "rgba(187,247,208,0.6)",
               fontSize: exprVisible ? 15 : 13,
               fontWeight: exprVisible ? 500 : 400,
               letterSpacing: "0.01em",
@@ -316,10 +308,10 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
               minHeight: 22,
             }}
           >
-            {exprVisible ? cfg.greeting : "智慧农业管理系统"}
+            {exprVisible ? cfg.greeting : "鏅烘収鍐滀笟绠＄悊绯荤粺"}
           </div>
 
-          {/* 补充说明（仅在表情检测后显示） */}
+          {/* 琛ュ厖璇存槑锛堜粎鍦ㄨ〃鎯呮娴嬪悗鏄剧ず锛?*/}
           {exprVisible && (
             <div
               style={{
@@ -335,7 +327,7 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
           )}
         </div>
 
-        {/* ── 进度条 ── */}
+        {/* 鈹€鈹€ 杩涘害鏉?鈹€鈹€ */}
         <div
           style={{
             marginTop: 44,
@@ -360,7 +352,7 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
           />
         </div>
 
-        {/* ── 表情置信度指示（调试/UX 信息，仅在检测到明确表情时显示） ── */}
+        {/* 鈹€鈹€ 琛ㄦ儏缃俊搴︽寚绀猴紙浠呭湪妫€娴嬪埌鏄庣‘琛ㄦ儏鏃舵樉绀猴級 鈹€鈹€ */}
         {exprVisible && exprResult && exprResult.expression !== "neutral" && (
           <div
             style={{
@@ -371,7 +363,7 @@ export function WelcomeOverlay({ displayName, faceCanvas, onDone }: Props) {
               animation: "wTextIn 0.4s ease-out 0.1s both",
             }}
           >
-            表情识别 · {Math.round(exprResult.confidence * 100)}% 置信度
+            琛ㄦ儏璇嗗埆 路 {Math.round(exprResult.confidence * 100)}% 缃俊搴?
           </div>
         )}
       </div>
