@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Mic, Square } from "lucide-react";
 import { executeDecision } from "../services/smartDecision";
+import { streamAgriAgentChat } from "../services/agriAgent";
 
 type VoiceState = "idle" | "listening" | "thinking" | "speaking";
 
@@ -37,44 +38,72 @@ declare global {
 // ─── CSS Keyframes ──────────────────────────────────────────────────────────
 const KEYFRAMES = `
 @keyframes yaya-float {
-  0%, 100% { transform: translateY(0px); }
-  50%       { transform: translateY(-14px); }
+  0%   { transform: translateY(0px) rotate(-1deg); }
+  30%  { transform: translateY(-10px) rotate(0.5deg); }
+  60%  { transform: translateY(-16px) rotate(1deg); }
+  100% { transform: translateY(0px) rotate(-1deg); }
 }
 @keyframes yaya-bob {
-  0%, 100% { transform: translateY(0px) scale(1); }
-  50%      { transform: translateY(-5px) scale(1.025); }
+  0%   { transform: translateY(0px) scale(1) rotate(0deg); }
+  25%  { transform: translateY(-6px) scale(1.03) rotate(-1deg); }
+  75%  { transform: translateY(-3px) scale(1.015) rotate(1deg); }
+  100% { transform: translateY(0px) scale(1) rotate(0deg); }
 }
 @keyframes yaya-mouth {
-  from { transform: scaleY(0.35); }
-  to   { transform: scaleY(1.65); }
+  0%   { transform: scaleY(0.3) scaleX(0.9); }
+  40%  { transform: scaleY(1.7) scaleX(1.1); }
+  70%  { transform: scaleY(0.8) scaleX(1.0); }
+  100% { transform: scaleY(0.3) scaleX(0.9); }
+}
+@keyframes yaya-blink {
+  0%, 90%, 100% { transform: scaleY(1); }
+  94%           { transform: scaleY(0.05); }
+}
+@keyframes yaya-sway {
+  0%, 100% { transform: rotate(-2deg) translateY(0); }
+  50%      { transform: rotate(2deg) translateY(-4px); }
 }
 @keyframes pulse-ring {
   0%   { transform: scale(1);   opacity: 0.85; }
-  100% { transform: scale(2.5); opacity: 0; }
+  100% { transform: scale(2.6); opacity: 0; }
 }
 @keyframes pulse-soft {
-  0%, 100% { transform: scale(1);    opacity: 0.35; }
-  50%      { transform: scale(1.08); opacity: 0.75; }
+  0%, 100% { transform: scale(1);    opacity: 0.28; }
+  50%      { transform: scale(1.12); opacity: 0.72; }
 }
 @keyframes orbit {
   0%   { transform: rotate(0deg)   translateX(108px) rotate(0deg); }
   100% { transform: rotate(360deg) translateX(108px) rotate(-360deg); }
 }
+@keyframes orbit-rev {
+  0%   { transform: rotate(0deg)   translateX(82px) rotate(0deg); }
+  100% { transform: rotate(-360deg) translateX(82px) rotate(360deg); }
+}
 @keyframes wave-bar {
-  from { height: 4px; }
-  to   { height: 38px; }
+  0%   { height: 4px;  opacity: 0.6; }
+  50%  { height: 40px; opacity: 1; }
+  100% { height: 4px;  opacity: 0.6; }
+}
+@keyframes speak-wave {
+  0%, 100% { transform: scaleY(1);   opacity: 0.5; }
+  50%       { transform: scaleY(2.4); opacity: 1; }
 }
 @keyframes spin-btn {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
 }
 @keyframes sub-in {
-  from { opacity: 0; transform: translateY(7px); }
+  from { opacity: 0; transform: translateY(9px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-@keyframes thinking-dot {
-  0%, 80%, 100% { transform: scale(0.7); opacity: 0.4; }
-  40%           { transform: scale(1.1); opacity: 1;   }
+@keyframes sparkle {
+  0%   { opacity: 0; transform: scale(0) translateY(0); }
+  40%  { opacity: 1; transform: scale(1.2) translateY(-18px); }
+  100% { opacity: 0; transform: scale(0.6) translateY(-38px); }
+}
+@keyframes particle {
+  0%   { opacity: 1; transform: translate(0,0) scale(1); }
+  100% { opacity: 0; transform: translate(var(--px),var(--py)) scale(0.3); }
 }
 `;
 
@@ -105,12 +134,17 @@ function YayaAvatar({ state }: { state: VoiceState }) {
       style={{
         animation:
           state === "idle"
-            ? "yaya-float 3.6s ease-in-out infinite"
+            ? "yaya-float 4s ease-in-out infinite"
             : speaking
-            ? "yaya-bob 0.42s ease-in-out infinite"
+            ? "yaya-bob 0.38s ease-in-out infinite"
+            : thinking
+            ? "yaya-sway 2s ease-in-out infinite"
             : "none",
-        filter: "drop-shadow(0 14px 36px rgba(34,197,94,0.5))",
+        filter: speaking
+          ? "drop-shadow(0 8px 28px rgba(74,222,128,0.75)) drop-shadow(0 0 18px rgba(74,222,128,0.5))"
+          : "drop-shadow(0 14px 36px rgba(34,197,94,0.5))",
         zIndex: 1,
+        transition: "filter 0.4s ease",
       }}
     >
       <defs>
@@ -144,50 +178,91 @@ function YayaAvatar({ state }: { state: VoiceState }) {
       {/* Eyes */}
       {thinking ? (
         <>
-          <path d="M57 84 Q66 79 75 84"  stroke="rgba(255,255,255,0.88)" strokeWidth="3.5" strokeLinecap="round" fill="none" />
-          <path d="M85 84 Q94 79 103 84" stroke="rgba(255,255,255,0.88)" strokeWidth="3.5" strokeLinecap="round" fill="none" />
+          {/* squint / tilted eyes while thinking */}
+          <path d="M55 87 Q66 80 77 87"  stroke="rgba(255,255,255,0.88)" strokeWidth="3.5" strokeLinecap="round" fill="none" />
+          <path d="M83 87 Q94 80 105 87" stroke="rgba(255,255,255,0.88)" strokeWidth="3.5" strokeLinecap="round" fill="none" />
+          {/* small stars near eyes while thinking */}
+          <text x="48" y="78" fontSize="9" fill="rgba(253,224,71,0.85)" style={{ animation: "sparkle 1.8s ease-in-out 0.2s infinite" }}>✦</text>
+          <text x="107" y="76" fontSize="7" fill="rgba(167,243,208,0.85)" style={{ animation: "sparkle 1.8s ease-in-out 0.7s infinite" }}>✦</text>
         </>
       ) : (
         <>
-          <ellipse cx="66" cy="86" rx={eyeW} ry={eyeH} fill="rgba(255,255,255,0.92)" />
-          <ellipse cx="94" cy="86" rx={eyeW} ry={eyeH} fill="rgba(255,255,255,0.92)" />
-          <circle  cx="67" cy="88" r={listening ? 6 : 5}  fill="#15803d" />
-          <circle  cx="95" cy="88" r={listening ? 6 : 5}  fill="#15803d" />
-          <circle  cx="69.5" cy="85.5" r="2" fill="rgba(255,255,255,0.85)" />
-          <circle  cx="97.5" cy="85.5" r="2" fill="rgba(255,255,255,0.85)" />
+          <ellipse cx="66" cy="86" rx={eyeW} ry={eyeH} fill="rgba(255,255,255,0.92)"
+            style={state === "idle" ? { animation: "yaya-blink 4s ease-in-out infinite", transformBox: "fill-box" as React.CSSProperties["transformBox"], transformOrigin: "center" } as React.CSSProperties : {}}
+          />
+          <ellipse cx="94" cy="86" rx={eyeW} ry={eyeH} fill="rgba(255,255,255,0.92)"
+            style={state === "idle" ? { animation: "yaya-blink 4s ease-in-out 0.06s infinite", transformBox: "fill-box" as React.CSSProperties["transformBox"], transformOrigin: "center" } as React.CSSProperties : {}}
+          />
+          <circle  cx="67" cy="88" r={listening ? 6.5 : 5.2} fill="#15803d" />
+          <circle  cx="95" cy="88" r={listening ? 6.5 : 5.2} fill="#15803d" />
+          <circle  cx="69.5" cy="85.5" r="2.2" fill="rgba(255,255,255,0.88)" />
+          <circle  cx="97.5" cy="85.5" r="2.2" fill="rgba(255,255,255,0.88)" />
+          {/* sparkle in eyes when speaking */}
+          {speaking && <>
+            <circle cx="63" cy="83" r="1" fill="rgba(253,224,71,0.9)" style={{ animation: "sparkle 0.9s ease-in-out infinite" }} />
+            <circle cx="91" cy="83" r="1" fill="rgba(253,224,71,0.9)" style={{ animation: "sparkle 0.9s ease-in-out 0.18s infinite" }} />
+          </>}
         </>
       )}
 
       {/* Mouth */}
       {speaking ? (
-        <ellipse
-          cx="80" cy="113" rx="11" ry="7"
-          fill="rgba(255,255,255,0.9)"
-          style={{
-            animation: "yaya-mouth 0.32s ease-in-out infinite alternate",
-            transformBox: "fill-box" as React.CSSProperties["transformBox"],
-            transformOrigin: "center",
-          } as React.CSSProperties}
-        />
+        <>
+          <ellipse
+            cx="80" cy="114" rx="12" ry="8"
+            fill="rgba(255,255,255,0.92)"
+            style={{
+              animation: "yaya-mouth 0.28s cubic-bezier(0.4,0,0.6,1) infinite",
+              transformBox: "fill-box" as React.CSSProperties["transformBox"],
+              transformOrigin: "center",
+            } as React.CSSProperties}
+          />
+          {/* inner mouth shadow */}
+          <ellipse cx="80" cy="116" rx="7" ry="4" fill="rgba(21,128,61,0.25)"
+            style={{
+              animation: "yaya-mouth 0.28s cubic-bezier(0.4,0,0.6,1) infinite",
+              transformBox: "fill-box" as React.CSSProperties["transformBox"],
+              transformOrigin: "center",
+            } as React.CSSProperties}
+          />
+        </>
       ) : listening ? (
-        <ellipse cx="80" cy="113" rx="9" ry="7" fill="rgba(255,255,255,0.85)" />
+        <>
+          <ellipse cx="80" cy="113" rx="10" ry="8" fill="rgba(255,255,255,0.88)" />
+          <ellipse cx="80" cy="115" rx="6" ry="4" fill="rgba(21,128,61,0.2)" />
+        </>
       ) : (
         <path
-          d="M64 112 Q80 124 96 112"
+          d="M62 112 Q80 126 98 112"
           stroke="rgba(255,255,255,0.88)"
-          strokeWidth="3"
+          strokeWidth="3.5"
           strokeLinecap="round"
           fill="none"
         />
       )}
 
-      {/* Thinking sweat drop */}
+      {/* Thinking sweat drop + small bubbles */}
       {thinking && (
-        <ellipse
-          cx="112" cy="58" rx="5" ry="8"
-          fill="rgba(147,197,253,0.85)"
-          style={{ animation: "yaya-float 1.6s ease-in-out infinite" }}
-        />
+        <>
+          <ellipse cx="114" cy="56" rx="5" ry="8" fill="rgba(147,197,253,0.85)"
+            style={{ animation: "yaya-float 1.4s ease-in-out infinite" }}
+          />
+          <circle cx="122" cy="70" r="3" fill="rgba(147,197,253,0.6)"
+            style={{ animation: "yaya-float 1.8s ease-in-out 0.3s infinite" }}
+          />
+          <circle cx="128" cy="60" r="2" fill="rgba(147,197,253,0.45)"
+            style={{ animation: "sparkle 2s ease-in-out 0.6s infinite" }}
+          />
+        </>
+      )}
+      {/* Happy sparkles when speaking */}
+      {speaking && (
+        <>
+          <text x="28" y="52" fontSize="10" fill="rgba(253,224,71,0.9)" style={{ animation: "sparkle 1s ease-out 0s infinite" }}>★</text>
+          <text x="118" y="48" fontSize="8"  fill="rgba(167,243,208,0.9)" style={{ animation: "sparkle 1s ease-out 0.22s infinite" }}>✦</text>
+          <text x="22" y="85" fontSize="7"  fill="rgba(253,186,116,0.85)" style={{ animation: "sparkle 1s ease-out 0.44s infinite" }}>✦</text>
+          <text x="126" y="82" fontSize="9" fill="rgba(253,224,71,0.8)" style={{ animation: "sparkle 1s ease-out 0.66s infinite" }}>★</text>
+        </>
       )}
     </svg>
   );
@@ -224,6 +299,7 @@ function Aura({ state }: { state: VoiceState }) {
     const glows  = ["rgba(74,222,128,0.8)", "rgba(163,230,53,0.8)", "rgba(52,211,153,0.8)"];
     return (
       <>
+        {/* outer orbit */}
         {[0, 1, 2].map((i) => (
           <div key={i} style={{
             position: "absolute",
@@ -231,8 +307,20 @@ function Aura({ state }: { state: VoiceState }) {
             marginLeft: -7, marginTop: -7,
             width: 14, height: 14, borderRadius: "50%",
             background: colors[i],
-            boxShadow: `0 0 12px ${glows[i]}`,
+            boxShadow: `0 0 14px ${glows[i]}`,
             animation: `orbit 2.2s linear ${i * 0.73}s infinite`,
+          }} />)
+        )}
+        {/* inner orbit (reverse) */}
+        {["#86efac", "#fde68a"].map((c, i) => (
+          <div key={"r" + i} style={{
+            position: "absolute",
+            left: "50%", top: "50%",
+            marginLeft: -5, marginTop: -5,
+            width: 10, height: 10, borderRadius: "50%",
+            background: c,
+            opacity: 0.75,
+            animation: `orbit-rev 1.6s linear ${i * 0.8}s infinite`,
           }} />
         ))}
       </>
@@ -258,14 +346,41 @@ function Aura({ state }: { state: VoiceState }) {
 
 // ─── Audio wave bars (listening) ────────────────────────────────────────────
 function AudioBars() {
+  // varying widths for more organic look
+  const widths = [4, 5, 7, 5, 8, 5, 4, 6, 4];
+  const delays = [0, 0.08, 0.16, 0.06, 0.22, 0.12, 0.04, 0.18, 0.10];
+  const durations = [0.48, 0.52, 0.44, 0.58, 0.42, 0.56, 0.50, 0.46, 0.54];
   return (
-    <div style={{ display: "flex", gap: 6, alignItems: "center", height: 48, marginTop: 8 }}>
-      {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+    <div style={{ display: "flex", gap: 5, alignItems: "center", height: 52, marginTop: 6 }}>
+      {widths.map((w, i) => (
         <div key={i} style={{
-          width: 5, height: 4, borderRadius: 3,
-          background: "linear-gradient(to top, #4ade80, #a7f3d0)",
-          boxShadow: "0 0 8px rgba(74,222,128,0.55)",
-          animation: `wave-bar 0.54s ease-in-out ${i * 0.075}s infinite alternate`,
+          width: w,
+          height: 4,
+          borderRadius: 4,
+          background: i % 2 === 0
+            ? "linear-gradient(to top, #4ade80, #a7f3d0)"
+            : "linear-gradient(to top, #34d399, #6ee7b7)",
+          boxShadow: "0 0 10px rgba(74,222,128,0.6)",
+          animation: `wave-bar ${durations[i]}s ease-in-out ${delays[i]}s infinite`,
+        }} />
+      ))}
+    </div>
+  );
+}
+
+function SpeakBars() {
+  const heights = [12, 20, 28, 20, 32, 24, 16, 24, 14];
+  const delays  = [0, 0.07, 0.14, 0.05, 0.21, 0.11, 0.03, 0.17, 0.09];
+  return (
+    <div style={{ display: "flex", gap: 4, alignItems: "center", height: 52, marginTop: 6 }}>
+      {heights.map((h, i) => (
+        <div key={i} style={{
+          width: 4,
+          height: h,
+          borderRadius: 4,
+          background: "linear-gradient(to top, #16a34a, #86efac)",
+          boxShadow: "0 0 8px rgba(22,163,74,0.5)",
+          animation: `speak-wave 0.5s ease-in-out ${delays[i]}s infinite`,
         }} />
       ))}
     </div>
@@ -341,11 +456,27 @@ export function SmartDecision() {
     if (!synth) { go("idle"); return; }
     synth.cancel();
 
+    // Pick best Chinese voice: prefer female/Xiaoyan/Huihui, then any zh
+    const pickVoice = (voices: SpeechSynthesisVoice[]) => {
+      const zh = voices.filter((v) => v.lang.startsWith("zh"));
+      return (
+        zh.find((v) => /xiaoyi|xiaoxiao|huihui|xiaoyan|female|google/i.test(v.name)) ??
+        zh.find((v) => !/male/i.test(v.name)) ??
+        zh[0]
+      );
+    };
+
+    // Trim very long AI replies so TTS stays snappy (first 120 chars + …)
+    const spokenText = text.length > 160
+      ? text.slice(0, 157).replace(/[，。！？、…]+$/, "") + "……"
+      : text;
+
     const doSpeak = (voice?: SpeechSynthesisVoice) => {
-      const utt = new SpeechSynthesisUtterance(text);
+      const utt = new SpeechSynthesisUtterance(spokenText);
       utt.lang  = "zh-CN";
-      utt.rate  = 0.9;
-      utt.pitch = 1.12;
+      utt.rate  = 1.15;   // closer to natural human speech speed
+      utt.pitch = 1.18;
+      utt.volume = 1;
       if (voice) utt.voice = voice;
       utt.onend  = () => go("idle");
       utt.onerror = () => go("idle");
@@ -354,14 +485,13 @@ export function SmartDecision() {
 
     const voices = synth.getVoices();
     if (voices.length > 0) {
-      doSpeak(voices.find((v) => v.lang.startsWith("zh")));
+      doSpeak(pickVoice(voices));
     } else {
-      // voices may not be loaded yet on first call
       synth.onvoiceschanged = () => {
-        doSpeak(synth.getVoices().find((v) => v.lang.startsWith("zh")));
+        doSpeak(pickVoice(synth.getVoices()));
+        synth.onvoiceschanged = null;
       };
-      // fallback: speak after a tick without specifying voice
-      setTimeout(() => { if (!synth.speaking) doSpeak(); }, 400);
+      setTimeout(() => { if (!synth.speaking) doSpeak(); }, 300);
     }
   }, [go]);
 
@@ -392,17 +522,33 @@ export function SmartDecision() {
         return;
       }
 
-      // ── Agri path: non-agri query without keywords → quick default reply ──
+      // ── Casual path: non-agri query → streaming LLM quick reply ──
       if (!isAgriQuery(text)) {
-        const fallback =
-          "\u8fd9\u4e2a\u95ee\u9898\u6211\u6682\u65f6\u8fd8\u4e0d\u592a\u61c2\uff0c\u4f46\u706c\u6e89\u3001\u65bd\u8098\u3001\u5149\u7167\u3001\u75c5\u866b\u5bb3\u7b49\u519c\u4e8b\u95ee\u9898\u6211\u64c5\u957f\uff0c\u6362\u4e2a\u8bd5\u8bd5\u5427\uff01";
-        setAiText(fallback);
-        go("speaking");
-        speakText(fallback);
+        let accumulated = "";
+        try {
+          await streamAgriAgentChat(
+            { question: text },
+            {
+              onToken: (token) => { accumulated += token; },
+              onDone: () => {},
+              onError: (msg) => { throw new Error(msg); },
+            },
+          );
+          const reply = accumulated.trim() ||
+            "\u6211\u6682\u65f6\u8fd8\u4e0d\u592a\u61c2\u8fd9\u4e2a\u95ee\u9898\uff0c\u4f46\u6709\u519c\u4e8b\u95ee\u9898\u5c3d\u7ba1\u95ee\u6211\uff01";
+          setAiText(reply);
+          go("speaking");
+          speakText(reply);
+        } catch {
+          const fallback = "\u6211\u6682\u65f6\u8fd8\u4e0d\u592a\u61c2\u8fd9\u4e2a\u95ee\u9898\uff0c\u4f46\u706c\u6e89\u3001\u65bd\u8098\u3001\u5149\u7167\u7b49\u519c\u4e8b\u95ee\u9898\u6211\u64c5\u957f\uff01";
+          setAiText(fallback);
+          go("speaking");
+          speakText(fallback);
+        }
         return;
       }
 
-      // ── Slow path: call backend smart decision ──
+      // ── Agri path: call backend smart decision ──
       try {
         const res = await executeDecision({ query: text });
         setAiText(res.decision);
@@ -515,6 +661,7 @@ export function SmartDecision() {
 
       {/* Listening audio bars */}
       {vs === "listening" && <AudioBars />}
+      {vs === "speaking"  && <SpeakBars />}
 
       {/* Subtitle area */}
       <div style={{
