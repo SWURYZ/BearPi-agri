@@ -32,6 +32,9 @@ public class AppUser {
     @Column(nullable = false, length = 10)
     private String role;
 
+    @Column(length = 50)
+    private String registeredBy; // 负责注册该用户的农户用户名
+
     @Column(nullable = false)
     private boolean faceRegistered;
 

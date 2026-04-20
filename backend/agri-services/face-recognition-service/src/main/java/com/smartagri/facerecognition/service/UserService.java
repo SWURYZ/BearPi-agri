@@ -3,7 +3,9 @@ package com.smartagri.facerecognition.service;
 import com.smartagri.facerecognition.dto.AuthResponse;
 import com.smartagri.facerecognition.dto.UserResponse;
 import com.smartagri.facerecognition.entity.AppUser;
+import com.smartagri.facerecognition.entity.LoginLog;
 import com.smartagri.facerecognition.repository.AppUserRepository;
+import com.smartagri.facerecognition.repository.LoginLogRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -21,6 +23,7 @@ import java.util.stream.Collectors;
 public class UserService {
 
     private final AppUserRepository userRepository;
+    private final LoginLogRepository loginLogRepository;
     private final TokenStore tokenStore;
     private final SmartAIModelService smartAIModelService;
     private final FaceRecognitionService faceRecognitionService;
@@ -61,6 +64,7 @@ public class UserService {
         }
 
         String token = tokenStore.createToken(user.getId());
+        recordLoginLog(user, "password");
         log.info("用户登录成功: username={}", username);
         return AuthResponse.builder().token(token).user(toResponse(user)).build();
     }
@@ -80,19 +84,17 @@ public class UserService {
                 .orElseThrow(() -> new IllegalArgumentException("人脸已识别但未关联到系统用户"));
 
         String token = tokenStore.createToken(user.getId());
+        recordLoginLog(user, "face");
         log.info("人脸登录成功: username={}", user.getUsername());
         return AuthResponse.builder().token(token).user(toResponse(user)).build();
     }
 
-    /** 管理员添加用户（含可选人脸照片） */
+    /** 任意已登录农户为他人注册（注明负责人） */
     @Transactional
     public UserResponse registerUserWithFace(String username, String password, String displayName,
-                                             MultipartFile imageFile, Long adminUserId) {
-        AppUser admin = userRepository.findById(adminUserId)
-                .orElseThrow(() -> new IllegalArgumentException("管理员不存在"));
-        if (!"admin".equals(admin.getRole())) {
-            throw new IllegalArgumentException("仅管理员可添加用户");
-        }
+                                             MultipartFile imageFile, Long operatorUserId) {
+        AppUser operator = userRepository.findById(operatorUserId)
+                .orElseThrow(() -> new IllegalArgumentException("操作用户不存在"));
 
         validateRegistration(username, password, displayName);
 
@@ -107,12 +109,14 @@ public class UserService {
                 .passwordHash(hashPassword(password))
                 .displayName(displayName.trim())
                 .role("user")
+                .registeredBy(operator.getUsername())
                 .faceRegistered(personId != null)
                 .facePersonId(personId)
                 .build();
         userRepository.save(user);
 
-        log.info("管理员添加用户: username={}, faceRegistered={}", username, personId != null);
+        log.info("用户注册: username={}, registeredBy={}, faceRegistered={}",
+                username, operator.getUsername(), personId != null);
         return toResponse(user);
     }
 
@@ -159,6 +163,11 @@ public class UserService {
         return userRepository.findAll().stream()
                 .map(this::toResponse)
                 .collect(Collectors.toList());
+    }
+
+    /** 获取登录日志（所有用户，按时间倒序） */
+    public List<LoginLog> getLoginLogs() {
+        return loginLogRepository.findAllByOrderByLoginTimeDesc();
     }
 
     /** 管理员删除用户 */
@@ -239,9 +248,23 @@ public class UserService {
                 .username(user.getUsername())
                 .displayName(user.getDisplayName())
                 .role(user.getRole())
+                .registeredBy(user.getRegisteredBy())
                 .faceRegistered(user.isFaceRegistered())
                 .facePersonId(user.getFacePersonId())
                 .createdAt(user.getCreatedAt() != null ? user.getCreatedAt().toString() : null)
                 .build();
+    }
+
+    private void recordLoginLog(AppUser user, String loginType) {
+        try {
+            loginLogRepository.save(LoginLog.builder()
+                    .userId(user.getId())
+                    .username(user.getUsername())
+                    .displayName(user.getDisplayName())
+                    .loginType(loginType)
+                    .build());
+        } catch (Exception e) {
+            log.warn("登录日志记录失败: {}", e.getMessage());
+        }
     }
 }

@@ -12,6 +12,7 @@ public class UserResponse {
     private String username;
     private String displayName;
     private String role;
+    private String registeredBy;
     private boolean faceRegistered;
     private String facePersonId;
     private String createdAt;

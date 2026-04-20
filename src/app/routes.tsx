@@ -11,6 +11,7 @@ import { AIAssistant } from "./pages/AIAssistant";
 import { SmartDecision } from "./pages/SmartDecision";
 import { Login } from "./pages/Login";
 import { UserManagement } from "./pages/UserManagement";
+import { LoginLogs } from "./pages/LoginLogs";
 import { getCurrentUser } from "./services/auth";
 import { useState, useEffect } from "react";
 
@@ -47,6 +48,7 @@ export const router = createBrowserRouter([
       { path: "ai", Component: AIAssistant },
       { path: "decision", Component: SmartDecision },
       { path: "users", Component: UserManagement },
+      { path: "logs", Component: LoginLogs },
     ],
   },
 ]);
