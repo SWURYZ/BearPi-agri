@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router";
 import {
   Thermometer,
@@ -16,6 +16,18 @@ import {
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { SimpleModal } from "../components/ui/SimpleModal";
 import { fetchRealtimeSnapshot } from "../services/realtime";
+import { YayaPet } from "../components/YayaPet";
+
+const DASH_KEYFRAMES = `
+@keyframes dash-fade-up { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
+@keyframes dash-pulse   { 0%,100%{box-shadow:0 0 0 0 rgba(74,222,128,0.55)} 50%{box-shadow:0 0 0 8px rgba(74,222,128,0)} }
+@keyframes dash-scan    { from{transform:translateY(-100%)} to{transform:translateY(400px)} }
+@keyframes dash-count   { from{opacity:0;transform:scale(0.7)} to{opacity:1;transform:scale(1)} }
+@keyframes dash-dot     { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.7);opacity:0.4} }
+@keyframes dash-border  { 0%,100%{border-color:rgba(74,222,128,0.25)} 50%{border-color:rgba(74,222,128,0.7)} }
+@keyframes dash-shimmer { from{background-position:-200% 0} to{background-position:200% 0} }
+@keyframes dash-card-in { from{opacity:0;transform:scale(0.95) translateY(10px)} to{opacity:1;transform:scale(1) translateY(0)} }
+`;
 
 const greenhouses = [
   {
@@ -133,6 +145,14 @@ export function Dashboard() {
   const [refreshNotice, setRefreshNotice] = useState("");
   const [offlineDialogOpen, setOfflineDialogOpen] = useState(false);
   const [offlineGhName, setOfflineGhName] = useState("");
+  const [tick, setTick] = useState(0);
+  const headerRef = useRef<HTMLDivElement>(null);
+
+  // Animation tick for live feel
+  useEffect(() => {
+    const t = window.setInterval(() => setTick((n) => n + 1), 2000);
+    return () => window.clearInterval(t);
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -222,7 +242,9 @@ export function Dashboard() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6" style={{ position: "relative" }}>
+      <style>{DASH_KEYFRAMES}</style>
+      <YayaPet />
       <SimpleModal
         open={offlineDialogOpen}
         title="大棚离线"
@@ -234,10 +256,15 @@ export function Dashboard() {
       />
 
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between" ref={headerRef} style={{ animation: "dash-fade-up 0.5s ease both" }}>
         <div>
-          <h1 className="text-xl font-bold text-gray-800">多大棚统一监控总览</h1>
-         
+          <h1 className="text-xl font-bold text-gray-800" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            多大棚统一监控总览
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10, background: "rgba(34,197,94,0.1)", color: "#16a34a", border: "1px solid rgba(34,197,94,0.3)", animation: `dash-border 2.5s ease-in-out ${tick % 2 === 0 ? "0s" : "0.2s"} infinite` }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ade80", animation: "dash-dot 1.4s ease-in-out infinite" }} />
+              LIVE
+            </span>
+          </h1>
         </div>
         <div className="flex items-center gap-3">
           <div className="text-xs text-gray-400">最后更新：{lastUpdate}</div>
@@ -263,18 +290,18 @@ export function Dashboard() {
           { label: "在线大棚", value: onlineCount, unit: "个", color: "green", icon: "✅" },
           { label: "告警数量", value: totalAlerts, unit: "条", color: "red", icon: "🔔" },
           { label: "设备总数", value: greenhouseData.reduce((s, g) => s + g.deviceCount, 0), unit: "台", color: "purple", icon: "📡" },
-        ].map((card) => (
-          <div key={card.label} className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
+        ].map((card, i) => (
+          <div key={card.label} className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm"
+            style={{ animation: `dash-card-in 0.45s ease ${i * 0.08}s both`, overflow: "hidden", position: "relative" }}>
+            {/* Shimmer line */}
+            <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: `linear-gradient(90deg, transparent, ${card.color === "green" ? "#4ade80" : card.color === "blue" ? "#60a5fa" : card.color === "red" ? "#f87171" : "#c084fc"}, transparent)`, backgroundSize: "200% 100%", animation: "dash-shimmer 2.5s linear infinite" }} />
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm text-gray-500">{card.label}</span>
               <span className="text-xl">{card.icon}</span>
             </div>
             <div className="flex items-baseline gap-1">
-              <span
-                className={`text-2xl font-bold ${
-                  card.color === "red" && card.value > 0 ? "text-red-500" : "text-gray-800"
-                }`}
-              >
+              <span className={`text-2xl font-bold ${card.color === "red" && card.value > 0 ? "text-red-500" : "text-gray-800"}`}
+                style={{ animation: "dash-count 0.4s cubic-bezier(0.34,1.56,0.64,1) both" }}>
                 {card.value}
               </span>
               <span className="text-sm text-gray-400">{card.unit}</span>
@@ -287,10 +314,14 @@ export function Dashboard() {
       <div>
         <h2 className="text-sm font-semibold text-gray-700 mb-3">大棚列表</h2>
         <div className="grid grid-cols-3 gap-4">
-          {greenhouseData.map((gh) => (
-            <div
+          {greenhouseData.map((gh, idx) => (
+          <div
               key={gh.id}
               className={`bg-white rounded-xl border-2 p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer ${statusBgMap[gh.status]}`}
+              style={{
+                animation: `dash-card-in 0.5s ease ${0.1 + idx * 0.07}s both`,
+                ...(gh.status === "正常" ? { animation: `dash-card-in 0.5s ease ${0.1 + idx * 0.07}s both, dash-border 3s ease-in-out infinite` } : {}),
+              }}
             >
               {/* Card Header */}
               <div className="flex items-center justify-between mb-3">
