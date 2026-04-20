@@ -10,8 +10,19 @@
  */
 import * as faceapi from "@vladmandic/face-api";
 
-/** CDN 远程模型地址（jsDelivr，国内可访问） */
-const MODEL_URL =
+type FaceApiTfRuntime = {
+  getBackend?: () => string;
+  setBackend?: (backend: string) => Promise<boolean>;
+  ready?: () => Promise<void>;
+};
+
+type FaceApiWithTf = typeof faceapi & {
+  tf?: FaceApiTfRuntime;
+};
+
+/** 优先本地模型目录；若本地缺失再回退到 CDN。 */
+const LOCAL_MODEL_URL = "/models/face-expression";
+const CDN_MODEL_URL =
   "https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model";
 
 export type Expression =
@@ -122,6 +133,40 @@ export const EXPRESSION_CONFIG: Record<
 
 let modelsLoaded = false;
 let loadingPromise: Promise<void> | null = null;
+let backendReady = false;
+let backendPromise: Promise<void> | null = null;
+
+/**
+ * 某些设备/驱动下 WebGL2 的 fenceSync 会为 null，导致 tfjs 在推理时崩溃。
+ * 这里优先使用 CPU 后端保证稳定性。
+ */
+async function ensureTfBackendReady(): Promise<void> {
+  if (backendReady) return;
+  if (backendPromise) return backendPromise;
+
+  backendPromise = (async () => {
+    const runtime = faceapi as FaceApiWithTf;
+    const tf = runtime.tf;
+
+    if (!tf?.ready || !tf?.setBackend) {
+      backendReady = true;
+      return;
+    }
+
+    try {
+      if (tf.getBackend?.() !== "cpu") {
+        await tf.setBackend("cpu");
+      }
+      await tf.ready();
+      backendReady = true;
+    } catch (err) {
+      backendPromise = null;
+      throw err;
+    }
+  })();
+
+  return backendPromise;
+}
 
 /**
  * 预加载表情识别所需的两个轻量模型（从 CDN 远程下载，约 500 KB）。
@@ -131,15 +176,39 @@ export async function loadExpressionModels(): Promise<void> {
   if (modelsLoaded) return;
   if (loadingPromise) return loadingPromise;
 
-  loadingPromise = (async () => {
+  await ensureTfBackendReady();
+
+  const loadFrom = async (modelUrl: string) => {
     await Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-      faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL),
+      faceapi.nets.tinyFaceDetector.loadFromUri(modelUrl),
+      faceapi.nets.faceExpressionNet.loadFromUri(modelUrl),
     ]);
-    modelsLoaded = true;
+  };
+
+  loadingPromise = (async () => {
+    try {
+      await loadFrom(LOCAL_MODEL_URL);
+      modelsLoaded = true;
+      return;
+    } catch (localErr) {
+      console.warn("[face-expression] 本地模型加载失败，回退 CDN", localErr);
+    }
+
+    try {
+      await loadFrom(CDN_MODEL_URL);
+      modelsLoaded = true;
+    } catch (cdnErr) {
+      console.error("[face-expression] CDN 模型加载失败", cdnErr);
+      throw cdnErr;
+    }
   })();
 
-  return loadingPromise;
+  try {
+    await loadingPromise;
+  } catch (err) {
+    loadingPromise = null;
+    throw err;
+  }
 }
 
 /**
