@@ -16,7 +16,6 @@ import {
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { SimpleModal } from "../components/ui/SimpleModal";
 import { fetchRealtimeSnapshot } from "../services/realtime";
-import { YayaPet } from "../components/YayaPet";
 
 const DASH_KEYFRAMES = `
 @keyframes dash-fade-up { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
@@ -244,7 +243,7 @@ export function Dashboard() {
   return (
     <div className="p-6 space-y-6" style={{ position: "relative" }}>
       <style>{DASH_KEYFRAMES}</style>
-      <YayaPet />
+
       <SimpleModal
         open={offlineDialogOpen}
         title="大棚离线"

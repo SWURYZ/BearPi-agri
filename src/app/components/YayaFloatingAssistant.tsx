@@ -926,75 +926,90 @@ export function YayaFloatingAssistant() {
         </button>
       </div>
 
-      {/* ── Dark-glass panel (ChatGPT-inspired) ── */}
+      {/* ── iOS-style frosted-glass panel ── */}
       {open && (
         <div
-          className="fixed bottom-36 right-6 z-[85] w-[380px] max-w-[94vw] overflow-hidden rounded-2xl"
+          className="fixed bottom-36 right-6 z-[85] w-[360px] max-w-[94vw] overflow-hidden rounded-[26px]"
           style={{
-            background: "rgba(10,14,22,0.93)",
-            backdropFilter: "blur(28px)",
-            WebkitBackdropFilter: "blur(28px)",
-            border: "1px solid rgba(255,255,255,0.07)",
-            boxShadow: "0 32px 72px rgba(0,0,0,0.6), 0 0 0 1px rgba(74,222,128,0.07)",
-            animation: "yaya-slide-up 0.22s cubic-bezier(0.16,1,0.3,1)",
+            background: "rgba(255,255,255,0.88)",
+            backdropFilter: "saturate(180%) blur(24px)",
+            WebkitBackdropFilter: "saturate(180%) blur(24px)",
+            border: "1px solid rgba(0,0,0,0.07)",
+            boxShadow: "0 8px 48px rgba(0,0,0,0.10), 0 1px 0 rgba(255,255,255,0.9) inset",
+            animation: "yaya-slide-up 0.28s cubic-bezier(0.16,1,0.3,1)",
+            fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif",
           }}
         >
           {/* Header */}
           <div
             className="flex items-center justify-between px-4 py-3"
-            style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
+            style={{ borderBottom: "1px solid rgba(0,0,0,0.06)" }}
           >
             <div className="flex items-center gap-2.5">
               <div
-                className="h-2 w-2 rounded-full bg-emerald-400"
-                style={{
-                  boxShadow: "0 0 8px rgba(74,222,128,0.9)",
-                  animation: alwaysListening ? "yaya-thinking-dot 2s ease-in-out infinite" : "none",
-                }}
-              />
-              <span className="text-sm font-medium text-white/90">芽芽</span>
-              <span className="text-xs text-white/25">
-                {voiceState === "thinking"
-                  ? "思考中..."
-                  : voiceState === "speaking"
-                    ? "播报中"
-                    : alwaysListening
-                      ? "持续监听"
+                className="flex h-6 w-6 items-center justify-center rounded-full"
+                style={{ background: "linear-gradient(135deg,#4ade80,#16a34a)" }}
+              >
+                <span style={{ fontSize: 9, color: "#fff", fontWeight: 700 }}>芽</span>
+              </div>
+              <div>
+                <div className="text-sm font-semibold text-gray-800">芽芽</div>
+                <div className="flex items-center gap-1" style={{ marginTop: 1 }}>
+                  <div
+                    className="h-1.5 w-1.5 rounded-full"
+                    style={{
+                      background: voiceState === "thinking" ? "#f59e0b"
+                        : voiceState === "speaking" ? "#ef4444"
+                        : alwaysListening ? "#22c55e" : "#d1d5db",
+                      boxShadow: alwaysListening ? "0 0 5px rgba(34,197,94,0.7)" : "none",
+                      animation: alwaysListening ? "yaya-thinking-dot 2s ease-in-out infinite" : "none",
+                    }}
+                  />
+                  <span style={{ fontSize: 11, color: "#9ca3af" }}>
+                    {voiceState === "thinking" ? "思考中..."
+                      : voiceState === "speaking" ? "播报中"
+                      : alwaysListening ? "持续监听"
                       : "待机"}
-              </span>
+                  </span>
+                </div>
+              </div>
             </div>
             <button
               onClick={() => setOpen(false)}
-              className="rounded-lg p-1 text-white/30 transition-colors hover:text-white/70"
+              className="flex h-7 w-7 items-center justify-center rounded-full transition-colors"
+              style={{ background: "rgba(0,0,0,0.06)" }}
             >
-              <X className="h-4 w-4" />
+              <X className="h-3.5 w-3.5 text-gray-500" />
             </button>
           </div>
 
           {/* Message list */}
           <div
-            className="h-64 space-y-3 overflow-y-auto px-4 py-3"
-            style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.08) transparent" }}
+            className="h-60 space-y-2.5 overflow-y-auto px-4 py-3"
+            style={{ scrollbarWidth: "none" }}
           >
             {messages.map((m, i) => (
               <div
                 key={`${m.role}-${i}`}
                 className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
-                style={{ animation: "yaya-msg-in 0.22s ease" }}
+                style={{ animation: "yaya-msg-in 0.2s ease" }}
               >
-                {m.role === "assistant" && (
-                  <div className="mr-2 mt-1.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-emerald-500/15">
-                    <span className="text-[8px] text-emerald-300">芽</span>
-                  </div>
-                )}
                 <div
-                  className={`max-w-[80%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${
-                    m.role === "user" ? "rounded-tr-sm text-white/90" : "rounded-tl-sm text-white/80"
+                  className={`max-w-[78%] px-3.5 py-2 text-sm leading-relaxed ${
+                    m.role === "user" ? "rounded-[18px] rounded-tr-[5px]" : "rounded-[18px] rounded-tl-[5px]"
                   }`}
                   style={
                     m.role === "user"
-                      ? { background: "rgba(74,222,128,0.15)", border: "1px solid rgba(74,222,128,0.18)" }
-                      : { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.06)" }
+                      ? {
+                          background: "linear-gradient(135deg,#34d399,#16a34a)",
+                          color: "#fff",
+                          boxShadow: "0 2px 8px rgba(22,163,74,0.25)",
+                        }
+                      : {
+                          background: "rgba(0,0,0,0.05)",
+                          color: "#1f2937",
+                          border: "1px solid rgba(0,0,0,0.04)",
+                        }
                   }
                 >
                   {m.text}
@@ -1002,21 +1017,18 @@ export function YayaFloatingAssistant() {
               </div>
             ))}
 
-            {/* Thinking bubble */}
+            {/* iOS-style typing indicator */}
             {voiceState === "thinking" && (
-              <div className="flex justify-start" style={{ animation: "yaya-msg-in 0.22s ease" }}>
-                <div className="mr-2 mt-1.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-emerald-500/15">
-                  <span className="text-[8px] text-emerald-300">芽</span>
-                </div>
+              <div className="flex justify-start" style={{ animation: "yaya-msg-in 0.2s ease" }}>
                 <div
-                  className="flex items-center gap-1.5 rounded-2xl rounded-tl-sm px-4 py-3"
-                  style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.06)" }}
+                  className="flex items-center gap-1.5 rounded-[18px] rounded-tl-[5px] px-4 py-3"
+                  style={{ background: "rgba(0,0,0,0.05)", border: "1px solid rgba(0,0,0,0.04)" }}
                 >
                   {[0, 1, 2].map((idx) => (
                     <div
                       key={idx}
-                      className="h-1.5 w-1.5 rounded-full bg-emerald-400"
-                      style={{ animation: `yaya-thinking-dot 1.4s ease-in-out ${idx * 0.16}s infinite` }}
+                      className="h-2 w-2 rounded-full bg-gray-400"
+                      style={{ animation: `yaya-thinking-dot 1.4s ease-in-out ${idx * 0.18}s infinite` }}
                     />
                   ))}
                 </div>
@@ -1024,22 +1036,24 @@ export function YayaFloatingAssistant() {
             )}
           </div>
 
-          {/* Heard text indicator */}
+          {/* Live transcript pill */}
           {heardText && (
-            <div
-              className="mx-4 mb-2 flex items-center gap-2 rounded-xl px-3 py-1.5"
-              style={{ background: "rgba(74,222,128,0.07)", border: "1px solid rgba(74,222,128,0.1)" }}
-            >
-              <div className="h-1 w-1 animate-pulse rounded-full bg-emerald-400" />
-              <span className="truncate text-xs text-emerald-300/65">{heardText}</span>
+            <div className="mx-4 mb-2">
+              <div
+                className="flex items-center gap-2 rounded-full px-3 py-1.5"
+                style={{ background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.15)" }}
+              >
+                <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+                <span className="truncate text-xs text-emerald-700">{heardText}</span>
+              </div>
             </div>
           )}
 
-          {/* Input + status footer */}
-          <div className="px-4 pb-4">
+          {/* Input bar + footer */}
+          <div className="px-3 pb-4">
             <div
-              className="flex items-center gap-2 rounded-xl px-3 py-2.5"
-              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)" }}
+              className="flex items-center gap-2 rounded-[14px] px-3 py-2"
+              style={{ background: "rgba(0,0,0,0.04)", border: "1px solid rgba(0,0,0,0.07)" }}
             >
               <input
                 value={input}
@@ -1050,33 +1064,33 @@ export function YayaFloatingAssistant() {
                     void executeUnified(input).then(() => setInput(""));
                   }
                 }}
-                className="flex-1 bg-transparent text-sm text-white/80 placeholder-white/25 outline-none"
+                className="flex-1 bg-transparent text-sm text-gray-800 placeholder-gray-400 outline-none"
                 placeholder="输入指令..."
               />
               {voiceState === "speaking" && (
                 <button
                   onClick={() => { window.speechSynthesis?.cancel(); setVoiceState("idle"); }}
-                  className="text-amber-400 transition-opacity hover:opacity-70"
+                  className="flex h-6 w-6 items-center justify-center rounded-full bg-amber-400 text-white"
                 >
-                  <Square className="h-3.5 w-3.5" />
+                  <Square className="h-3 w-3" />
                 </button>
               )}
               <button
                 onClick={() => { void executeUnified(input).then(() => setInput("")); }}
-                className="text-emerald-400 transition-opacity hover:opacity-70"
+                className="flex h-7 w-7 items-center justify-center rounded-full text-white transition-opacity hover:opacity-80"
+                style={{ background: "linear-gradient(135deg,#4ade80,#16a34a)" }}
               >
                 <Send className="h-3.5 w-3.5" />
               </button>
             </div>
 
-            <div className="mt-2.5 flex items-center justify-between">
-              {/* Sound-wave bars when speaking */}
+            <div className="mt-2 flex items-center justify-between px-1">
               {voiceState === "speaking" ? (
-                <div className="flex items-end gap-[3px]" style={{ height: 16 }}>
+                <div className="flex items-end gap-[3px]" style={{ height: 14 }}>
                   {[0, 1, 2, 3, 4].map((i) => (
                     <div
                       key={i}
-                      className="w-[3px] rounded-full bg-emerald-400"
+                      className="w-[3px] rounded-full bg-emerald-500"
                       style={{
                         height: "100%",
                         transformOrigin: "bottom",
@@ -1086,20 +1100,19 @@ export function YayaFloatingAssistant() {
                   ))}
                 </div>
               ) : (
-                <span className="text-xs text-white/25">
-                  {!speechSupported
-                    ? "浏览器不支持语音"
-                    : alwaysListening
-                      ? "持续监听中"
-                      : "监听未启动"}
+                <span className="text-xs text-gray-400">
+                  {!speechSupported ? "浏览器不支持语音" : alwaysListening ? "持续监听中" : "监听未启动"}
                 </span>
               )}
-
               <button
                 onClick={alwaysListening ? stopAlwaysListening : startAlwaysListening}
                 disabled={!speechSupported}
-                className="text-xs transition-opacity disabled:opacity-30 hover:opacity-80"
-                style={{ color: alwaysListening ? "rgba(74,222,128,0.75)" : "rgba(255,255,255,0.3)" }}
+                className="rounded-full px-2.5 py-0.5 text-xs font-medium transition-all disabled:opacity-30"
+                style={{
+                  background: alwaysListening ? "rgba(34,197,94,0.1)" : "rgba(0,0,0,0.05)",
+                  color: alwaysListening ? "#16a34a" : "#9ca3af",
+                  border: alwaysListening ? "1px solid rgba(34,197,94,0.25)" : "1px solid rgba(0,0,0,0.06)",
+                }}
               >
                 {alwaysListening ? "暂停监听" : "启动监听"}
               </button>
