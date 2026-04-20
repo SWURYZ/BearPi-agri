@@ -246,13 +246,12 @@ export function UserManagement() {
     [refreshFaces],
   );
 
-  if (!isAdminUser) {
+  if (!currentUser) {
     return (
       <div className="h-full flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <Shield className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <p className="text-lg font-medium text-gray-500">仅管理员可访问</p>
-          <p className="text-sm text-gray-400 mt-1">请联系管理员获取权限</p>
+          <p className="text-lg font-medium text-gray-500">请先登录</p>
         </div>
       </div>
     );
@@ -270,7 +269,7 @@ export function UserManagement() {
             <Users className="w-6 h-6 text-green-600" />
             用户管理
           </h1>
-          <p className="text-sm text-gray-500 mt-1">管理系统用户及人脸注册信息</p>
+          <p className="text-sm text-gray-500 mt-1">管理系统用户及人脸注册信息，任意农户可为他人注册</p>
         </div>
         <button
           onClick={() => setShowAdd(true)}
@@ -331,6 +330,11 @@ export function UserManagement() {
                     </div>
                     <div className="text-xs text-gray-400 flex items-center gap-3">
                       <span>@{u.username}</span>
+                      {u.registeredBy && (
+                        <span className="text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded">
+                          负责人: {u.registeredBy}
+                        </span>
+                      )}
                       <span>
                         {u.faceRegistered ? (
                           <span className="text-violet-500">
@@ -353,7 +357,7 @@ export function UserManagement() {
                       <ScanFace className="w-4 h-4" />
                     </button>
                   )}
-                  {u.id !== currentUser?.id && (
+                  {u.id !== currentUser?.id && isAdminUser && (
                     <button
                       onClick={() => setDeleteTarget(u)}
                       className="p-2 text-gray-300 hover:text-red-500 transition-colors"

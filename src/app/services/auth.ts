@@ -8,9 +8,19 @@ export interface User {
   username: string;
   displayName: string;
   role: "admin" | "user";
+  registeredBy?: string;
   faceRegistered: boolean;
   facePersonId?: string;
   createdAt: string;
+}
+
+export interface LoginLog {
+  id: number;
+  userId: number;
+  username: string;
+  displayName: string;
+  loginType: "password" | "face";
+  loginTime: string;
 }
 
 interface AuthResponse {
@@ -109,10 +119,17 @@ export function hasToken(): boolean {
   return !!getToken();
 }
 
-/** 获取所有用户（仅管理员） */
+/** 获取所有用户（所有已登录用户可查看） */
 export async function getAllUsers(): Promise<User[]> {
   const res = await authFetch(`${API_BASE}/users`);
   if (!res.ok) throw new Error(await parseError(res, "获取用户列表失败"));
+  return res.json();
+}
+
+/** 获取登录日志 */
+export async function getLoginLogs(): Promise<LoginLog[]> {
+  const res = await authFetch(`${API_BASE}/logs`);
+  if (!res.ok) throw new Error(await parseError(res, "获取日志失败"));
   return res.json();
 }
 

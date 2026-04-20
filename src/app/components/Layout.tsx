@@ -14,6 +14,7 @@ import {
   Users,
   LogOut,
   Brain,
+  ClipboardList,
 } from "lucide-react";
 import { getCurrentUser, logout, type User } from "../services/auth";
 
@@ -30,6 +31,7 @@ const baseNavItems = [
 ];
 
 const adminNavItem = { to: "/users", icon: Users, label: "用户管理", desc: "用户与人脸管理" };
+const logsNavItem = { to: "/logs", icon: ClipboardList, label: "登录日志", desc: "用户登录记录" };
 
 export function Layout() {
   const location = useLocation();
@@ -41,7 +43,9 @@ export function Layout() {
   }, []);
 
   const adminUser = user?.role === "admin";
-  const navItems = adminUser ? [...baseNavItems, adminNavItem] : baseNavItems;
+  const navItems = adminUser
+    ? [...baseNavItems, adminNavItem, logsNavItem]
+    : [...baseNavItems, logsNavItem];
 
   const handleLogout = async () => {
     await logout();

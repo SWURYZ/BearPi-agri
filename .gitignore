@@ -5,6 +5,10 @@ backend/**/data/*.trace.db
 .runtime/
 backend/**/hs_err_pid*.log
 backend/**/replay_pid*.log
+hs_err_pid*.log
+replay_pid*.log
+backend/face-service.log
+*.rar
 
 # 大模型文件 (超过 GitHub 100MB 限制)
 *.onnx

@@ -3,6 +3,7 @@ package com.smartagri.facerecognition.controller;
 import com.smartagri.facerecognition.dto.AuthResponse;
 import com.smartagri.facerecognition.dto.UserResponse;
 import com.smartagri.facerecognition.entity.AppUser;
+import com.smartagri.facerecognition.entity.LoginLog;
 import com.smartagri.facerecognition.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -61,14 +62,14 @@ public class AuthController {
         return ResponseEntity.noContent().build();
     }
 
-    @Operation(summary = "获取所有用户（管理员）")
+    @Operation(summary = "获取所有用户（登录用户可查看）")
     @GetMapping("/users")
     public ResponseEntity<List<UserResponse>> getAllUsers(@RequestHeader("Authorization") String auth) {
-        requireAdmin(auth);
+        requireLogin(auth);
         return ResponseEntity.ok(userService.getAllUsers());
     }
 
-    @Operation(summary = "管理员添加用户（含可选人脸）")
+    @Operation(summary = "任意已登录农户为他人注册用户（含可选人脸）")
     @PostMapping(value = "/users", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<UserResponse> createUser(
             @RequestHeader("Authorization") String auth,
@@ -76,9 +77,9 @@ public class AuthController {
             @RequestParam("password") String password,
             @RequestParam("displayName") String displayName,
             @RequestParam(value = "image", required = false) MultipartFile image) {
-        AppUser admin = requireAdmin(auth);
+        AppUser operator = requireLogin(auth);
         return ResponseEntity.ok(
-                userService.registerUserWithFace(username, password, displayName, image, admin.getId()));
+                userService.registerUserWithFace(username, password, displayName, image, operator.getId()));
     }
 
     @Operation(summary = "删除用户（管理员）")
@@ -89,6 +90,13 @@ public class AuthController {
         AppUser admin = requireAdmin(auth);
         userService.deleteUser(id, admin.getId());
         return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "登录日志（所有登录用户可查看）")
+    @GetMapping("/logs")
+    public ResponseEntity<List<LoginLog>> getLogs(@RequestHeader("Authorization") String auth) {
+        requireLogin(auth);
+        return ResponseEntity.ok(userService.getLoginLogs());
     }
 
     @Operation(summary = "为用户注册/更新人脸")
