@@ -1,0 +1,16 @@
+server:
+  port: 8091
+
+spring:
+  application:
+    name: threshold-alert-service
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui/index.html
+
+threshold-alert:
+  iot-status-base-url: ${THRESHOLD_ALERT_IOT_STATUS_BASE_URL:http://localhost:8082/api/v1/iot}
+  device-control-base-url: ${THRESHOLD_ALERT_DEVICE_CONTROL_BASE_URL:http://localhost:8083/api/v1/device-control}
+  poll-interval-ms: ${THRESHOLD_ALERT_POLL_INTERVAL_MS:5000}
+  runtime-device-id: ${THRESHOLD_ALERT_RUNTIME_DEVICE_ID:69d75b1d7f2e6c302f654fea_20031104}

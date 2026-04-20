@@ -187,6 +187,7 @@ export function DeviceControl() {
       window.setTimeout(async () => {
         try {
           const realtime = await fetchRealtimeDeviceStatus(device.id);
+          if (!realtime) return;
           setDevices((prev) =>
             prev.map((d, i) => {
               if (i !== deviceIndex) return d;
