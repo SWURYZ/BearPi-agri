@@ -10,6 +10,13 @@ import { streamAgriAgentChat } from "../services/agriAgent";
 type Msg = { role: "user" | "assistant"; text: string };
 type VoiceState = "idle" | "listening" | "thinking" | "speaking";
 
+type Point = { x: number; y: number };
+
+const FAB_SIZE = 112;
+const FAB_MARGIN = 20;
+const PANEL_MIN_MARGIN = 12;
+const PANEL_GAP = 16;
+
 interface ISpeechRecognitionAlternative {
   transcript: string;
   confidence: number;
@@ -384,9 +391,9 @@ type CanvasParticle = {
 
 function ParticleCanvas({ active, voiceState }: { active: boolean; voiceState: VoiceState }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const frameRef  = useRef<number>(0);
-  const pRef      = useRef<CanvasParticle[]>([]);
-  const lastRef   = useRef<number>(0);
+  const frameRef = useRef<number>(0);
+  const pRef = useRef<CanvasParticle[]>([]);
+  const lastRef = useRef<number>(0);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -404,24 +411,24 @@ function ParticleCanvas({ active, voiceState }: { active: boolean; voiceState: V
       ctx.clearRect(0, 0, W, H);
 
       const rate =
-        voiceState === "speaking"  ? 38  :
-        voiceState === "thinking"  ? 55  :
-        voiceState === "listening" ? 75  :
-        active                     ? 140 : 1e9;
+        voiceState === "speaking" ? 38 :
+          voiceState === "thinking" ? 55 :
+            voiceState === "listening" ? 75 :
+              active ? 140 : 1e9;
 
       if (active && ts - lastRef.current > rate) {
         lastRef.current = ts;
         const angle = Math.random() * Math.PI * 2;
-        const dist  = 50 + Math.random() * 16;
+        const dist = 50 + Math.random() * 16;
         pRef.current.push({
-          x:        cx + Math.cos(angle) * dist,
-          y:        cy + Math.sin(angle) * dist,
-          vx:       (Math.random() - 0.5) * 0.9,
-          vy:       -(0.5 + Math.random() * 2.0),
-          radius:   1.5 + Math.random() * 2.5,
-          alpha:    0.9,
+          x: cx + Math.cos(angle) * dist,
+          y: cy + Math.sin(angle) * dist,
+          vx: (Math.random() - 0.5) * 0.9,
+          vy: -(0.5 + Math.random() * 2.0),
+          radius: 1.5 + Math.random() * 2.5,
+          alpha: 0.9,
           colorHex: COLORS[Math.floor(Math.random() * COLORS.length)],
-          life:     1.0,
+          life: 1.0,
         });
       }
 
@@ -429,8 +436,8 @@ function ParticleCanvas({ active, voiceState }: { active: boolean; voiceState: V
       pRef.current = pRef.current.filter((p) => p.life > 0);
 
       for (const p of pRef.current) {
-        p.x  += p.vx;
-        p.y  += p.vy;
+        p.x += p.vx;
+        p.y += p.vy;
         p.vy -= 0.024;
         p.life -= decay;
         p.alpha = p.life * 0.9;
@@ -500,11 +507,22 @@ export function YayaFloatingAssistant() {
   const [alwaysListening, setAlwaysListening] = useState(false);
   const [input, setInput] = useState("");
   const [heardText, setHeardText] = useState("");
+  const [viewport, setViewport] = useState(() => ({
+    width: typeof window !== "undefined" ? window.innerWidth : 1280,
+    height: typeof window !== "undefined" ? window.innerHeight : 720,
+  }));
+  const [fabPos, setFabPos] = useState<Point>(() => ({
+    x: (typeof window !== "undefined" ? window.innerWidth : 1280) - FAB_SIZE - FAB_MARGIN,
+    y: (typeof window !== "undefined" ? window.innerHeight : 720) - FAB_SIZE - FAB_MARGIN,
+  }));
+  const [dragging, setDragging] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([
     { role: "assistant", text: "我是芽芽，我会持续听你说话。直接下达指令就行。" },
   ]);
 
   const recRef = useRef<ISpeechRecognition | null>(null);
+  const fabRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const supportedRef = useRef(true);
   const busyRef = useRef(false);
   const shouldListenRef = useRef(false);
@@ -514,15 +532,96 @@ export function YayaFloatingAssistant() {
   const pendingPickRef = useRef<{ text: string; confidence: number }>({ text: "", confidence: 0 });
   const lastResultIndexRef = useRef<number>(-1);
   const deviceIdRef = useRef(DEFAULT_DEVICE_ID);
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+    moved: boolean;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
+  const [panelSize, setPanelSize] = useState({ width: 360, height: 460 });
 
   const speechSupported = useMemo(
     () => typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition),
     [],
   );
 
+  const clampFabPosition = useCallback((pos: Point, width: number, height: number): Point => {
+    const minX = PANEL_MIN_MARGIN;
+    const minY = PANEL_MIN_MARGIN;
+    const maxX = Math.max(minX, width - FAB_SIZE - PANEL_MIN_MARGIN);
+    const maxY = Math.max(minY, height - FAB_SIZE - PANEL_MIN_MARGIN);
+    return {
+      x: Math.min(Math.max(pos.x, minX), maxX),
+      y: Math.min(Math.max(pos.y, minY), maxY),
+    };
+  }, []);
+
   const push = useCallback((role: Msg["role"], text: string) => {
     setMessages((prev) => [...prev.slice(-13), { role, text }]);
   }, []);
+
+  const endDrag = useCallback(() => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    setDragging(false);
+    if (drag?.moved) {
+      suppressClickRef.current = true;
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 0);
+    }
+  }, []);
+
+  const onFabPointerDown = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    dragRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      originX: fabPos.x,
+      originY: fabPos.y,
+      moved: false,
+    };
+    setDragging(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }, [fabPos.x, fabPos.y]);
+
+  const onFabPointerMove = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (!drag.moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+      drag.moved = true;
+    }
+
+    const next = clampFabPosition(
+      { x: drag.originX + dx, y: drag.originY + dy },
+      viewport.width,
+      viewport.height,
+    );
+    setFabPos(next);
+  }, [clampFabPosition, viewport.height, viewport.width]);
+
+  const onFabPointerUp = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    if (dragRef.current?.pointerId !== e.pointerId) return;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    endDrag();
+  }, [endDrag]);
+
+  const onFabPointerCancel = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    if (dragRef.current?.pointerId !== e.pointerId) return;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    endDrag();
+  }, [endDrag]);
 
   const speakText = useCallback((text: string) => {
     const synth = window.speechSynthesis;
@@ -687,7 +786,7 @@ export function YayaFloatingAssistant() {
             onToken: (token) => {
               accumulated += token;
             },
-            onDone: () => {},
+            onDone: () => { },
             onError: (msg) => {
               throw new Error(msg || "智能问答失败");
             },
@@ -878,12 +977,88 @@ export function YayaFloatingAssistant() {
     };
   }, [startAlwaysListening, stopAlwaysListening]);
 
+  useEffect(() => {
+    const onResize = () => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      setViewport({ width, height });
+      setFabPos((prev) => clampFabPosition(prev, width, height));
+    };
+
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+    };
+  }, [clampFabPosition]);
+
+  useEffect(() => {
+    if (!open) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+
+    const measure = () => {
+      setPanelSize({
+        width: panel.offsetWidth || 360,
+        height: panel.offsetHeight || 460,
+      });
+    };
+
+    measure();
+
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => measure());
+    observer.observe(panel);
+    return () => observer.disconnect();
+  }, [open, viewport.width, viewport.height, messages.length, heardText, voiceState]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const onDocumentPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (panelRef.current?.contains(target)) return;
+      if (fabRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+
+    document.addEventListener("pointerdown", onDocumentPointerDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDocumentPointerDown, true);
+    };
+  }, [open]);
+
+  const maxLeft = Math.max(PANEL_MIN_MARGIN, viewport.width - PANEL_MIN_MARGIN - panelSize.width);
+  const panelLeft = Math.min(
+    Math.max(fabPos.x + FAB_SIZE - panelSize.width + 4, PANEL_MIN_MARGIN),
+    maxLeft,
+  );
+
+  const belowTop = fabPos.y + FAB_SIZE + PANEL_GAP;
+  const aboveTop = fabPos.y - panelSize.height - PANEL_GAP;
+  const canPlaceBelow = belowTop + panelSize.height <= viewport.height - PANEL_MIN_MARGIN;
+  const canPlaceAbove = aboveTop >= PANEL_MIN_MARGIN;
+  const preferredTop = canPlaceBelow || !canPlaceAbove ? belowTop : aboveTop;
+  const maxTop = Math.max(PANEL_MIN_MARGIN, viewport.height - PANEL_MIN_MARGIN - panelSize.height);
+  const panelTop = Math.min(Math.max(preferredTop, PANEL_MIN_MARGIN), maxTop);
+
   return (
     <>
       <style>{KEYFRAMES}</style>
 
       {/* ── Floating Yaya button with particle halo + ripple rings ── */}
-      <div className="fixed bottom-5 right-5 z-[75]" style={{ width: 112, height: 112 }}>
+      <div
+        ref={fabRef}
+        className="fixed z-[75]"
+        style={{
+          width: FAB_SIZE,
+          height: FAB_SIZE,
+          left: fabPos.x,
+          top: fabPos.y,
+          userSelect: "none",
+          touchAction: "none",
+        }}
+      >
         {/* Ripple rings while listening */}
         {alwaysListening && (voiceState === "listening" || voiceState === "speaking") && (
           <>
@@ -910,15 +1085,24 @@ export function YayaFloatingAssistant() {
         {/* Avatar button – floating mascot, no container */}
         <button
           onClick={() => {
+            if (suppressClickRef.current) {
+              suppressClickRef.current = false;
+              return;
+            }
             setOpen((v) => !v);
             if (!alwaysListening && speechSupported) startAlwaysListening();
           }}
+          onPointerDown={onFabPointerDown}
+          onPointerMove={onFabPointerMove}
+          onPointerUp={onFabPointerUp}
+          onPointerCancel={onFabPointerCancel}
           className="relative z-[1] flex h-28 w-28 items-center justify-center"
           style={{
             background: "none",
             border: "none",
             padding: 0,
-            cursor: "pointer",
+            cursor: dragging ? "grabbing" : "grab",
+            touchAction: "none",
             animation:
               voiceState === "speaking"
                 ? "yaya-float-mini 0.5s ease-in-out infinite"
@@ -983,8 +1167,12 @@ export function YayaFloatingAssistant() {
       {/* ── iOS-style frosted-glass panel ── */}
       {open && (
         <div
-          className="fixed bottom-36 right-6 z-[85] w-[360px] max-w-[94vw] overflow-hidden rounded-[26px]"
+          ref={panelRef}
+          className="fixed z-[85] w-[360px] max-w-[94vw] overflow-hidden rounded-[26px]"
           style={{
+            left: panelLeft,
+            top: panelTop,
+            maxHeight: `calc(100vh - ${PANEL_MIN_MARGIN * 2}px)`,
             background: "rgba(255,255,255,0.88)",
             backdropFilter: "saturate(180%) blur(24px)",
             WebkitBackdropFilter: "saturate(180%) blur(24px)",
@@ -1014,7 +1202,7 @@ export function YayaFloatingAssistant() {
                     style={{
                       background: voiceState === "thinking" ? "#f59e0b"
                         : voiceState === "speaking" ? "#ef4444"
-                        : alwaysListening ? "#22c55e" : "#d1d5db",
+                          : alwaysListening ? "#22c55e" : "#d1d5db",
                       boxShadow: alwaysListening ? "0 0 5px rgba(34,197,94,0.7)" : "none",
                       animation: alwaysListening ? "yaya-thinking-dot 2s ease-in-out infinite" : "none",
                     }}
@@ -1022,8 +1210,8 @@ export function YayaFloatingAssistant() {
                   <span style={{ fontSize: 11, color: "#9ca3af" }}>
                     {voiceState === "thinking" ? "思考中..."
                       : voiceState === "speaking" ? "播报中"
-                      : alwaysListening ? "持续监听"
-                      : "待机"}
+                        : alwaysListening ? "持续监听"
+                          : "待机"}
                   </span>
                 </div>
               </div>
@@ -1049,21 +1237,20 @@ export function YayaFloatingAssistant() {
                 style={{ animation: "yaya-msg-in 0.2s ease" }}
               >
                 <div
-                  className={`max-w-[78%] px-3.5 py-2 text-sm leading-relaxed ${
-                    m.role === "user" ? "rounded-[18px] rounded-tr-[5px]" : "rounded-[18px] rounded-tl-[5px]"
-                  }`}
+                  className={`max-w-[78%] px-3.5 py-2 text-sm leading-relaxed ${m.role === "user" ? "rounded-[18px] rounded-tr-[5px]" : "rounded-[18px] rounded-tl-[5px]"
+                    }`}
                   style={
                     m.role === "user"
                       ? {
-                          background: "linear-gradient(135deg,#34d399,#16a34a)",
-                          color: "#fff",
-                          boxShadow: "0 2px 8px rgba(22,163,74,0.25)",
-                        }
+                        background: "linear-gradient(135deg,#34d399,#16a34a)",
+                        color: "#fff",
+                        boxShadow: "0 2px 8px rgba(22,163,74,0.25)",
+                      }
                       : {
-                          background: "rgba(0,0,0,0.05)",
-                          color: "#1f2937",
-                          border: "1px solid rgba(0,0,0,0.04)",
-                        }
+                        background: "rgba(0,0,0,0.05)",
+                        color: "#1f2937",
+                        border: "1px solid rgba(0,0,0,0.04)",
+                      }
                   }
                 >
                   {m.text}
