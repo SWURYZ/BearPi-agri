@@ -1,3 +1,41 @@
 @import './fonts.css';
 @import './tailwind.css';
 @import './theme.css';
+
+/* ===== WelcomeOverlay iOS-style animations ===== */
+@keyframes wOverlayIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes wOverlayOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes wCardIn {
+  from { opacity: 0; transform: scale(0.76) translateY(28px); filter: blur(6px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0);    filter: blur(0);   }
+}
+@keyframes wCardOut {
+  from { opacity: 1; transform: scale(1)    translateY(0);    filter: blur(0);   }
+  to   { opacity: 0; transform: scale(1.09) translateY(-14px); filter: blur(4px); }
+}
+@keyframes wIconIn {
+  from { opacity: 0; transform: scale(0.38) rotate(-18deg); }
+  to   { opacity: 1; transform: scale(1)    rotate(0deg);   }
+}
+@keyframes wTextIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+@keyframes wProgress {
+  from { width: 0%;    }
+  to   { width: 100%;  }
+}
+@keyframes wProgressShimmer {
+  0%   { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+@keyframes wRipple {
+  0%   { transform: scale(0.82); opacity: 0.7; }
+  100% { transform: scale(1.65); opacity: 0;   }
+}

@@ -15,7 +15,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import * as auth from "../services/auth";
-import { speak } from "../lib/speech";
+import { WelcomeOverlay } from "../components/WelcomeOverlay";
 
 type Mode = "login" | "register" | "face-login";
 
@@ -29,6 +29,7 @@ export function Login() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [isFirst, setIsFirst] = useState(false);
+  const [welcomeUser, setWelcomeUser] = useState<string | null>(null);
 
   /* ---- 人脸识别 ---- */
   const [scanStatus, setScanStatus] = useState("正在扫描人脸...");
@@ -75,8 +76,7 @@ export function Login() {
     setLoading(true);
     try {
       const user = await auth.login(username, password);
-      speak(`${user.displayName || user.username}，欢迎您使用智慧农业管理系统`);
-      navigate("/", { replace: true });
+      setWelcomeUser(user.displayName || user.username);
     } catch (err) {
       setError(err instanceof Error ? err.message : "登录失败");
     } finally {
@@ -91,8 +91,7 @@ export function Login() {
     setLoading(true);
     try {
       const user = await auth.register(username, password, displayName);
-      speak(`${user.displayName || user.username}，欢迎您使用智慧农业管理系统`);
-      navigate("/", { replace: true });
+      setWelcomeUser(user.displayName || user.username);
     } catch (err) {
       setError(err instanceof Error ? err.message : "注册失败");
     } finally {
@@ -151,8 +150,7 @@ export function Login() {
             }
             streamRef.current?.getTracks().forEach((t) => t.stop());
             streamRef.current = null;
-            speak(`${user.displayName || user.username}，欢迎您使用智慧农业管理系统`);
-            navigate("/", { replace: true });
+            setWelcomeUser(user.displayName || user.username);
           } catch (loginErr) {
             const msg = loginErr instanceof Error ? loginErr.message : "识别失败";
             if (msg.includes("活体检测")) {
@@ -189,6 +187,12 @@ export function Login() {
   /* ============================== 渲染 ============================== */
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-900 via-green-800 to-emerald-900 flex items-center justify-center p-4 relative overflow-hidden">
+      {welcomeUser && (
+        <WelcomeOverlay
+          displayName={welcomeUser}
+          onDone={() => navigate("/", { replace: true })}
+        />
+      )}
       {/* 背景装饰 */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-20 -right-20 w-96 h-96 bg-green-400/10 rounded-full blur-3xl" />
