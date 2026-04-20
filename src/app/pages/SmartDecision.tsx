@@ -559,44 +559,71 @@ export function SmartDecision() {
     if (!synth) { go("idle"); return; }
     synth.cancel();
 
-    // Pick best Chinese voice: prefer female/Xiaoyan/Huihui, then any zh
+    // ── Voice selection: prioritise Microsoft Xiaoxiao/Xiaoyi (most human-like on Windows) ──
     const pickVoice = (voices: SpeechSynthesisVoice[]) => {
       const zh = voices.filter((v) => v.lang.startsWith("zh"));
       return (
-        zh.find((v) => /xiaoyi|xiaoxiao|huihui|xiaoyan|female|google/i.test(v.name)) ??
-        zh.find((v) => !/male/i.test(v.name)) ??
+        zh.find((v) => /xiaoxiao/i.test(v.name))                          ??  // Microsoft Xiaoxiao – best
+        zh.find((v) => /xiaoyi|xiaoyan|huihui/i.test(v.name))             ??  // Other MS voices
+        zh.find((v) => /google.*zh|zh.*google/i.test(v.name))             ??  // Google TTS
+        zh.find((v) => !/male|yunxi|yunyang|yunjian/i.test(v.name))       ??  // any non-male
         zh[0]
       );
     };
 
-    // Trim very long AI replies so TTS stays snappy (first 120 chars + …)
-    const spokenText = text.length > 160
-      ? text.slice(0, 157).replace(/[，。！？、…]+$/, "") + "……"
-      : text;
+    // ── Clean markdown/symbols that TTS would read aloud literally ──
+    const clean = text
+      .replace(/\*\*(.+?)\*\*/g, "$1")          // bold
+      .replace(/\*(.+?)\*/g,   "$1")            // italic
+      .replace(/#+\s*/g,       "")              // headings
+      .replace(/`[^`]+`/g,     "")              // inline code
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // markdown links
+      .replace(/[>\-\*•◆◇→]/g, "")             // bullets / arrows
+      .replace(/\n{2,}/g, "\u3002")             // blank lines → period
+      .replace(/\n/g, "\uff0c")                 // single newline → comma
+      .trim();
 
-    const doSpeak = (voice?: SpeechSynthesisVoice) => {
-      const utt = new SpeechSynthesisUtterance(spokenText);
-      utt.lang  = "zh-CN";
-      utt.rate  = 1.15;   // closer to natural human speech speed
-      utt.pitch = 1.18;
+    // ── Cap length: first 180 chars, cut at last sentence boundary ──
+    const capped = clean.length > 180
+      ? clean.slice(0, 180).replace(/[^。！？…，、]+$/, "") || clean.slice(0, 180)
+      : clean;
+
+    // ── Split into sentences for natural breathing rhythm ──
+    const sentences = capped
+      .split(/(?<=[。！？…\n])/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (sentences.length === 0) { go("idle"); return; }
+
+    // ── Queue sentences one-by-one; each transition = natural pause ──
+    const speakQueue = (voice: SpeechSynthesisVoice | undefined, queue: string[]) => {
+      if (queue.length === 0 || vsRef.current !== "speaking") { go("idle"); return; }
+      const [head, ...rest] = queue;
+      const utt = new SpeechSynthesisUtterance(head);
+      utt.lang   = "zh-CN";
+      utt.rate   = 1.05;   // natural conversational pace
+      utt.pitch  = 1.08;   // slightly raised = female-friendly, warm tone
       utt.volume = 1;
       if (voice) utt.voice = voice;
-      utt.onend  = () => go("idle");
+      utt.onend   = () => speakQueue(voice, rest);
       utt.onerror = () => go("idle");
       synth.speak(utt);
     };
 
+    const start = (voices: SpeechSynthesisVoice[]) => speakQueue(pickVoice(voices), sentences);
+
     const voices = synth.getVoices();
     if (voices.length > 0) {
-      doSpeak(pickVoice(voices));
+      start(voices);
     } else {
       synth.onvoiceschanged = () => {
-        doSpeak(pickVoice(synth.getVoices()));
+        start(synth.getVoices());
         synth.onvoiceschanged = null;
       };
-      setTimeout(() => { if (!synth.speaking) doSpeak(); }, 300);
+      setTimeout(() => { if (!synth.speaking) speakQueue(undefined, sentences); }, 250);
     }
-  }, [go]);
+  }, [go, vsRef]);
 
   const startListening = useCallback(() => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;

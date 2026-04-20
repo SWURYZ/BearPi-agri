@@ -31,6 +31,9 @@ public class LoginLog {
     @Column(nullable = false, length = 10)
     private String loginType; // "password" | "face"
 
+    @Column(length = 50)
+    private String clientIp; // 客户端 IP，用于区分本机/他机登录
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime loginTime;
