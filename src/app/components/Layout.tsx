@@ -45,7 +45,7 @@ export function Layout() {
   const adminUser = user?.role === "admin";
   const navItems = adminUser
     ? [...baseNavItems, adminNavItem, logsNavItem]
-    : [...baseNavItems, logsNavItem];
+    : [...baseNavItems];
 
   const handleLogout = async () => {
     await logout();
