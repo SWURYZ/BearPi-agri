@@ -43,20 +43,14 @@ interface GreenhouseData {
   temp: number;
   humidity: number;
   light: number;
-  co2: number;
-  soilHumidity: number;
   gh: string;
-  crop: string;
 }
 
 const defaultData: GreenhouseData = {
   temp: 0,
   humidity: 0,
   light: 0,
-  co2: 0,
-  soilHumidity: 0,
   gh: "1号大棚",
-  crop: "番茄",
 };
 
 const suggestedQuestions = [
@@ -375,8 +369,6 @@ export function AIAssistant() {
             temp: metrics.temp ?? prev.temp,
             humidity: metrics.humidity ?? prev.humidity,
             light: metrics.light ?? prev.light,
-            co2: metrics.co2 ?? prev.co2,
-            soilHumidity: metrics.soilHumidity ?? prev.soilHumidity,
           }));
         }
       } catch {
@@ -423,7 +415,7 @@ export function AIAssistant() {
     setMessages((prev) =>
       prev.map((msg) => (msg.id === "0" ? { ...msg, content: updatedWelcome } : msg)),
     );
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentData, rememberedUserName]);
   const [voiceMode, setVoiceMode] = useState(false); // 语音对话模式：识别后自动发送
   const abortRef = useRef<AbortController | null>(null);
@@ -447,7 +439,7 @@ export function AIAssistant() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const sendMessageRef = useRef<(text?: string) => Promise<void>>(async () => {});
+  const sendMessageRef = useRef<(text?: string) => Promise<void>>(async () => { });
 
   const { listening, supported: speechSupported, start: startListening, stop: stopListening } =
     useSpeechRecognition(useCallback((text: string) => {
@@ -748,7 +740,6 @@ export function AIAssistant() {
               { icon: Thermometer, label: "\u6e29\u5ea6", value: currentData.temp + "\u00b0C", color: "text-orange-500" },
               { icon: Droplets, label: "\u6e7f\u5ea6", value: currentData.humidity + "%", color: "text-blue-500" },
               { icon: Sun, label: "\u5149\u7167", value: currentData.light + "lux", color: "text-yellow-500" },
-              { icon: Leaf, label: "\u4f5c\u7269", value: currentData.crop, color: "text-green-500" },
             ].map((item) => (
               <div key={item.label} className="flex items-center gap-1.5 text-xs text-gray-600">
                 <item.icon className={"w-3.5 h-3.5 " + item.color} />
