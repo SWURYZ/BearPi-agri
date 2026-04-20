@@ -1,313 +1,773 @@
-import { useState, useEffect } from "react";
-import {
-  Brain,
-  Droplets,
-  Sun,
-  Wind,
-  Thermometer,
-  Bug,
-  Flower2,
-  Scissors,
-  AlertTriangle,
-  Send,
-  Loader2,
-  ChevronRight,
-  Activity,
-  Lightbulb,
-  Fan,
-} from "lucide-react";
-import {
-  executeDecision,
-  getScenarios,
-  type DecisionResponse,
-  type ScenarioItem,
-} from "../services/smartDecision";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { Mic, Square } from "lucide-react";
+import { executeDecision } from "../services/smartDecision";
+import { streamAgriAgentChat } from "../services/agriAgent";
 
-const scenarioIcons: Record<string, React.ElementType> = {
-  IRRIGATION: Droplets,
-  LIGHT: Sun,
-  VENTILATION: Wind,
-  TEMPERATURE: Thermometer,
-  PEST: Bug,
-  FERTILIZATION: Flower2,
-  HARVEST: Scissors,
-  ANOMALY: AlertTriangle,
+type VoiceState = "idle" | "listening" | "thinking" | "speaking";
+
+// ─── Web Speech API declarations ───────────────────────────────────────────
+interface ISpeechRecognitionResult {
+  readonly [index: number]: { transcript: string; confidence: number };
+  readonly length: number;
+}
+interface ISpeechRecognitionResultList {
+  readonly [index: number]: ISpeechRecognitionResult;
+  readonly length: number;
+}
+interface ISpeechRecognitionEvent extends Event {
+  readonly results: ISpeechRecognitionResultList;
+}
+interface ISpeechRecognition extends EventTarget {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  start(): void;
+  stop(): void;
+  abort(): void;
+  onresult: ((e: ISpeechRecognitionEvent) => void) | null;
+  onerror:  (() => void) | null;
+  onend:    (() => void) | null;
+}
+declare global {
+  interface Window {
+    SpeechRecognition: new () => ISpeechRecognition;
+    webkitSpeechRecognition: new () => ISpeechRecognition;
+  }
+}
+
+// ─── CSS Keyframes ──────────────────────────────────────────────────────────
+const KEYFRAMES = `
+@keyframes yaya-float {
+  0%   { transform: translateY(0px) rotate(-1deg); }
+  30%  { transform: translateY(-10px) rotate(0.5deg); }
+  60%  { transform: translateY(-16px) rotate(1deg); }
+  100% { transform: translateY(0px) rotate(-1deg); }
+}
+@keyframes yaya-bob {
+  0%   { transform: translateY(0px) scale(1) rotate(0deg); }
+  25%  { transform: translateY(-6px) scale(1.03) rotate(-1deg); }
+  75%  { transform: translateY(-3px) scale(1.015) rotate(1deg); }
+  100% { transform: translateY(0px) scale(1) rotate(0deg); }
+}
+@keyframes yaya-mouth {
+  0%   { transform: scaleY(0.3) scaleX(0.9); }
+  40%  { transform: scaleY(1.7) scaleX(1.1); }
+  70%  { transform: scaleY(0.8) scaleX(1.0); }
+  100% { transform: scaleY(0.3) scaleX(0.9); }
+}
+@keyframes yaya-blink {
+  0%, 90%, 100% { transform: scaleY(1); }
+  94%           { transform: scaleY(0.05); }
+}
+@keyframes yaya-sway {
+  0%, 100% { transform: rotate(-2deg) translateY(0); }
+  50%      { transform: rotate(2deg) translateY(-4px); }
+}
+@keyframes pulse-ring {
+  0%   { transform: scale(1);   opacity: 0.85; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+@keyframes pulse-soft {
+  0%, 100% { transform: scale(1);    opacity: 0.28; }
+  50%      { transform: scale(1.12); opacity: 0.72; }
+}
+@keyframes orbit {
+  0%   { transform: rotate(0deg)   translateX(108px) rotate(0deg); }
+  100% { transform: rotate(360deg) translateX(108px) rotate(-360deg); }
+}
+@keyframes orbit-rev {
+  0%   { transform: rotate(0deg)   translateX(82px) rotate(0deg); }
+  100% { transform: rotate(-360deg) translateX(82px) rotate(360deg); }
+}
+@keyframes wave-bar {
+  0%   { height: 4px;  opacity: 0.6; }
+  50%  { height: 40px; opacity: 1; }
+  100% { height: 4px;  opacity: 0.6; }
+}
+@keyframes speak-wave {
+  0%, 100% { transform: scaleY(1);   opacity: 0.5; }
+  50%       { transform: scaleY(2.4); opacity: 1; }
+}
+@keyframes spin-btn {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes sub-in {
+  from { opacity: 0; transform: translateY(9px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes sparkle {
+  0%   { opacity: 0; transform: scale(0) translateY(0); }
+  40%  { opacity: 1; transform: scale(1.2) translateY(-18px); }
+  100% { opacity: 0; transform: scale(0.6) translateY(-38px); }
+}
+@keyframes particle {
+  0%   { opacity: 1; transform: translate(0,0) scale(1); }
+  100% { opacity: 0; transform: translate(var(--px),var(--py)) scale(0.3); }
+}
+`;
+
+// ─── Status labels ──────────────────────────────────────────────────────────
+const STATUS: Record<VoiceState, string> = {
+  idle:      "\u82bd\u82bd\u5728\u8fd9\u91cc\uff0c\u8bf4\u51fa\u4f60\u7684\u60f3\u6cd5 \u2728",
+  listening: "\u6211\u5728\u8ba4\u771f\u542c\u2026",
+  thinking:  "\u8ba9\u6211\u60f3\u4e00\u60f3\u2026",
+  speaking:  "\u82bd\u82bd\u8bf4\uff1a",
 };
 
-const scenarioColors: Record<string, string> = {
-  IRRIGATION: "bg-blue-50 text-blue-600 border-blue-200",
-  LIGHT: "bg-yellow-50 text-yellow-600 border-yellow-200",
-  VENTILATION: "bg-cyan-50 text-cyan-600 border-cyan-200",
-  TEMPERATURE: "bg-orange-50 text-orange-600 border-orange-200",
-  PEST: "bg-red-50 text-red-600 border-red-200",
-  FERTILIZATION: "bg-emerald-50 text-emerald-600 border-emerald-200",
-  HARVEST: "bg-amber-50 text-amber-600 border-amber-200",
-  ANOMALY: "bg-rose-50 text-rose-600 border-rose-200",
-};
+// ─── YayaAvatar SVG ─────────────────────────────────────────────────────────
+function YayaAvatar({ state }: { state: VoiceState }) {
+  const thinking  = state === "thinking";
+  const listening = state === "listening";
+  const speaking  = state === "speaking";
 
-const scenarioBg: Record<string, string> = {
-  IRRIGATION: "from-blue-500 to-blue-600",
-  LIGHT: "from-yellow-500 to-yellow-600",
-  VENTILATION: "from-cyan-500 to-cyan-600",
-  TEMPERATURE: "from-orange-500 to-orange-600",
-  PEST: "from-red-500 to-red-600",
-  FERTILIZATION: "from-emerald-500 to-emerald-600",
-  HARVEST: "from-amber-500 to-amber-600",
-  ANOMALY: "from-rose-500 to-rose-600",
-};
-
-const quickQuestions: { label: string; query: string; scenario?: string }[] = [
-  { label: "需要灌溉吗?", query: "当前大棚需要灌溉吗？请根据传感器数据分析", scenario: "IRRIGATION" },
-  { label: "补光灯建议", query: "当前光照是否充足？需要开补光灯吗", scenario: "LIGHT" },
-  { label: "是否需要通风", query: "大棚温湿度情况如何？需要开风扇通风吗", scenario: "VENTILATION" },
-  { label: "温度是否正常", query: "当前大棚温度是否在适宜范围？需要调控吗", scenario: "TEMPERATURE" },
-  { label: "病虫害风险", query: "当前环境条件是否有病虫害风险？请评估", scenario: "PEST" },
-  { label: "施肥建议", query: "当前需要施肥吗？请给出施肥建议", scenario: "FERTILIZATION" },
-  { label: "采收时机", query: "当前是不是最佳的采收时机？", scenario: "HARVEST" },
-  { label: "异常检测", query: "请检查当前传感器数据是否存在异常", scenario: "ANOMALY" },
-];
-
-export function SmartDecision() {
-  const [scenarios, setScenarios] = useState<ScenarioItem[]>([]);
-  const [query, setQuery] = useState("");
-  const [selectedScenario, setSelectedScenario] = useState<string>("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<DecisionResponse | null>(null);
-  const [history, setHistory] = useState<DecisionResponse[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    getScenarios().then(setScenarios).catch(() => {});
-  }, []);
-
-  const handleDecide = async (q?: string, s?: string) => {
-    const finalQuery = q || query;
-    if (!finalQuery.trim()) return;
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    try {
-      const res = await executeDecision({
-        query: finalQuery,
-        scenario: s || selectedScenario || undefined,
-      });
-      setResult(res);
-      setHistory((prev) => [res, ...prev].slice(0, 10));
-    } catch (err: any) {
-      setError(err.message || "决策失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleQuickQuestion = (item: (typeof quickQuestions)[0]) => {
-    setQuery(item.query);
-    setSelectedScenario(item.scenario || "");
-    handleDecide(item.query, item.scenario);
-  };
-
-  const snap = result?.sensorSnapshot;
+  const eyeW = listening ? 11 : 9;
+  const eyeH = listening ? 13 : 10;
 
   return (
-    <div className="p-6 space-y-6">
-      {/* 页头 */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg">
-            <Brain className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-800">智控决策</h1>
-            <p className="text-sm text-gray-500">基于 LangGraph 的 AI 智能决策引擎</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-gray-400">
-          <Activity className="w-3.5 h-3.5" />
-          <span>8 个决策场景 · Coze LLM</span>
-        </div>
-      </div>
+    <svg
+      width="210"
+      height="210"
+      viewBox="0 0 160 160"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      style={{
+        animation:
+          state === "idle"
+            ? "yaya-float 4s ease-in-out infinite"
+            : speaking
+            ? "yaya-bob 0.38s ease-in-out infinite"
+            : thinking
+            ? "yaya-sway 2s ease-in-out infinite"
+            : "none",
+        filter: speaking
+          ? "drop-shadow(0 8px 28px rgba(74,222,128,0.75)) drop-shadow(0 0 18px rgba(74,222,128,0.5))"
+          : "drop-shadow(0 14px 36px rgba(34,197,94,0.5))",
+        zIndex: 1,
+        transition: "filter 0.4s ease",
+      }}
+    >
+      <defs>
+        <radialGradient id="vf-face" cx="38%" cy="32%" r="62%">
+          <stop offset="0%"   stopColor="#4ade80" />
+          <stop offset="100%" stopColor="#15803d" />
+        </radialGradient>
+        <radialGradient id="vf-leaf" cx="28%" cy="20%" r="72%">
+          <stop offset="0%"   stopColor="#a7f3d0" />
+          <stop offset="100%" stopColor="#4ade80" />
+        </radialGradient>
+      </defs>
 
-      {/* 场景卡片网格 */}
-      <div className="grid grid-cols-4 gap-3">
-        {(scenarios.length > 0 ? scenarios : quickQuestions.map((q) => ({ code: q.scenario || "", label: q.label.replace("?", "") }))).map((s) => {
-          const Icon = scenarioIcons[s.code] || Brain;
-          const colorClass = scenarioColors[s.code] || "bg-gray-50 text-gray-600 border-gray-200";
-          const isSelected = selectedScenario === s.code;
-          return (
-            <button
-              key={s.code}
-              onClick={() => setSelectedScenario(isSelected ? "" : s.code)}
-              className={`flex items-center gap-2.5 p-3 rounded-xl border transition-all duration-200 text-left ${
-                isSelected
-                  ? "ring-2 ring-purple-400 border-purple-300 bg-purple-50"
-                  : colorClass + " hover:shadow-md"
-              }`}
-            >
-              <Icon className="w-5 h-5 flex-shrink-0" />
-              <span className="text-sm font-medium truncate">{s.label}</span>
-            </button>
-          );
-        })}
-      </div>
+      {/* Leaves */}
+      <ellipse cx="57"  cy="34" rx="22" ry="30" fill="url(#vf-leaf)" opacity="0.95" transform="rotate(-28 57 34)" />
+      <ellipse cx="103" cy="32" rx="22" ry="30" fill="url(#vf-leaf)" opacity="0.85" transform="rotate(28 103 32)" />
 
-      {/* 输入区 */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
-        <div className="flex gap-3">
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !loading && handleDecide()}
-            placeholder="描述你的农事问题，AI 将自动分类并给出专业决策建议…"
-            className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-transparent"
-            disabled={loading}
+      {/* Stem */}
+      <rect x="77" y="42" width="6" height="26" rx="3" fill="#86efac" />
+
+      {/* Face */}
+      <circle cx="80" cy="100" r="54" fill="url(#vf-face)" />
+
+      {/* Sheen */}
+      <ellipse cx="62" cy="76" rx="18" ry="11" fill="rgba(255,255,255,0.14)" transform="rotate(-30 62 76)" />
+
+      {/* Blush */}
+      <ellipse cx="46"  cy="108" rx="13" ry="8"  fill="rgba(253,164,175,0.48)" />
+      <ellipse cx="114" cy="108" rx="13" ry="8"  fill="rgba(253,164,175,0.48)" />
+
+      {/* Eyes */}
+      {thinking ? (
+        <>
+          {/* squint / tilted eyes while thinking */}
+          <path d="M55 87 Q66 80 77 87"  stroke="rgba(255,255,255,0.88)" strokeWidth="3.5" strokeLinecap="round" fill="none" />
+          <path d="M83 87 Q94 80 105 87" stroke="rgba(255,255,255,0.88)" strokeWidth="3.5" strokeLinecap="round" fill="none" />
+          {/* small stars near eyes while thinking */}
+          <text x="48" y="78" fontSize="9" fill="rgba(253,224,71,0.85)" style={{ animation: "sparkle 1.8s ease-in-out 0.2s infinite" }}>✦</text>
+          <text x="107" y="76" fontSize="7" fill="rgba(167,243,208,0.85)" style={{ animation: "sparkle 1.8s ease-in-out 0.7s infinite" }}>✦</text>
+        </>
+      ) : (
+        <>
+          <ellipse cx="66" cy="86" rx={eyeW} ry={eyeH} fill="rgba(255,255,255,0.92)"
+            style={state === "idle" ? { animation: "yaya-blink 4s ease-in-out infinite", transformBox: "fill-box" as React.CSSProperties["transformBox"], transformOrigin: "center" } as React.CSSProperties : {}}
           />
-          <button
-            onClick={() => handleDecide()}
-            disabled={loading || !query.trim()}
-            className="px-6 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-xl text-sm font-medium hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-          >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            {loading ? "分析中…" : "智能决策"}
-          </button>
-        </div>
-
-        {/* 快捷问题 */}
-        <div className="flex flex-wrap gap-2 mt-3">
-          {quickQuestions.map((q) => (
-            <button
-              key={q.label}
-              onClick={() => handleQuickQuestion(q)}
-              disabled={loading}
-              className="px-3 py-1.5 text-xs bg-gray-50 hover:bg-purple-50 text-gray-600 hover:text-purple-600 rounded-lg border border-gray-200 hover:border-purple-300 transition-all disabled:opacity-50"
-            >
-              {q.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* 错误提示 */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-600 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          {error}
-        </div>
+          <ellipse cx="94" cy="86" rx={eyeW} ry={eyeH} fill="rgba(255,255,255,0.92)"
+            style={state === "idle" ? { animation: "yaya-blink 4s ease-in-out 0.06s infinite", transformBox: "fill-box" as React.CSSProperties["transformBox"], transformOrigin: "center" } as React.CSSProperties : {}}
+          />
+          <circle  cx="67" cy="88" r={listening ? 6.5 : 5.2} fill="#15803d" />
+          <circle  cx="95" cy="88" r={listening ? 6.5 : 5.2} fill="#15803d" />
+          <circle  cx="69.5" cy="85.5" r="2.2" fill="rgba(255,255,255,0.88)" />
+          <circle  cx="97.5" cy="85.5" r="2.2" fill="rgba(255,255,255,0.88)" />
+          {/* sparkle in eyes when speaking */}
+          {speaking && <>
+            <circle cx="63" cy="83" r="1" fill="rgba(253,224,71,0.9)" style={{ animation: "sparkle 0.9s ease-in-out infinite" }} />
+            <circle cx="91" cy="83" r="1" fill="rgba(253,224,71,0.9)" style={{ animation: "sparkle 0.9s ease-in-out 0.18s infinite" }} />
+          </>}
+        </>
       )}
 
-      {/* 决策结果 */}
-      {result && (
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          {/* 结果头部 */}
-          <div className={`bg-gradient-to-r ${scenarioBg[result.scenario] || "from-gray-500 to-gray-600"} p-5 text-white`}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                {(() => {
-                  const Icon = scenarioIcons[result.scenario] || Brain;
-                  return <Icon className="w-6 h-6" />;
-                })()}
-                <div>
-                  <h3 className="text-lg font-semibold">{result.scenarioLabel}</h3>
-                  <p className="text-sm opacity-80">场景代号：{result.scenario}</p>
-                </div>
-              </div>
-              {result.graphTrace && (
-                <div className="flex items-center gap-1 text-xs bg-white/20 px-3 py-1.5 rounded-lg">
-                  <ChevronRight className="w-3 h-3" />
-                  <span>工作流：{result.graphTrace}</span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* 传感器快照 + 决策内容 */}
-          <div className="p-5 space-y-4">
-            {/* 传感器快照 */}
-            {snap && snap.reportTime && (
-              <div className="bg-gray-50 rounded-xl p-4">
-                <h4 className="text-xs font-semibold text-gray-500 mb-3 uppercase tracking-wider">
-                  传感器数据快照
-                </h4>
-                <div className="grid grid-cols-5 gap-3">
-                  <SensorCard
-                    icon={Thermometer}
-                    label="温度"
-                    value={snap.temperature != null ? `${snap.temperature.toFixed(1)}°C` : "N/A"}
-                    color="text-orange-500"
-                  />
-                  <SensorCard
-                    icon={Droplets}
-                    label="湿度"
-                    value={snap.humidity != null ? `${snap.humidity.toFixed(1)}%` : "N/A"}
-                    color="text-blue-500"
-                  />
-                  <SensorCard
-                    icon={Sun}
-                    label="光照"
-                    value={snap.luminance != null ? `${Math.round(snap.luminance)} lux` : "N/A"}
-                    color="text-yellow-500"
-                  />
-                  <SensorCard
-                    icon={Lightbulb}
-                    label="补光灯"
-                    value={snap.ledStatus || "N/A"}
-                    color="text-amber-500"
-                  />
-                  <SensorCard
-                    icon={Fan}
-                    label="风扇"
-                    value={snap.motorStatus || "N/A"}
-                    color="text-cyan-500"
-                  />
-                </div>
-                <p className="text-xs text-gray-400 mt-2">上报时间：{snap.reportTime}</p>
-              </div>
-            )}
-
-            {/* 决策建议 */}
-            <div>
-              <h4 className="text-sm font-semibold text-gray-700 mb-2">AI 决策建议</h4>
-              <div className="prose prose-sm max-w-none text-gray-600 whitespace-pre-wrap leading-relaxed">
-                {result.decision}
-              </div>
-            </div>
-          </div>
-        </div>
+      {/* Mouth */}
+      {speaking ? (
+        <>
+          <ellipse
+            cx="80" cy="114" rx="12" ry="8"
+            fill="rgba(255,255,255,0.92)"
+            style={{
+              animation: "yaya-mouth 0.28s cubic-bezier(0.4,0,0.6,1) infinite",
+              transformBox: "fill-box" as React.CSSProperties["transformBox"],
+              transformOrigin: "center",
+            } as React.CSSProperties}
+          />
+          {/* inner mouth shadow */}
+          <ellipse cx="80" cy="116" rx="7" ry="4" fill="rgba(21,128,61,0.25)"
+            style={{
+              animation: "yaya-mouth 0.28s cubic-bezier(0.4,0,0.6,1) infinite",
+              transformBox: "fill-box" as React.CSSProperties["transformBox"],
+              transformOrigin: "center",
+            } as React.CSSProperties}
+          />
+        </>
+      ) : listening ? (
+        <>
+          <ellipse cx="80" cy="113" rx="10" ry="8" fill="rgba(255,255,255,0.88)" />
+          <ellipse cx="80" cy="115" rx="6" ry="4" fill="rgba(21,128,61,0.2)" />
+        </>
+      ) : (
+        <path
+          d="M62 112 Q80 126 98 112"
+          stroke="rgba(255,255,255,0.88)"
+          strokeWidth="3.5"
+          strokeLinecap="round"
+          fill="none"
+        />
       )}
 
-      {/* 历史记录 */}
-      {history.length > 1 && (
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">历史决策记录</h3>
-          <div className="space-y-2">
-            {history.slice(1).map((h, i) => {
-              const Icon = scenarioIcons[h.scenario] || Brain;
-              return (
-                <div
-                  key={i}
-                  className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl cursor-pointer hover:bg-gray-100 transition-colors"
-                  onClick={() => setResult(h)}
-                >
-                  <Icon className="w-4 h-4 text-gray-500 flex-shrink-0" />
-                  <span className="text-sm font-medium text-gray-600">{h.scenarioLabel}</span>
-                  <span className="text-xs text-gray-400 truncate flex-1">{h.decision.slice(0, 60)}…</span>
-                  <ChevronRight className="w-4 h-4 text-gray-300" />
-                </div>
-              );
-            })}
-          </div>
-        </div>
+      {/* Thinking sweat drop + small bubbles */}
+      {thinking && (
+        <>
+          <ellipse cx="114" cy="56" rx="5" ry="8" fill="rgba(147,197,253,0.85)"
+            style={{ animation: "yaya-float 1.4s ease-in-out infinite" }}
+          />
+          <circle cx="122" cy="70" r="3" fill="rgba(147,197,253,0.6)"
+            style={{ animation: "yaya-float 1.8s ease-in-out 0.3s infinite" }}
+          />
+          <circle cx="128" cy="60" r="2" fill="rgba(147,197,253,0.45)"
+            style={{ animation: "sparkle 2s ease-in-out 0.6s infinite" }}
+          />
+        </>
       )}
+      {/* Happy sparkles when speaking */}
+      {speaking && (
+        <>
+          <text x="28" y="52" fontSize="10" fill="rgba(253,224,71,0.9)" style={{ animation: "sparkle 1s ease-out 0s infinite" }}>★</text>
+          <text x="118" y="48" fontSize="8"  fill="rgba(167,243,208,0.9)" style={{ animation: "sparkle 1s ease-out 0.22s infinite" }}>✦</text>
+          <text x="22" y="85" fontSize="7"  fill="rgba(253,186,116,0.85)" style={{ animation: "sparkle 1s ease-out 0.44s infinite" }}>✦</text>
+          <text x="126" y="82" fontSize="9" fill="rgba(253,224,71,0.8)" style={{ animation: "sparkle 1s ease-out 0.66s infinite" }}>★</text>
+        </>
+      )}
+    </svg>
+  );
+}
+
+// ─── Ambient aura effects ───────────────────────────────────────────────────
+function Aura({ state }: { state: VoiceState }) {
+  if (state === "idle") {
+    return (
+      <div style={{
+        position: "absolute", inset: -18, borderRadius: "50%",
+        background: "radial-gradient(circle, rgba(74,222,128,0.2) 0%, transparent 70%)",
+        animation: "pulse-soft 3.2s ease-in-out infinite",
+      }} />
+    );
+  }
+
+  if (state === "listening") {
+    return (
+      <>
+        {[0, 0.58, 1.16].map((delay, i) => (
+          <div key={i} style={{
+            position: "absolute", inset: 0, borderRadius: "50%",
+            border: "2.5px solid rgba(74,222,128,0.75)",
+            animation: `pulse-ring 2s ease-out ${delay}s infinite`,
+          }} />
+        ))}
+      </>
+    );
+  }
+
+  if (state === "thinking") {
+    const colors = ["#4ade80", "#a3e635", "#34d399"];
+    const glows  = ["rgba(74,222,128,0.8)", "rgba(163,230,53,0.8)", "rgba(52,211,153,0.8)"];
+    return (
+      <>
+        {/* outer orbit */}
+        {[0, 1, 2].map((i) => (
+          <div key={i} style={{
+            position: "absolute",
+            left: "50%", top: "50%",
+            marginLeft: -7, marginTop: -7,
+            width: 14, height: 14, borderRadius: "50%",
+            background: colors[i],
+            boxShadow: `0 0 14px ${glows[i]}`,
+            animation: `orbit 2.2s linear ${i * 0.73}s infinite`,
+          }} />)
+        )}
+        {/* inner orbit (reverse) */}
+        {["#86efac", "#fde68a"].map((c, i) => (
+          <div key={"r" + i} style={{
+            position: "absolute",
+            left: "50%", top: "50%",
+            marginLeft: -5, marginTop: -5,
+            width: 10, height: 10, borderRadius: "50%",
+            background: c,
+            opacity: 0.75,
+            animation: `orbit-rev 1.6s linear ${i * 0.8}s infinite`,
+          }} />
+        ))}
+      </>
+    );
+  }
+
+  if (state === "speaking") {
+    return (
+      <>
+        {[0, 0.42, 0.84].map((delay, i) => (
+          <div key={i} style={{
+            position: "absolute", inset: 0, borderRadius: "50%",
+            border: "2px solid rgba(74,222,128,0.55)",
+            animation: `pulse-ring 1.4s ease-out ${delay}s infinite`,
+          }} />
+        ))}
+      </>
+    );
+  }
+
+  return null;
+}
+
+// ─── Audio wave bars (listening) ────────────────────────────────────────────
+function AudioBars() {
+  // varying widths for more organic look
+  const widths = [4, 5, 7, 5, 8, 5, 4, 6, 4];
+  const delays = [0, 0.08, 0.16, 0.06, 0.22, 0.12, 0.04, 0.18, 0.10];
+  const durations = [0.48, 0.52, 0.44, 0.58, 0.42, 0.56, 0.50, 0.46, 0.54];
+  return (
+    <div style={{ display: "flex", gap: 5, alignItems: "center", height: 52, marginTop: 6 }}>
+      {widths.map((w, i) => (
+        <div key={i} style={{
+          width: w,
+          height: 4,
+          borderRadius: 4,
+          background: i % 2 === 0
+            ? "linear-gradient(to top, #4ade80, #a7f3d0)"
+            : "linear-gradient(to top, #34d399, #6ee7b7)",
+          boxShadow: "0 0 10px rgba(74,222,128,0.6)",
+          animation: `wave-bar ${durations[i]}s ease-in-out ${delays[i]}s infinite`,
+        }} />
+      ))}
     </div>
   );
 }
 
-function SensorCard({ icon: Icon, label, value, color }: { icon: React.ElementType; label: string; value: string; color: string }) {
+function SpeakBars() {
+  const heights = [12, 20, 28, 20, 32, 24, 16, 24, 14];
+  const delays  = [0, 0.07, 0.14, 0.05, 0.21, 0.11, 0.03, 0.17, 0.09];
   return (
-    <div className="bg-white rounded-lg p-3 text-center border border-gray-100">
-      <Icon className={`w-5 h-5 mx-auto mb-1 ${color}`} />
-      <p className="text-xs text-gray-400">{label}</p>
-      <p className="text-sm font-semibold text-gray-700 mt-0.5">{value}</p>
+    <div style={{ display: "flex", gap: 4, alignItems: "center", height: 52, marginTop: 6 }}>
+      {heights.map((h, i) => (
+        <div key={i} style={{
+          width: 4,
+          height: h,
+          borderRadius: 4,
+          background: "linear-gradient(to top, #16a34a, #86efac)",
+          boxShadow: "0 0 8px rgba(22,163,74,0.5)",
+          animation: `speak-wave 0.5s ease-in-out ${delays[i]}s infinite`,
+        }} />
+      ))}
+    </div>
+  );
+}
+
+// ─── Quick local response (non-agri queries) ────────────────────────────────
+
+const AGRI_KEYWORDS = [
+  "\u704c\u6e89", "\u65bd\u8098", "\u6e29\u5ea6", "\u6e7f\u5ea6", "\u5149\u7167", "\u5149\u5f3a", "\u8865\u5149",
+  "\u75c5\u866b\u5bb3", "\u75c5\u866b", "\u866b\u5bb3", "\u6444\u6c0f", "\u767e\u83cc",
+  "\u91c7\u6536", "\u6536\u6536", "\u5347\u6e29", "\u964d\u6e29", "\u901a\u98ce", "\u98ce\u673a",
+  "\u4f20\u611f\u5668", "\u6e29\u5ba4", "\u5927\u68da", "\u571f\u58e4", "\u6c34\u5206",
+  "\u8425\u517b", "\u80a5\u6599", "\u6c2e\u78f7\u9492", "\u5206\u679d", "\u4fee\u526a",
+  "\u79cd\u690d", "\u64ad\u79cd", "\u53d1\u82bd", "\u5f00\u82b1", "\u7ed3\u679c",
+  "\u75c5\u5bb3", "\u6742\u8349", "\u67af\u840e", "\u9ec4\u53f6", "\u71c3\u7126", "\u6e0d\u6c34",
+  "\u5f02\u5e38", "\u9884\u8b66", "\u62a5\u8b66", "\u51b3\u7b56", "\u5efa\u8bae",
+  "\u68c0\u6d4b", "\u76d1\u63a7", "\u6570\u636e", "\u5206\u6790",
+];
+
+function isAgriQuery(text: string): boolean {
+  return AGRI_KEYWORDS.some((kw) => text.includes(kw));
+}
+
+const GREETINGS: Record<string, string> = {
+  "\u4f60\u597d": "\u4f60\u597d\uff01\u6211\u662f\u82bd\u82bd\uff0c\u4f60\u7684\u667a\u6167\u519c\u4e1a\u5c0f\u52a9\u624b\uff0c\u6709\u4ec0\u4e48\u519c\u4e8b\u95ee\u9898\u5c3d\u7ba1\u95ee\u6211\u54df\uff01",
+  "\u65e9": "\u65e9\u5578\uff01\u65b0\u7684\u4e00\u5929\uff0c\u5e0c\u671b\u5927\u68da\u4eca\u5929\u751f\u673a\u52c3\u52c3\uff01\ud83c\udf31",
+  "\u665a": "\u665a\u4e0a\u597d\uff01\u5929\u8272\u6697\u4e86\uff0c\u8bb0\u5f97\u68c0\u67e5\u4e00\u4e0b\u6e29\u5ba4\u6e29\u5ea6\u54e6~",
+  "\u4e2d\u5348\u597d": "\u4e2d\u5348\u597d\uff01\u4eca\u5929\u5149\u7167\u5145\u8db3\uff0c\u662f\u5927\u68da\u751f\u957f\u7684\u597d\u65f6\u5019\uff01",
+  "\u8c22\u8c22": "\u4e0d\u5ba2\u6c14\uff01\u6709\u4e0d\u61c2\u7684\u968f\u65f6\u95ee\u6211\u554a\ud83d\ude0a",
+  "\u611f\u8c22": "\u4e0d\u5ba2\u6c14\uff01\u6709\u4e0d\u61c2\u7684\u968f\u65f6\u95ee\u6211\u554a\ud83d\ude0a",
+  "\u4f60\u662f\u8c01": "\u6211\u662f\u82bd\u82bd\uff0c\u57fa\u4e8e LangGraph \u7684\u667a\u6167\u519c\u4e1a AI\uff01\u64c5\u957f\u704c\u6e89\u3001\u65bd\u8098\u3001\u5149\u7167\u3001\u75c5\u866b\u5bb3\u7b49\u51b3\u7b56\u5efa\u8bae\u3002",
+  "\u4ecb\u7ecd": "\u6211\u662f\u82bd\u82bd\uff0c\u4e00\u4e2a\u53ef\u7231\u7684\u667a\u6167\u519c\u4e1a\u5c0f\u52a9\u624b\uff01\u6211\u53ef\u4ee5\u5206\u6790\u5c0f\u68da\u4f20\u611f\u5668\u6570\u636e\uff0c\u5e2e\u4f60\u505a\u51b3\u7b56\u3002",
+  "\u6ca1\u6709": "\u5ca9\u5ca9\uff0c\u6ca1\u95ee\u9898\uff0c\u6709\u4e08\u5c31\u53eb\u6211\uff01\ud83c\udf31",
+  "\u6211\u8981": "\u8bf4\u5427\uff01\u6211\u5728\u5462\ud83d\udc42",
+  "\u80fd\u5e72\u4ec0\u4e48": "\u6211\u80fd\u5e2e\u4f60\u5206\u6790\u5927\u68da\u72b6\u51b5\uff0c\u7ed9\u51fa\u704c\u6e89\u3001\u65bd\u8098\u3001\u8865\u5149\u3001\u901a\u98ce\u7b49\u51b3\u7b56\u5efa\u8bae\uff0c\u8bd5\u8457\u95ee\u6211\u5427\uff01",
+};
+
+function quickReply(text: string): string | null {
+  for (const [kw, reply] of Object.entries(GREETINGS)) {
+    if (text.includes(kw)) return reply;
+  }
+  return null;
+}
+
+// ─── Main component ─────────────────────────────────────────────────────────
+export function SmartDecision() {
+  const [vs, setVS]           = useState<VoiceState>("idle");
+  const [userText, setUserText] = useState("");
+  const [aiText,   setAiText]   = useState("");
+  const [supported, setSupported] = useState(true);
+
+  const vsRef  = useRef<VoiceState>("idle");
+  const recRef = useRef<ISpeechRecognition | null>(null);
+
+  // Unified state setter that keeps the ref in sync
+  const go = useCallback((s: VoiceState) => {
+    vsRef.current = s;
+    setVS(s);
+  }, []);
+
+  useEffect(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) setSupported(false);
+    return () => {
+      recRef.current?.abort();
+      window.speechSynthesis?.cancel();
+    };
+  }, []);
+
+  const speakText = useCallback((text: string) => {
+    const synth = window.speechSynthesis;
+    if (!synth) { go("idle"); return; }
+    synth.cancel();
+
+    // Pick best Chinese voice: prefer female/Xiaoyan/Huihui, then any zh
+    const pickVoice = (voices: SpeechSynthesisVoice[]) => {
+      const zh = voices.filter((v) => v.lang.startsWith("zh"));
+      return (
+        zh.find((v) => /xiaoyi|xiaoxiao|huihui|xiaoyan|female|google/i.test(v.name)) ??
+        zh.find((v) => !/male/i.test(v.name)) ??
+        zh[0]
+      );
+    };
+
+    // Trim very long AI replies so TTS stays snappy (first 120 chars + …)
+    const spokenText = text.length > 160
+      ? text.slice(0, 157).replace(/[，。！？、…]+$/, "") + "……"
+      : text;
+
+    const doSpeak = (voice?: SpeechSynthesisVoice) => {
+      const utt = new SpeechSynthesisUtterance(spokenText);
+      utt.lang  = "zh-CN";
+      utt.rate  = 1.15;   // closer to natural human speech speed
+      utt.pitch = 1.18;
+      utt.volume = 1;
+      if (voice) utt.voice = voice;
+      utt.onend  = () => go("idle");
+      utt.onerror = () => go("idle");
+      synth.speak(utt);
+    };
+
+    const voices = synth.getVoices();
+    if (voices.length > 0) {
+      doSpeak(pickVoice(voices));
+    } else {
+      synth.onvoiceschanged = () => {
+        doSpeak(pickVoice(synth.getVoices()));
+        synth.onvoiceschanged = null;
+      };
+      setTimeout(() => { if (!synth.speaking) doSpeak(); }, 300);
+    }
+  }, [go]);
+
+  const startListening = useCallback(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { setSupported(false); return; }
+
+    const rec = new SR();
+    rec.lang           = "zh-CN";
+    rec.continuous     = false;
+    rec.interimResults = false;
+    recRef.current     = rec;
+
+    rec.onresult = async (e: ISpeechRecognitionEvent) => {
+      const text = Array.from(e.results)
+        .map((r) => r[0].transcript)
+        .join("");
+      setUserText(text);
+      setAiText("");
+      go("thinking");
+
+      // ── Fast path: local quick reply for casual conversation ──
+      const quick = quickReply(text);
+      if (quick) {
+        setAiText(quick);
+        go("speaking");
+        speakText(quick);
+        return;
+      }
+
+      // ── Casual path: non-agri query → streaming LLM quick reply ──
+      if (!isAgriQuery(text)) {
+        let accumulated = "";
+        try {
+          await streamAgriAgentChat(
+            { question: text },
+            {
+              onToken: (token) => { accumulated += token; },
+              onDone: () => {},
+              onError: (msg) => { throw new Error(msg); },
+            },
+          );
+          const reply = accumulated.trim() ||
+            "\u6211\u6682\u65f6\u8fd8\u4e0d\u592a\u61c2\u8fd9\u4e2a\u95ee\u9898\uff0c\u4f46\u6709\u519c\u4e8b\u95ee\u9898\u5c3d\u7ba1\u95ee\u6211\uff01";
+          setAiText(reply);
+          go("speaking");
+          speakText(reply);
+        } catch {
+          const fallback = "\u6211\u6682\u65f6\u8fd8\u4e0d\u592a\u61c2\u8fd9\u4e2a\u95ee\u9898\uff0c\u4f46\u706c\u6e89\u3001\u65bd\u8098\u3001\u5149\u7167\u7b49\u519c\u4e8b\u95ee\u9898\u6211\u64c5\u957f\uff01";
+          setAiText(fallback);
+          go("speaking");
+          speakText(fallback);
+        }
+        return;
+      }
+
+      // ── Agri path: call backend smart decision ──
+      try {
+        const res = await executeDecision({ query: text });
+        setAiText(res.decision);
+        go("speaking");
+        speakText(res.decision);
+      } catch {
+        const errMsg =
+          "\u62b1\u6b49\uff0c\u6211\u9047\u5230\u4e86\u4e00\u4e9b\u95ee\u9898\uff0c\u8bf7\u7a0d\u540e\u518d\u8bd5\u4e00\u6b21";
+        setAiText(errMsg);
+        go("speaking");
+        speakText(errMsg);
+      }
+    };
+
+    rec.onerror = () => go("idle");
+
+    rec.onend = () => {
+      if (vsRef.current === "listening") go("thinking");
+    };
+
+    go("listening");
+    setUserText("");
+    setAiText("");
+    try { rec.start(); } catch { go("idle"); }
+  }, [go, speakText]);
+
+  const handleMic = useCallback(() => {
+    const state = vsRef.current;
+    if (state === "idle") {
+      window.speechSynthesis?.cancel();
+      startListening();
+    } else if (state === "listening") {
+      recRef.current?.stop();
+    } else if (state === "speaking") {
+      window.speechSynthesis?.cancel();
+      go("idle");
+    }
+    // thinking: ignore
+  }, [go, startListening]);
+
+  // Button appearance
+  const micBg =
+    vs === "listening" ? "#ef4444" :
+    vs === "speaking"  ? "#f59e0b" :
+    "linear-gradient(135deg, #4ade80, #16a34a)";
+
+  const micShadow =
+    vs === "listening" ? "rgba(239,68,68,0.55)" :
+    vs === "speaking"  ? "rgba(245,158,11,0.55)" :
+    "rgba(22,163,74,0.55)";
+
+  const btnLabel =
+    vs === "idle"      ? "\u70b9\u51fb\u5f00\u59cb\u8bf4\u8bdd" :
+    vs === "listening" ? "\u8bc6\u522b\u4e2d\uff0c\u518d\u6b21\u70b9\u51fb\u505c\u6b62" :
+    vs === "thinking"  ? "\u601d\u8003\u4e2d\u2026" :
+    "\u70b9\u51fb\u6253\u65ad\u64ad\u653e";
+
+  return (
+    <div
+      style={{
+        height: "100%",
+        minHeight: 600,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "linear-gradient(160deg, #071407 0%, #0c2410 55%, #071407 100%)",
+        borderRadius: 16,
+        position: "relative",
+        overflow: "hidden",
+        padding: "32px 24px 40px",
+        gap: 0,
+        userSelect: "none",
+      }}
+    >
+      <style>{KEYFRAMES}</style>
+
+      {/* Ambient background glow */}
+      <div style={{
+        position: "absolute",
+        width: 500, height: 500, borderRadius: "50%",
+        background: "radial-gradient(circle, rgba(34,197,94,0.1) 0%, transparent 65%)",
+        top: "42%", left: "50%",
+        transform: "translate(-50%, -55%)",
+        pointerEvents: "none",
+      }} />
+
+      {/* Character + aura */}
+      <div style={{
+        position: "relative",
+        width: 250, height: 250,
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <Aura state={vs} />
+        <YayaAvatar state={vs} />
+      </div>
+
+      {/* Status text */}
+      <p style={{
+        marginTop: 18,
+        fontSize: 20,
+        fontWeight: 700,
+        color: "#4ade80",
+        letterSpacing: "0.04em",
+        textAlign: "center",
+        textShadow: "0 0 22px rgba(74,222,128,0.45)",
+      }}>
+        {STATUS[vs]}
+      </p>
+
+      {/* Listening audio bars */}
+      {vs === "listening" && <AudioBars />}
+      {vs === "speaking"  && <SpeakBars />}
+
+      {/* Subtitle area */}
+      <div style={{
+        height: 84,
+        marginTop: vs === "listening" ? 2 : 14,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        padding: "0 36px",
+        textAlign: "center",
+      }}>
+        {userText && (
+          <p style={{
+            fontSize: 14,
+            color: "rgba(255,255,255,0.6)",
+            maxWidth: 500,
+            lineHeight: 1.55,
+            animation: "sub-in 0.4s ease",
+          }}>
+            &ldquo;{userText}&rdquo;
+          </p>
+        )}
+        {aiText && vs !== "idle" && (
+          <p style={{
+            fontSize: 13,
+            color: "rgba(134,239,172,0.85)",
+            maxWidth: 500,
+            lineHeight: 1.55,
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+            animation: "sub-in 0.4s ease",
+          } as React.CSSProperties}>
+            {aiText}
+          </p>
+        )}
+      </div>
+
+      {/* Mic / stop button */}
+      <button
+        onClick={handleMic}
+        disabled={vs === "thinking"}
+        aria-label={btnLabel}
+        style={{
+          marginTop: 10,
+          width: 80,
+          height: 80,
+          borderRadius: "50%",
+          border: "none",
+          cursor: vs === "thinking" ? "not-allowed" : "pointer",
+          background: micBg,
+          boxShadow: `0 6px 30px ${micShadow}`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          transition: "all 0.32s cubic-bezier(0.34, 1.56, 0.64, 1)",
+          transform: vs === "listening" ? "scale(1.22)" : "scale(1)",
+          zIndex: 2,
+        }}
+      >
+        {vs === "thinking" ? (
+          <div style={{
+            width: 28, height: 28,
+            border: "3px solid rgba(255,255,255,0.35)",
+            borderTopColor: "#fff",
+            borderRadius: "50%",
+            animation: "spin-btn 0.78s linear infinite",
+          }} />
+        ) : vs === "speaking" ? (
+          <Square style={{ width: 27, height: 27, fill: "#fff", color: "#fff" }} />
+        ) : (
+          <Mic style={{ width: 32, height: 32, color: "#fff" }} />
+        )}
+      </button>
+
+      {/* Button hint */}
+      <p style={{
+        marginTop: 13,
+        fontSize: 12,
+        color: "rgba(255,255,255,0.38)",
+        letterSpacing: "0.04em",
+      }}>
+        {btnLabel}
+      </p>
+
+      {/* Unsupported warning */}
+      {!supported && (
+        <div style={{
+          position: "absolute",
+          bottom: 18,
+          left: "50%",
+          transform: "translateX(-50%)",
+          fontSize: 12,
+          color: "#f87171",
+          background: "rgba(239,68,68,0.1)",
+          border: "1px solid rgba(239,68,68,0.3)",
+          padding: "6px 16px",
+          borderRadius: 8,
+          whiteSpace: "nowrap",
+        }}>
+          {"\u6d4f\u89c8\u5668\u4e0d\u652f\u6301\u8bed\u97f3\u8bc6\u522b API"}
+        </div>
+      )}
     </div>
   );
 }

@@ -27,9 +27,26 @@ function AuthLayout() {
     });
   }, []);
 
-  if (checking) return null; // 或者 loading spinner
+  if (checking) return null;
   if (!authed) return <Navigate to="/login" replace />;
   return <Layout />;
+}
+
+/** 管理员守卫：非管理员跳转首页 */
+function AdminGuard({ children }: { children: React.ReactNode }) {
+  const [checking, setChecking] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    getCurrentUser().then((u) => {
+      setIsAdmin(u?.role === "admin");
+      setChecking(false);
+    });
+  }, []);
+
+  if (checking) return null;
+  if (!isAdmin) return <Navigate to="/" replace />;
+  return <>{children}</>;
 }
 
 export const router = createBrowserRouter([
@@ -48,7 +65,7 @@ export const router = createBrowserRouter([
       { path: "ai", Component: AIAssistant },
       { path: "decision", Component: SmartDecision },
       { path: "users", Component: UserManagement },
-      { path: "logs", Component: LoginLogs },
+      { path: "logs", element: <AdminGuard><LoginLogs /></AdminGuard> },
     ],
   },
 ]);

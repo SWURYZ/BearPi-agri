@@ -92,10 +92,10 @@ public class AuthController {
         return ResponseEntity.noContent().build();
     }
 
-    @Operation(summary = "登录日志（所有登录用户可查看）")
+    @Operation(summary = "登录日志（仅管理员可查看）")
     @GetMapping("/logs")
     public ResponseEntity<List<LoginLog>> getLogs(@RequestHeader("Authorization") String auth) {
-        requireLogin(auth);
+        requireAdmin(auth);
         return ResponseEntity.ok(userService.getLoginLogs());
     }
 
