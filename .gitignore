@@ -9,6 +9,9 @@ hs_err_pid*.log
 replay_pid*.log
 backend/face-service.log
 
+# 压缩包
+*.rar
+
 # 大模型文件 (超过 GitHub 100MB 限制)
 *.onnx
 *.pt
@@ -18,6 +21,12 @@ backend/models/
 !backend/models/gesture_model/
 !backend/models/gesture_model/gesture_model.onnx
 !backend/models/gesture_model/labels.json
+!backend/models/gesture_model.tflite
+!backend/models/labels.json
+# 活体检测模型（1.3MB）
+!backend/models/liveness/
+!backend/models/liveness/IIC_Fl.onnx
+!backend/models/liveness/configuration.json
 # 害虫识别 ONNX 模型（6.5MB）
 !backend/pest-recognition-service/models/
 !backend/pest-recognition-service/models/best.onnx
