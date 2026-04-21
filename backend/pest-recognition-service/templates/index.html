@@ -12,10 +12,6 @@
       <h1>🌾 害虫识别</h1>
       <p class="sub">拍照或上传近拍图片，识别完成后请返回电脑·总览大屏查看<strong>精灵芽芽的防治建议</strong>。</p>
 
-      <div class="actions-row">
-        <a class="ghost-btn" href="{{ url_for('realtime_page') }}">打开摄像头实时识别（YOLOv11）</a>
-      </div>
-
       <form method="post" enctype="multipart/form-data" class="upload-form">
         <input type="file" name="image" accept="image/*" capture="environment" required>
         <button type="submit">开始识别</button>
