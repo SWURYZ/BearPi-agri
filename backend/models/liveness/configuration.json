@@ -1,0 +1,7 @@
+{
+	"framework": "pytorch",
+	"task": "face-liveness",
+	"pipeline": {
+		"type": "manual-face-liveness-flir"
+	}
+}
