@@ -29,7 +29,7 @@ const MODEL_URL =
 
 // ── Debounce config ─────────────────────────────────────────────────────────
 /** Ms thumbs_up / thumbs_down must be held (deliberate mode-switch) */
-const ACTIVATION_HOLD_MS = 1500;
+const ACTIVATION_HOLD_MS = 1000;
 /** Ms action gestures (fist, ok, numbers) must be held after Yaya is active */
 const ACTION_HOLD_MS = 600;
 /** Min ms between two emissions of the same gesture */
@@ -70,7 +70,7 @@ async function ensureInit(): Promise<void> {
 // ── Landmark-based gesture classifier ───────────────────────────────────────
 function fingerUp(lm: NormalizedLandmark[], tip: number, pip: number): boolean {
   // Finger is "up" when tip is meaningfully above pip (lower Y = higher screen position)
-  return lm[tip].y < lm[pip].y - 0.025;
+  return lm[tip].y < lm[pip].y - 0.04;
 }
 
 /**
@@ -108,33 +108,43 @@ function classifyFromLandmarks(
     ? thumbTip.x < thumbMcp.x - 0.045
     : thumbTip.x > thumbMcp.x + 0.045;
 
-  // ── Fist territory (all 4 fingers curled) ────────────────────────────────
+  // lm[9] = 中指掌指关节，是手心中心的稳定参考点
+  const palmCenter = lm[9];
+  const thumbClearlyUp   = thumbTip.y < palmCenter.y - 0.08;
+  const thumbClearlyDown = thumbTip.y > palmCenter.y + 0.08;
+
+  // ── Thumbs up / down / fist：4 根手指全弯时优先判断 ─────────────────────
+  // 提前到数字手势之前，避免无名指/小指略松时被误判为数字
+  // fingerUp 阈值已提高到 0.04，稍微松开的手指也会被视为弯曲
   if (!idx && !mid && !rng && !pky) {
-    // lm[9] = 中指掌指关节，始终位于拳头关节行中心，
-    // 随手型一起移动，拇指相对它的高低不受手型倒置影响
-    const palmCenter = lm[9];
-    const thumbUp   = thumbTip.y < palmCenter.y - 0.10; // 拇指尖远高于关节行
-    const thumbDown = thumbTip.y > palmCenter.y + 0.10; // 拇指尖远低于关节行
-    if (thumbUp)   return "thumbs_up";
-    if (thumbDown) return "thumbs_down";
+    if (thumbClearlyUp)   return "thumbs_up";
+    if (thumbClearlyDown) return "thumbs_down";
     return "fist";
   }
+
+  // ── 宽松 thumbs_down 补救：手翻转时无名指/小指坐标可能偏移被误判为伸直 ──
+  // 只需食指+中指弯曲+拇指明显朝下即可，不存在数字手势同时满足这三个条件
+  if (!idx && !mid && thumbClearlyDown) return "thumbs_down";
 
   // ── OK sign: thumb tip meets index tip, other 3 fingers up ───────────────
   if (mid && rng && pky) {
     const d = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-    if (d < 0.09) return "ok";
+    if (d < 0.13) return "ok";
   }
 
   // ── Number signs ─────────────────────────────────────────────────────────
+  // 计算拇指尖与食指尖距离，用于排除 OK 手势误判
+  const thumbIndexDist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
+  const notOkLike = thumbIndexDist > 0.10; // 距离大才算真正的数字手势
+
   // 1 — index only, no thumb
   if (!thumbExt && idx && !mid && !rng && !pky) return "one";
   // 2 — index + middle, no thumb
   if (!thumbExt && idx && mid && !rng && !pky) return "two";
   // 3 — index + middle + ring, no thumb
   if (!thumbExt && idx && mid && rng && !pky) return "three";
-  // 4 — four fingers up, no thumb
-  if (!thumbExt && idx && mid && rng && pky) return "four";
+  // 4 — four fingers up, no thumb；排除拇指靠近食指（OK 手势食指略伸）
+  if (!thumbExt && idx && mid && rng && pky && notOkLike) return "four";
   // 5 — all five
   if (thumbExt && idx && mid && rng && pky) return "five";
   // 6 — thumb + pinky (phone ☎)

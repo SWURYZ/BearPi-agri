@@ -620,6 +620,8 @@ export function YayaFloatingAssistant() {
   const restartTimerRef = useRef<number | null>(null);
   const silenceTimerRef = useRef<number | null>(null);
   const pendingPickRef = useRef<{ text: string; confidence: number }>({ text: "", confidence: 0 });
+  const heardTextRef = useRef(""); // 镜像 heardText state，供手势 callback 读取最新值
+  heardTextRef.current = heardText; // 每次渲染同步，保证 gesture callback 读到最新值
   const lastResultIndexRef = useRef<number>(-1);
   const deviceIdRef = useRef(DEFAULT_DEVICE_ID);
   const dragRef = useRef<{
@@ -1018,7 +1020,10 @@ export function YayaFloatingAssistant() {
           speakText(reply);
           return;
         }
-        void handleContinuousTranscript(text);
+        void handleContinuousTranscript(text).then(() => {
+          // 每次自动发送后停止监听，用户可再用握拳手势继续发指令
+          stopAlwaysListening();
+        });
       };
 
       if (isFinal) {
@@ -1113,8 +1118,10 @@ export function YayaFloatingAssistant() {
         setYayaGestureActive(true);
         setOpen(true);
         triggerGestureAnim("summoning", 1100);
-        setGestureFeedback({ icon: "👍", text: "芽芽来啦！", color: "#4ade80" });
-        gestureSpeak("嗨～我是芽芽，有什么需要帮你的吗？");
+        setGestureFeedback({ icon: "👍", text: "芽芽来啦！说话就行", color: "#4ade80" });
+        gestureSpeak("嗨～我是芽芽，请说话");
+        // 立即开启监听，状态栏同步更新；ignoreInputUntilRef 已锁住播报期间的语音输入
+        if (speechSupported) startAlwaysListening();
         break;
 
       case "thumbs_down":
@@ -1128,19 +1135,33 @@ export function YayaFloatingAssistant() {
         break;
 
       case "fist":
-        if (shouldListenRef.current) return; // 已在监听，忽略
+        if (shouldListenRef.current) return; // 已在监听，忽略重复开启
         triggerGestureAnim("mic_opening", 700);
-        setGestureFeedback({ icon: "✊", text: "我在听，请说话", color: "#ef4444" });
-        gestureSpeak("麦克风已打开，请说话");
+        setGestureFeedback({ icon: "✊", text: "继续听，请说话", color: "#ef4444" });
+        gestureSpeak("继续听，请说话");
         window.setTimeout(() => { if (speechSupported) startAlwaysListening(); }, 1200);
         break;
 
       case "ok":
-        if (!shouldListenRef.current) return; // 未在监听，忽略
         triggerGestureAnim("confirming", 750);
-        setGestureFeedback({ icon: "👌", text: "已停止监听", color: "#22c55e" });
-        gestureSpeak("好的，已收到，停止监听");
-        stopAlwaysListening();
+        if (input.trim()) {
+          // 有文字输入：发送文字框内容，停止监听
+          setGestureFeedback({ icon: "👌", text: "发送中…", color: "#22c55e" });
+          gestureSpeak("好的，已发送");
+          stopAlwaysListening();
+          void executeUnified(input).then(() => setInput(""));
+        } else if (heardTextRef.current.trim()) {
+          // 有语音识别内容：发送，停止监听
+          const voiceText = heardTextRef.current.trim();
+          setHeardText("");
+          pendingPickRef.current = { text: "", confidence: 0 };
+          stopAlwaysListening();
+          setGestureFeedback({ icon: "👌", text: "发送语音指令…", color: "#22c55e" });
+          gestureSpeak("好的，已发送语音指令");
+          void executeUnified(voiceText).then(() => setOpen(true));
+        } else {
+          setGestureFeedback({ icon: "👌", text: "OK", color: "#22c55e" });
+        }
         break;
 
       default: {
@@ -1161,7 +1182,7 @@ export function YayaFloatingAssistant() {
     }
   // 只依赖真正稳定的引用，不包含 state——state 通过 ref 读取
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [triggerGestureAnim, gestureSpeak, stopAlwaysListening, startAlwaysListening, speechSupported, navigate]);
+  }, [triggerGestureAnim, gestureSpeak, stopAlwaysListening, startAlwaysListening, speechSupported, navigate, input, executeUnified, setInput, setHeardText]);
 
   // 每次渲染后更新 ref，不重启识别引擎
   gestureHandlerRef.current = handleGesture;
