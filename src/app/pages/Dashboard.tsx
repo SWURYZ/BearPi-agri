@@ -393,10 +393,10 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Bottom Row: Trend Chart + Alert List */}
+      {/* Bottom Row: Trend Chart + Alert List + Pest Recognition (NFC) */}
       <div className="grid grid-cols-3 gap-4">
         {/* Trend Chart */}
-        <div className="col-span-2 bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
+        <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="text-sm font-semibold text-gray-800">今日温湿度趋势（全场均值）</h3>
@@ -466,10 +466,10 @@ export function Dashboard() {
             ))}
           </div>
         </div>
-      </div>
 
-      {/* Pest Recognition: 手机扫码识别 + 精灵芽芽自动给出防治方案 */}
-      <PestRecognitionCard />
+        {/* Pest Recognition: NFC 触碰识别 + 精灵芽芽自动给出防治方案 */}
+        <PestRecognitionCard />
+      </div>
     </div>
   );
 }
