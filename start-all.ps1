@@ -19,7 +19,7 @@ $services = @(
     @{ Name="composite-condition-service";    Port=8088; Dir="composite-condition-service" }
     @{ Name="smart-decision-service";         Port=8089; Dir="smart-decision-service" }
     @{ Name="face-recognition-service";       Port=8090; Dir="face-recognition-service" }
-    @{ Name="threshold-alert-audit-service";  Port=8091; Dir="threshold-alert-audit-service" }
+    @{ Name="threshold-alert-service";         Port=8091; Dir="threshold-alert-service" }
 )
 
 Write-Host "========================================" -ForegroundColor Cyan
@@ -71,5 +71,5 @@ Write-Host "    historical-analysis-service:  8087" -ForegroundColor White
 Write-Host "    composite-condition-service:  8088" -ForegroundColor White
 Write-Host "    smart-decision-service:       8089" -ForegroundColor White
 Write-Host "    face-recognition-service:     8090" -ForegroundColor White
-Write-Host "    threshold-alert-audit-service:8091" -ForegroundColor White
+Write-Host "    threshold-alert-service:      8091" -ForegroundColor White
 Write-Host "========================================" -ForegroundColor Cyan
