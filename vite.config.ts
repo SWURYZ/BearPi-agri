@@ -23,6 +23,7 @@ export default defineConfig(({ mode }) => {
   const faceProxyTarget = env.VITE_FACE_PROXY_TARGET || 'http://localhost:8090'
   const historicalProxyTarget = env.VITE_HISTORICAL_PROXY_TARGET || 'http://localhost:8087'
   const smartDecisionProxyTarget = env.VITE_SMART_DECISION_PROXY_TARGET || 'http://localhost:8089'
+  const pestRecognitionProxyTarget = env.VITE_PEST_RECOGNITION_PROXY_TARGET || 'http://localhost:5000'
 
   return {
     plugins: [
@@ -49,6 +50,11 @@ export default defineConfig(({ mode }) => {
           '/api/v1/smart-decision': {
             target: smartDecisionProxyTarget,
             changeOrigin: true,
+          },
+          '/api/insect': {
+            target: pestRecognitionProxyTarget,
+            changeOrigin: true,
+            rewrite: (p) => p.replace(/^\/api\/insect/, '/api'),
           },
           '/api/face': {
             target: faceProxyTarget,
