@@ -14,6 +14,10 @@ backend/face-service.log
 *.onnx
 *.pt
 backend/models/
+!backend/models/
+!backend/models/gesture_model/
+!backend/models/gesture_model/gesture_model.onnx
+!backend/models/gesture_model/labels.json
 !backend/models/gesture_model.tflite
 !backend/models/labels.json
 人脸检测模型/
