@@ -8,19 +8,17 @@ backend/**/replay_pid*.log
 hs_err_pid*.log
 replay_pid*.log
 backend/face-service.log
-*.rar
 
 # 大模型文件 (超过 GitHub 100MB 限制)
 *.onnx
 *.pt
 backend/models/
+# 例外：手势识别小模型（<300KB）需要纳入版本管理
 !backend/models/
 !backend/models/gesture_model/
 !backend/models/gesture_model/gesture_model.onnx
 !backend/models/gesture_model/labels.json
-!backend/models/gesture_model.tflite
-!backend/models/labels.json
-# 害虫识别 ONNX 模型（6.5MB，远小于 GitHub 100MB 限制，需要纳入版本管理）
+# 害虫识别 ONNX 模型（6.5MB）
 !backend/pest-recognition-service/models/
 !backend/pest-recognition-service/models/best.onnx
 !backend/pest-recognition-service/models/names.json
@@ -28,10 +26,6 @@ backend/models/
 !public/models/gesture_model/
 !public/models/gesture_model/gesture_model.onnx
 !public/models/gesture_model/labels.json
-人脸检测模型/
-人脸识别模型/
-活体检测模型/
-smartai/
 
 # Pest recognition runtime artifacts
 backend/pest-recognition-service/latest.json
