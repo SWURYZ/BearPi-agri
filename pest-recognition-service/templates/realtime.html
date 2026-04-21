@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>摄像头实时识别 (YOLOv11)</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="page">
+    <section class="card">
+      <h1>摄像头实时识别（YOLOv11 + best.pt）</h1>
+      <p class="sub">YOLOv11 先定位目标，再用 best.pt 做昆虫分类。</p>
+
+      <div class="actions-row">
+        <a class="ghost-btn" href="{{ url_for('index') }}">返回上传识别</a>
+      </div>
+
+      <div class="cam-wrap">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+      </div>
+
+      <div class="camera-controls">
+        <button id="startBtn" type="button">开启摄像头</button>
+        <button id="stopBtn" type="button" class="ghost-btn" disabled>停止识别</button>
+      </div>
+
+      <div class="result-panel">
+        <p><strong>实时摘要：</strong><span id="top1Name">-</span></p>
+        <p><strong>置信度：</strong><span id="top1Conf">-</span></p>
+        <p class="meta"><strong>分类模型：</strong>{{ model_path }}</p>
+        <p class="meta"><strong>检测模型：</strong>{{ detector_model_path }}</p>
+      </div>
+
+      <h3>目标列表</h3>
+      <div id="detectionList" class="detection-list"></div>
+
+      <h3>Top-5 候选</h3>
+      <div id="top5Bars" class="top5-bars"></div>
+      <div id="status" class="hint">等待开启摄像头...</div>
+    </section>
+  </main>
+
+  <script>
+    const video = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const ctx = overlay.getContext('2d');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const top1Name = document.getElementById('top1Name');
+    const top1Conf = document.getElementById('top1Conf');
+    const top5Bars = document.getElementById('top5Bars');
+    const statusEl = document.getElementById('status');
+
+    let stream = null;
+    let timer = null;
+    let busy = false;
+
+    function drawDetections(detections) {
+      if (!video.videoWidth || !video.videoHeight) return;
+      overlay.width = video.clientWidth;
+      overlay.height = video.clientHeight;
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+      (detections || []).forEach((d) => {
+        const box = d.box || { x: 0.08, y: 0.08, w: 0.84, h: 0.84 };
+        const x = Math.max(0, Math.min(overlay.width - 2, (box.x || 0.08) * overlay.width));
+        const y = Math.max(0, Math.min(overlay.height - 2, (box.y || 0.08) * overlay.height));
+        const w = Math.max(2, Math.min(overlay.width - x, (box.w || 0.84) * overlay.width));
+        const h = Math.max(2, Math.min(overlay.height - y, (box.h || 0.84) * overlay.height));
+
+        const conf = Number(d.conf || 0);
+        const label = `${d.display_label || '-'} ${(conf * 100).toFixed(1)}%`;
+
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#ef4444';
+        ctx.strokeRect(x, y, w, h);
+
+        ctx.font = '16px Segoe UI';
+        const tw = ctx.measureText(label).width + 14;
+        const th = 26;
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(x, Math.max(0, y - th), tw, th);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(label, x + 7, Math.max(17, y - 8));
+      });
+    }
+
+    function renderDetections(detections) {
+      const host = document.getElementById('detectionList');
+      host.innerHTML = '';
+      (detections || []).forEach((d, idx) => {
+        const item = document.createElement('div');
+        item.className = 'detection-item abnormal';
+        const conf = (Number(d.conf || 0) * 100).toFixed(2);
+        const name = d.name_zh || d.name_en || '-';
+        item.innerHTML = `<strong>${idx + 1}. ${name}</strong><span>${conf}%</span>`;
+        host.appendChild(item);
+      });
+      if (!host.children.length) {
+        host.innerHTML = '<div class="detection-item">未检测到目标</div>';
+      }
+    }
+
+    function renderTop5(rows) {
+      top5Bars.innerHTML = '';
+      rows.forEach((row, idx) => {
+        const percent = (Number(row.conf || 0) * 100).toFixed(2);
+        const zh = row.class_zh || row.class_en || '-';
+        const en = row.class_en || '-';
+        const wrapper = document.createElement('div');
+        wrapper.className = 'bar-row';
+        wrapper.innerHTML = `
+          <div class="bar-label">${idx + 1}. ${zh} (${en})</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${percent}%"></div></div>
+          <div class="bar-value">${percent}%</div>
+        `;
+        top5Bars.appendChild(wrapper);
+      });
+    }
+
+    async function predictOneFrame() {
+      if (busy || !stream) return;
+      busy = true;
+      try {
+        const c = document.createElement('canvas');
+        c.width = 320;
+        c.height = 320;
+        const cctx = c.getContext('2d');
+        cctx.drawImage(video, 0, 0, c.width, c.height);
+        const image = c.toDataURL('image/jpeg', 0.8);
+
+        const res = await fetch('/api/realtime_predict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image })
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          statusEl.textContent = data.error || '识别失败';
+          return;
+        }
+
+        top1Name.textContent = data.top1_name || '-';
+        top1Conf.textContent = `${(Number(data.top1_conf || 0) * 100).toFixed(2)}%`;
+        renderTop5(data.top5_rows || []);
+        renderDetections(data.detections || []);
+        drawDetections(data.detections || []);
+        statusEl.textContent = '实时识别中...';
+      } catch (err) {
+        statusEl.textContent = '请求失败，请检查服务状态';
+      } finally {
+        busy = false;
+      }
+    }
+
+    async function startCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        video.srcObject = stream;
+        await video.play();
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        statusEl.textContent = '摄像头已开启，开始识别...';
+        timer = setInterval(predictOneFrame, 700);
+      } catch (e) {
+        statusEl.textContent = '无法开启摄像头，请允许浏览器摄像头权限';
+      }
+    }
+
+    function stopCamera() {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+        stream = null;
+      }
+      video.srcObject = null;
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      statusEl.textContent = '已停止识别';
+    }
+
+    startBtn.addEventListener('click', startCamera);
+    stopBtn.addEventListener('click', stopCamera);
+    window.addEventListener('beforeunload', stopCamera);
+  </script>
+</body>
+</html>

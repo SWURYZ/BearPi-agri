@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BearPi-agri · 害虫识别</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="page">
+    <section class="card">
+      <h1>🌾 害虫识别</h1>
+      <p class="sub">拍照或上传近拍图片，识别完成后请返回电脑·总览大屏查看<strong>精灵芽芽的防治建议</strong>。</p>
+
+      <div class="actions-row">
+        <a class="ghost-btn" href="{{ url_for('realtime_page') }}">打开摄像头实时识别（YOLOv11）</a>
+      </div>
+
+      <form method="post" enctype="multipart/form-data" class="upload-form">
+        <input type="file" name="image" accept="image/*" capture="environment" required>
+        <button type="submit">开始识别</button>
+      </form>
+
+      {% if error %}
+      <div class="error">{{ error }}</div>
+      {% endif %}
+
+      {% if has_result %}
+      <div class="notice" style="margin:16px 0;padding:12px 14px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;color:#047857;font-size:14px">
+        ✅ 识别完成，结果已同步到总览大屏，请查看<strong>精灵芽芽</strong>给出的防治方案。
+      </div>
+      <div class="result">
+        <div class="preview">
+          <img src="{{ image_path }}" alt="uploaded image">
+        </div>
+        <div class="metrics">
+          <h2>预测结果</h2>
+          <p><strong>Top-1 英文：</strong>{{ top1_name_en }}</p>
+          <p><strong>Top-1 中文：</strong>{{ top1_name_zh }}</p>
+          <p><strong>置信度：</strong>{{ '%.2f' % (top1_conf * 100) }}%</p>
+          <p class="meta"><strong>模型：</strong>{{ model_path }}</p>
+          <p class="meta"><strong>检测模型：</strong>{{ detector_model_path }}</p>
+
+          <h3>Top-5 置信度可视化</h3>
+          <div class="top5-bars">
+            {% for row in top5_rows %}
+            <div class="bar-row">
+              <div class="bar-label">{{ loop.index }}. {{ row.class_zh }} ({{ row.class_en }})</div>
+              <div class="bar-track">
+                <div class="bar-fill" data-percent="{{ '%.2f' % row.percent }}"></div>
+              </div>
+              <div class="bar-value">{{ '%.2f' % row.percent }}%</div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </section>
+  </main>
+
+  <script>
+    document.querySelectorAll('.bar-fill[data-percent]').forEach((el) => {
+      const p = Number(el.getAttribute('data-percent') || '0');
+      const safe = Math.max(0, Math.min(100, p));
+      el.style.width = safe.toFixed(2) + '%';
+    });
+  </script>
+</body>
+</html>

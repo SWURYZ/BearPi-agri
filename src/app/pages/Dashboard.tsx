@@ -16,6 +16,7 @@ import {
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { SimpleModal } from "../components/ui/SimpleModal";
 import { fetchRealtimeSnapshot } from "../services/realtime";
+import { PestRecognitionCard } from "../components/dashboard/PestRecognitionCard";
 
 const DASH_KEYFRAMES = `
 @keyframes dash-fade-up { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
@@ -466,6 +467,9 @@ export function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Pest Recognition: 手机扫码识别 + 精灵芽芽自动给出防治方案 */}
+      <PestRecognitionCard />
     </div>
   );
 }

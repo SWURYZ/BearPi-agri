@@ -56,6 +56,17 @@ Write-Host "启动前端 (Vite)..." -ForegroundColor Cyan
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$root'; npm run dev" -WindowStyle Normal
 Write-Host "[OK] 前端 => http://localhost:5173  (新窗口已打开)" -ForegroundColor Green
 
+# 启动害虫识别 (Flask + YOLO) 服务
+Write-Host ""
+Write-Host "启动害虫识别服务 (pest-recognition / Flask :5000)..." -ForegroundColor Cyan
+$pestDir = Join-Path $root "pest-recognition-service"
+if (Test-Path (Join-Path $pestDir "app.py")) {
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "Write-Host 'Starting pest-recognition on port 5000' -ForegroundColor Green; Set-Location '$pestDir'; python app.py" -WindowStyle Normal
+    Write-Host "[OK] pest-recognition => http://localhost:5000  (新窗口已打开)" -ForegroundColor Green
+} else {
+    Write-Host "[SKIP] pest-recognition-service 未找到，跳过" -ForegroundColor Yellow
+}
+
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  所有服务已在独立窗口中启动" -ForegroundColor Cyan
@@ -72,4 +83,5 @@ Write-Host "    composite-condition-service:  8088" -ForegroundColor White
 Write-Host "    smart-decision-service:       8089" -ForegroundColor White
 Write-Host "    face-recognition-service:     8090" -ForegroundColor White
 Write-Host "    threshold-alert-service:      8091" -ForegroundColor White
+Write-Host "    pest-recognition (Flask):     5000" -ForegroundColor White
 Write-Host "========================================" -ForegroundColor Cyan
