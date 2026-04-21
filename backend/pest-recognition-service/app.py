@@ -103,7 +103,10 @@ def to_farmer_cn_name(name: str, idx: int) -> str:
     zh = to_cn_name(name)
     if zh != name:
         return zh
-    return f"虫种{idx + 1:03d}"
+    # 兜底：把 PascalCase 学名拆成空格分隔，便于阅读
+    import re
+    pretty = re.sub(r"(?<!^)(?=[A-Z])", " ", name).strip()
+    return pretty or f"虫种{idx + 1:03d}"
 
 
 def allowed_file(filename: str) -> bool:

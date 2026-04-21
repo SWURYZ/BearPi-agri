@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>害虫智能识别 · 智慧农业</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ ASSET_VERSION }}" />
+  <link rel="stylesheet" href="/static/style.css?v=1776775890" />
 </head>
 <body>
   <!-- 顶部毛玻璃 Header -->
@@ -27,12 +27,12 @@
           <div class="brand-sub">AI · 一键诊断</div>
         </div>
       </div>
-      <a class="header-link" href="{{ url_for('index') }}">重新识别</a>
+      <a class="header-link" href="/">重新识别</a>
     </div>
   </header>
 
   <main class="app-main">
-    {% if not has_result %}
+    
     <!-- 上传引导 -->
     <section class="hero-card">
       <div class="hero-illu">
@@ -54,7 +54,7 @@
     </section>
 
     <!-- 上传面板 -->
-    <form id="uploadForm" class="upload-form" method="POST" enctype="multipart/form-data" action="{{ url_for('index') }}">
+    <form id="uploadForm" class="upload-form" method="POST" enctype="multipart/form-data" action="/">
       <!-- 隐藏的两个 file input -->
       <input type="file" name="image" id="cameraInput" accept="image/*" capture="environment" hidden />
       <input type="file" name="image" id="galleryInput" accept="image/*" hidden />
@@ -107,14 +107,7 @@
         </svg>
       </button>
 
-      {% if error %}
-      <div class="alert-error">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
-        </svg>
-        <span>{{ error }}</span>
-      </div>
-      {% endif %}
+      
 
       <!-- 提示卡片 -->
       <div class="tips-card">
@@ -127,58 +120,7 @@
       </div>
     </form>
 
-    {% else %}
-    <!-- 结果展示 -->
-    <section class="result-wrap">
-      <div class="result-img-card">
-        <img src="{{ image_path }}" alt="识别图像" class="result-img" />
-        <div class="result-img-mask"></div>
-        <div class="result-badge">
-          <span class="badge-dot"></span>
-          <span>已上传至大屏</span>
-        </div>
-      </div>
-
-      <div class="result-card">
-        <div class="result-header">
-          <div class="result-label">识别结果</div>
-          <div class="result-conf-pill">置信度 {{ "%.1f"|format(top1_conf * 100) }}%</div>
-        </div>
-        <div class="result-name-zh">{{ top1_name_zh or top1_name_en }}</div>
-        <div class="result-name-en">{{ top1_name_en }}</div>
-
-        <!-- 置信度横条 -->
-        <div class="conf-bar-wrap">
-          <div class="conf-bar-fill" style="width: {{ (top1_conf * 100)|round(1) }}%"></div>
-        </div>
-      </div>
-
-      <div class="topk-card">
-        <div class="topk-title">候选 Top 5</div>
-        {% for row in top5_rows %}
-        <div class="topk-row">
-          <div class="topk-rank">{{ loop.index }}</div>
-          <div class="topk-info">
-            <div class="topk-name">{{ row.class_zh or row.class_en }}</div>
-            <div class="topk-en">{{ row.class_en }}</div>
-          </div>
-          <div class="topk-bar-wrap">
-            <div class="topk-bar-fill" style="width: {{ (row.conf * 100)|round(1) }}%"></div>
-          </div>
-          <div class="topk-percent">{{ "%.1f"|format(row.conf * 100) }}%</div>
-        </div>
-        {% endfor %}
-      </div>
-
-      <a href="{{ url_for('index') }}" class="redo-btn">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 12a9 9 0 1 0 3-6.7L3 8"/>
-          <path d="M3 3v5h5"/>
-        </svg>
-        <span>再识别一张</span>
-      </a>
-    </section>
-    {% endif %}
+    
   </main>
 
   <!-- 全屏 loading 遮罩 -->
