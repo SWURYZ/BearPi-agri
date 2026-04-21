@@ -59,7 +59,7 @@ Write-Host "[OK] 前端 => http://localhost:5173  (新窗口已打开)" -Foregro
 # 启动害虫识别 (Flask + YOLO) 服务
 Write-Host ""
 Write-Host "启动害虫识别服务 (pest-recognition / Flask :5000)..." -ForegroundColor Cyan
-$pestDir = Join-Path $root "pest-recognition-service"
+$pestDir = Join-Path $root "backend\pest-recognition-service"
 if (Test-Path (Join-Path $pestDir "app.py")) {
     Start-Process powershell -ArgumentList "-NoExit", "-Command", "Write-Host 'Starting pest-recognition on port 5000' -ForegroundColor Green; Set-Location '$pestDir'; python app.py" -WindowStyle Normal
     Write-Host "[OK] pest-recognition => http://localhost:5000  (新窗口已打开)" -ForegroundColor Green

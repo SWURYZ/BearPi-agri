@@ -22,7 +22,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # Latest recognition result snapshot (consumed by BearPi-agri Dashboard)
 LATEST_FILE = ROOT / "latest.json"
 
-# Put your weight file at pest-recognition-service/models/best.pt
+# Put your weight file at backend/pest-recognition-service/models/best.pt
 DEFAULT_MODEL_PATH = ROOT / "models" / "best.pt"
 MODEL_PATH = Path(os.getenv("MODEL_PATH", str(DEFAULT_MODEL_PATH)))
 
