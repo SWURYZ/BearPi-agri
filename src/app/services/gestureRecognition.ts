@@ -1,13 +1,14 @@
 /**
  * Gesture Recognition Service
- * Uses MediaPipe HandLandmarker for hand detection + rule-based classifier
- * matching the 13-class custom gesture model labels.
- *
- * Labels: one, two, three, four, five, six, seven, eight,
- *         fist, ok, thumbs_up, thumbs_down, none
+ * Model-driven pipeline:
+ * 1) MediaPipe detects 21 landmarks
+ * 2) Convert to 72-dim engineered features (same idea as training scripts)
+ * 3) ONNX model infers gesture logits/probabilities
+ * 4) Debounce + cooldown dispatches stable gesture events
  */
 import { HandLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 import type { NormalizedLandmark } from "@mediapipe/tasks-vision";
+import * as ort from "onnxruntime-web";
 
 export type GestureLabel =
   | "one" | "two" | "three" | "four" | "five"
@@ -24,8 +25,13 @@ type GestureCallback = (event: GestureEvent) => void;
 // ── MediaPipe config ────────────────────────────────────────────────────────
 // WASM 文件由 public/mediapipe/ 本地提供，避免 CDN 网络依赖
 const WASM_BASE = "/mediapipe";
-const MODEL_URL =
+const HAND_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+const GESTURE_MODEL_URL = "/models/gesture_model/gesture_model.onnx";
+const GESTURE_LABELS_URL = "/models/gesture_model/labels.json";
+const ONNX_WASM_CDN = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
+
+const NUM_FEATURES = 72;
 
 // ── Debounce config ─────────────────────────────────────────────────────────
 /** Ms thumbs_up / thumbs_down must be held (deliberate mode-switch) */
@@ -39,10 +45,17 @@ const ANY_COOLDOWN_MS = 300;
 
 // ── Module-level state (singleton) ──────────────────────────────────────────
 let handLandmarker: HandLandmarker | null = null;
+let gestureSession: ort.InferenceSession | null = null;
+let gestureInputName = "";
+let gestureLabels: string[] = [];
 let rafId: number | null = null;
 let videoEl: HTMLVideoElement | null = null;
 let cameraStream: MediaStream | null = null;
 let currentCallback: GestureCallback | null = null;
+
+let latestModelGesture: GestureLabel = "none";
+let inferenceInFlight = false;
+let inferenceSeq = 0;
 
 let pendingGesture: GestureLabel = "none";
 let pendingStartTime = 0; // 当前手势首次出现的时间戳
@@ -52,109 +65,145 @@ let lastAnyTime = 0;
 
 // ── Initialization ───────────────────────────────────────────────────────────
 async function ensureInit(): Promise<void> {
-  if (handLandmarker) return;
-  const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
-  handLandmarker = await HandLandmarker.createFromOptions(vision, {
-    baseOptions: {
-      modelAssetPath: MODEL_URL,
-      delegate: "GPU",
-    },
-    runningMode: "VIDEO",
-    numHands: 1,
-    minHandDetectionConfidence: 0.5,
-    minHandPresenceConfidence: 0.5,
-    minTrackingConfidence: 0.5,
-  });
-}
-
-// ── Landmark-based gesture classifier ───────────────────────────────────────
-function fingerUp(lm: NormalizedLandmark[], tip: number, pip: number): boolean {
-  // Finger is "up" when tip is meaningfully above pip (lower Y = higher screen position)
-  return lm[tip].y < lm[pip].y - 0.04;
-}
-
-/**
- * Rule-based gesture classification from 21 MediaPipe hand landmarks.
- *
- * Chinese number signs:
- *   1  index only
- *   2  index + middle
- *   3  index + middle + ring
- *   4  index + middle + ring + pinky (no thumb)
- *   5  all five
- *   6  thumb + pinky (phone sign ☎)
- *   7  thumb + index + middle (pistol/gun)
- *   8  thumb + index only (L-shape)
- */
-function classifyFromLandmarks(
-  lm: NormalizedLandmark[],
-  handedness: string,
-): GestureLabel {
-  const isRight = handedness.toLowerCase().includes("right");
-
-  const wrist    = lm[0];
-  const thumbTip = lm[4];
-  const thumbMcp = lm[2];
-  const indexTip = lm[8];
-
-  // Finger extension
-  const idx = fingerUp(lm, 8,  6);   // index
-  const mid = fingerUp(lm, 12, 10);  // middle
-  const rng = fingerUp(lm, 16, 14);  // ring
-  const pky = fingerUp(lm, 20, 18);  // pinky
-
-  // Thumb extended horizontally away from palm
-  const thumbExt = isRight
-    ? thumbTip.x < thumbMcp.x - 0.045
-    : thumbTip.x > thumbMcp.x + 0.045;
-
-  // lm[9] = 中指掌指关节，是手心中心的稳定参考点
-  const palmCenter = lm[9];
-  const thumbClearlyUp   = thumbTip.y < palmCenter.y - 0.08;
-  const thumbClearlyDown = thumbTip.y > palmCenter.y + 0.08;
-
-  // ── Thumbs up / down / fist：4 根手指全弯时优先判断 ─────────────────────
-  // 提前到数字手势之前，避免无名指/小指略松时被误判为数字
-  // fingerUp 阈值已提高到 0.04，稍微松开的手指也会被视为弯曲
-  if (!idx && !mid && !rng && !pky) {
-    if (thumbClearlyUp)   return "thumbs_up";
-    if (thumbClearlyDown) return "thumbs_down";
-    return "fist";
+  if (!handLandmarker) {
+    const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
+    handLandmarker = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: HAND_MODEL_URL,
+        delegate: "GPU",
+      },
+      runningMode: "VIDEO",
+      numHands: 1,
+      minHandDetectionConfidence: 0.5,
+      minHandPresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    });
   }
 
-  // ── 宽松 thumbs_down 补救：手翻转时无名指/小指坐标可能偏移被误判为伸直 ──
-  // 只需食指+中指弯曲+拇指明显朝下即可，不存在数字手势同时满足这三个条件
-  if (!idx && !mid && thumbClearlyDown) return "thumbs_down";
+  if (!gestureSession) {
+    const labelsRes = await fetch(GESTURE_LABELS_URL);
+    if (!labelsRes.ok) {
+      throw new Error(`手势标签加载失败: ${labelsRes.status}`);
+    }
+    const labels = await labelsRes.json();
+    if (!Array.isArray(labels) || labels.length === 0) {
+      throw new Error("手势标签格式错误");
+    }
+    gestureLabels = labels.map((x) => String(x));
 
-  // ── OK sign: thumb tip meets index tip, other 3 fingers up ───────────────
-  if (mid && rng && pky) {
-    const d = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-    if (d < 0.13) return "ok";
+    ort.env.wasm.wasmPaths = ONNX_WASM_CDN;
+    ort.env.wasm.numThreads = 1;
+    gestureSession = await ort.InferenceSession.create(GESTURE_MODEL_URL, {
+      executionProviders: ["wasm"],
+      graphOptimizationLevel: "all",
+    });
+    gestureInputName = gestureSession.inputNames[0] ?? "";
+    if (!gestureInputName) {
+      throw new Error("手势模型输入节点缺失");
+    }
+  }
+}
+
+const VALID_GESTURES = new Set<GestureLabel>([
+  "one", "two", "three", "four", "five",
+  "six", "seven", "eight",
+  "fist", "ok", "thumbs_up", "thumbs_down", "none",
+]);
+
+function asGestureLabel(value: string): GestureLabel {
+  return VALID_GESTURES.has(value as GestureLabel) ? (value as GestureLabel) : "none";
+}
+
+function computeFeaturesFromLandmarks(lm: NormalizedLandmark[]): Float32Array {
+  const points: number[][] = lm.map((p) => [p.x, p.y, p.z]);
+  const wrist = points[0];
+
+  const rel = points.map((p) => [p[0] - wrist[0], p[1] - wrist[1], p[2] - wrist[2]]);
+  const handScale = Math.hypot(rel[9][0], rel[9][1], rel[9][2]) + 1e-6;
+  const norm = rel.map((p) => [p[0] / handScale, p[1] / handScale, p[2] / handScale]);
+
+  const out: number[] = [];
+  for (let i = 0; i < 21; i += 1) {
+    out.push(norm[i][0], norm[i][1], norm[i][2]);
   }
 
-  // ── Number signs ─────────────────────────────────────────────────────────
-  // 计算拇指尖与食指尖距离，用于排除 OK 手势误判
-  const thumbIndexDist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-  const notOkLike = thumbIndexDist > 0.10; // 距离大才算真正的数字手势
+  const fingertips = [4, 8, 12, 16, 20];
+  const mcps = [2, 5, 9, 13, 17];
+  for (let i = 0; i < fingertips.length; i += 1) {
+    const tip = norm[fingertips[i]];
+    const mcp = norm[mcps[i]];
+    const tipD = Math.hypot(tip[0], tip[1], tip[2]);
+    const mcpD = Math.hypot(mcp[0], mcp[1], mcp[2]) + 1e-6;
+    out.push(tipD / mcpD);
+  }
 
-  // 1 — index only, no thumb
-  if (!thumbExt && idx && !mid && !rng && !pky) return "one";
-  // 2 — index + middle, no thumb
-  if (!thumbExt && idx && mid && !rng && !pky) return "two";
-  // 3 — index + middle + ring, no thumb
-  if (!thumbExt && idx && mid && rng && !pky) return "three";
-  // 4 — four fingers up, no thumb；排除拇指靠近食指（OK 手势食指略伸）
-  if (!thumbExt && idx && mid && rng && pky && notOkLike) return "four";
-  // 5 — all five
-  if (thumbExt && idx && mid && rng && pky) return "five";
-  // 6 — thumb + pinky (phone ☎)
-  if (thumbExt && !idx && !mid && !rng && pky) return "six";
-  // 7 — thumb + index + middle (gun/pistol)
-  if (thumbExt && idx && mid && !rng && !pky) return "seven";
-  // 8 — thumb + index only (L-shape)
-  if (thumbExt && idx && !mid && !rng && !pky) return "eight";
+  const thumbTip = norm[4];
+  for (const idx of [8, 12, 16, 20]) {
+    const t = norm[idx];
+    out.push(Math.hypot(thumbTip[0] - t[0], thumbTip[1] - t[1], thumbTip[2] - t[2]));
+  }
 
-  return "none";
+  return new Float32Array(out.slice(0, NUM_FEATURES));
+}
+
+function normalizeScores(values: number[]): number[] {
+  if (values.length === 0) return values;
+  const sum = values.reduce((a, b) => a + b, 0);
+  if (sum > 0) {
+    return values.map((v) => v / sum);
+  }
+  const max = Math.max(...values);
+  const exps = values.map((v) => Math.exp(v - max));
+  const expSum = exps.reduce((a, b) => a + b, 0) || 1;
+  return exps.map((v) => v / expSum);
+}
+
+function extractScores(outputs: Record<string, ort.Tensor>): number[] | null {
+  const tensors = Object.values(outputs);
+  if (!tensors.length) return null;
+
+  for (const tensor of tensors) {
+    const lastDim = tensor.dims[tensor.dims.length - 1] ?? 0;
+    if ((tensor.dims.length === 2 || tensor.dims.length === 1) && lastDim === gestureLabels.length) {
+      return Array.from(tensor.data as ArrayLike<number>).slice(0, gestureLabels.length);
+    }
+  }
+
+  const biggest = tensors
+    .map((t) => ({ t, size: (t.data as ArrayLike<number>).length }))
+    .sort((a, b) => b.size - a.size)[0]?.t;
+
+  if (!biggest) return null;
+  const arr = Array.from(biggest.data as ArrayLike<number>);
+  if (arr.length >= gestureLabels.length) {
+    return arr.slice(0, gestureLabels.length);
+  }
+  return null;
+}
+
+async function classifyFromModel(lm: NormalizedLandmark[]): Promise<GestureLabel> {
+  if (!gestureSession || !gestureInputName || gestureLabels.length === 0) {
+    return "none";
+  }
+
+  try {
+    const features = computeFeaturesFromLandmarks(lm);
+    const inputTensor = new ort.Tensor("float32", features, [1, NUM_FEATURES]);
+    const outputs = await gestureSession.run({ [gestureInputName]: inputTensor });
+    const rawScores = extractScores(outputs);
+    if (!rawScores || rawScores.length !== gestureLabels.length) {
+      return "none";
+    }
+
+    const probs = normalizeScores(rawScores);
+    let bestIdx = 0;
+    for (let i = 1; i < probs.length; i += 1) {
+      if (probs[i] > probs[bestIdx]) bestIdx = i;
+    }
+    return asGestureLabel(gestureLabels[bestIdx] ?? "none");
+  } catch {
+    return "none";
+  }
 }
 
 // ── Detection loop ───────────────────────────────────────────────────────────
@@ -168,10 +217,26 @@ function processFrame(): void {
   const result = handLandmarker.detectForVideo(videoEl, now);
 
   let detected: GestureLabel = "none";
-  if (result.landmarks.length > 0 && result.handednesses.length > 0) {
-    const lm          = result.landmarks[0];
-    const handedness  = result.handednesses[0][0]?.categoryName ?? "Right";
-    detected = classifyFromLandmarks(lm, handedness);
+  if (result.landmarks.length > 0) {
+    const lm = result.landmarks[0];
+    detected = latestModelGesture;
+
+    if (!inferenceInFlight) {
+      inferenceInFlight = true;
+      const seq = ++inferenceSeq;
+      void classifyFromModel(lm)
+        .then((gesture) => {
+          if (seq === inferenceSeq) {
+            latestModelGesture = gesture;
+          }
+        })
+        .finally(() => {
+          inferenceInFlight = false;
+        });
+    }
+  } else {
+    latestModelGesture = "none";
+    inferenceSeq += 1;
   }
 
   // Debounce: gesture must be held continuously for the required duration before emitting
@@ -268,10 +333,11 @@ export function describeGestureError(err: unknown): string {
       return "摄像头被其他应用占用，请关闭后重试";
     }
   }
-  if (err instanceof TypeError && String(err).includes("wasm")) {
-    return "手势模型加载失败，请检查网络连接后重试";
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/onnx|wasm|InferenceSession|label/i.test(msg)) {
+    return "手势识别模型加载失败，请检查模型文件与网络后重试";
   }
-  return `手势识别启动失败：${err instanceof Error ? err.message : String(err)}`;
+  return `手势识别启动失败：${msg}`;
 }
 
 /** Stop gesture recognition and release all resources. */
@@ -293,4 +359,9 @@ export function stopGestureRecognition(): void {
   pendingGesture     = "none";
   pendingStartTime   = 0;
   lastEmittedGesture = "none";
+  lastEmittedTime    = 0;
+  lastAnyTime        = 0;
+  latestModelGesture = "none";
+  inferenceInFlight  = false;
+  inferenceSeq       = 0;
 }
