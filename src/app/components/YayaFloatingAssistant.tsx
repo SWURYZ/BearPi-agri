@@ -724,6 +724,23 @@ export function YayaFloatingAssistant() {
     endDrag();
   }, [endDrag]);
 
+  // ── 统一声音选择器：两处 TTS 共用，确保芽芽声音一致 ──────────────────────
+  const pickYayaVoice = useCallback((voices: SpeechSynthesisVoice[]) => {
+    const zh = voices.filter((v) => v.lang.startsWith("zh"));
+    // 优先级：
+    // 1. Microsoft 神经网络语音（Natural/Online）音质最好，接近真人
+    // 2. Xiaoxiao（小萱）/ Xiaoyi（小伊）女声
+    // 3. 非男声回退
+    // 4. 任意中文语音
+    return (
+      zh.find((v) => /natural|online/i.test(v.name) && /xiaoxiao|xiaoyi|xiaomeng|xiaochen/i.test(v.name)) ??
+      zh.find((v) => /natural|online/i.test(v.name) && !/yunxi|yunyang|yunfeng|yunhao/i.test(v.name)) ??
+      zh.find((v) => /xiaoxiao|xiaoyi/i.test(v.name)) ??
+      zh.find((v) => !/male|yunxi|yunyang|yunfeng|yunhao/i.test(v.name)) ??
+      zh[0]
+    );
+  }, []);
+
   const speakText = useCallback((text: string) => {
     const synth = window.speechSynthesis;
     if (!synth) {
@@ -735,20 +752,13 @@ export function YayaFloatingAssistant() {
     ignoreInputUntilRef.current = Date.now() + 1500;
     const spokenText = text.length > 180 ? `${text.slice(0, 176)}...` : text;
 
-    const pickVoice = (voices: SpeechSynthesisVoice[]) => {
-      const zh = voices.filter((v) => v.lang.startsWith("zh"));
-      return (
-        zh.find((v) => /xiaoyi|xiaoxiao|huihui|xiaoyan|female|google/i.test(v.name)) ||
-        zh.find((v) => !/male/i.test(v.name)) ||
-        zh[0]
-      );
-    };
+    const pickVoice = pickYayaVoice;
 
     const doSpeak = (voice?: SpeechSynthesisVoice) => {
       const utt = new SpeechSynthesisUtterance(spokenText);
       utt.lang = "zh-CN";
-      utt.rate = 1.14;
-      utt.pitch = 1.16;
+      utt.rate = 1.0;   // 自然语速，偏离 1.0 越远越机械
+      utt.pitch = 1.0;  // 不升调，Natural 语音本身已有情感
       utt.volume = 1;
       if (voice) utt.voice = voice;
       utt.onend = () => {
@@ -775,7 +785,7 @@ export function YayaFloatingAssistant() {
         if (!synth.speaking) doSpeak();
       }, 300);
     }
-  }, []);
+  }, [pickYayaVoice]);
 
   const executeUnified = useCallback(async (rawText: string) => {
     const text = normalizeSpeechText(stripOptionalWakeWord(rawText)).trim();
@@ -1081,19 +1091,15 @@ export function YayaFloatingAssistant() {
     if (!synth) return;
     synth.cancel();
     const utt = new SpeechSynthesisUtterance(text);
-    utt.lang = "zh-CN"; utt.rate = 1.1; utt.pitch = 1.15; utt.volume = 1;
+    utt.lang = "zh-CN"; utt.rate = 1.0; utt.pitch = 1.0; utt.volume = 1;
     // 播放前锁定麦克风：预估时长 = max(3s, 每字 150ms) + 缓冲
     ignoreInputUntilRef.current = Date.now() + Math.max(3000, text.length * 150);
     utt.onend  = () => { ignoreInputUntilRef.current = Date.now() + 1200; };
     utt.onerror = () => { ignoreInputUntilRef.current = Date.now() + 500; };
-    const pickVoice = (vs: SpeechSynthesisVoice[]) => {
-      const zh = vs.filter(v => v.lang.startsWith("zh"));
-      return zh.find(v => /xiaoxiao|xiaoyi/i.test(v.name)) ?? zh.find(v => !/male|yunxi/i.test(v.name)) ?? zh[0];
-    };
     const vs = synth.getVoices();
-    if (vs.length) { const v = pickVoice(vs); if (v) utt.voice = v; synth.speak(utt); }
-    else { synth.onvoiceschanged = () => { const v = pickVoice(synth.getVoices()); if (v) utt.voice = v; synth.speak(utt); synth.onvoiceschanged = null; }; }
-  }, []);
+    if (vs.length) { const v = pickYayaVoice(vs); if (v) utt.voice = v; synth.speak(utt); }
+    else { synth.onvoiceschanged = () => { const v = pickYayaVoice(synth.getVoices()); if (v) utt.voice = v; synth.speak(utt); synth.onvoiceschanged = null; }; }
+  }, [pickYayaVoice]);
 
   const handleGesture = useCallback((event: GestureEvent) => {
     const { gesture } = event;

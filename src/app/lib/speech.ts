@@ -45,11 +45,19 @@ export function speak(text: string, rate = 1.0): Promise<void> {
     utterance.pitch = 1.0;
     utterance.volume = 1.0;
 
-    // 尝试选择中文语音
+    // 声音选择优先级（与芽芽 pickYayaVoice 一致）：
+    // 1. Microsoft Natural/Online 神经网络声音（接近真人）
+    // 2. Xiaoxiao / Xiaoyi 女声
+    // 3. 非男声回退
+    // 4. 任意中文
     const voices = window.speechSynthesis.getVoices();
-    const zhVoice = voices.find(
-      (v) => v.lang.startsWith("zh") && v.localService,
-    ) || voices.find((v) => v.lang.startsWith("zh"));
+    const zh = voices.filter((v) => v.lang.startsWith("zh"));
+    const zhVoice =
+      zh.find((v) => /natural|online/i.test(v.name) && /xiaoxiao|xiaoyi|xiaomeng|xiaochen/i.test(v.name)) ??
+      zh.find((v) => /natural|online/i.test(v.name) && !/yunxi|yunyang|yunfeng|yunhao/i.test(v.name)) ??
+      zh.find((v) => /xiaoxiao|xiaoyi/i.test(v.name)) ??
+      zh.find((v) => !/male|yunxi|yunyang|yunfeng|yunhao/i.test(v.name)) ??
+      zh[0];
     if (zhVoice) {
       utterance.voice = zhVoice;
     }
