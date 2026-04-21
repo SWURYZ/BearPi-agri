@@ -3,216 +3,238 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#059669">
-  <title>BearPi-agri · 害虫识别</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta name="theme-color" content="#22c55e">
+  <title>BearPi-agri · 害虫智能识别</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ ASSET_VERSION }}">
 </head>
 <body>
-  <main class="page">
-    <!-- App Header -->
-    <header class="app-header">
-      <div class="app-logo">🐛</div>
+  <main class="page ios-page">
+    <header class="app-header glass">
+      <div class="app-logo">🧪</div>
       <div>
-        <div class="app-title">害虫识别 · 智能防治</div>
-        <div class="app-subtitle">BearPi-agri · 智慧农业平台</div>
+        <div class="app-title">害虫智能识别</div>
+        <div class="app-subtitle">农户友好模式 · 拍照即识别</div>
       </div>
-      <div class="app-badge">
-        <span class="dot"></span>
-        在线
-      </div>
+      <div class="app-badge"><span class="dot"></span> 在线</div>
     </header>
 
-    <!-- Upload Card -->
-    <section class="card">
-      <h1 class="card-title">
-        <span class="icon">📷</span>
-        拍照 / 上传图片
-      </h1>
-      <p class="card-sub">
-        请对准害虫近距离拍摄一张清晰图片，AI 将识别种类，识别完成后请返回电脑端总览大屏查看
-        <strong>精灵芽芽</strong>语音播报的防治方案。
-      </p>
+    <section class="card glass upload-card">
+      <h1 class="card-title"><span class="icon">📱</span>手机拍照上传</h1>
+      <p class="card-sub">支持现场拍照与多图排队识别。识别结果优先中文展示，方便农户直接查看。</p>
 
-      <form method="post" enctype="multipart/form-data" class="upload-form" id="uploadForm">
-        <label class="upload-box" for="fileInput">
-          <div class="up-icon">📸</div>
-          <div class="up-title">点击拍照或选择图片</div>
-          <div class="up-hint">支持 JPG / PNG，建议正面近拍 · 单张 ≤ 10 MB</div>
-          <input id="fileInput" type="file" name="image" accept="image/*" capture="environment" required>
-        </label>
-        <div class="file-name" id="fileName"></div>
-        <button type="submit" id="submitBtn">
-          <span id="submitText">开始 AI 识别</span>
-        </button>
-      </form>
+      <div class="quick-actions">
+        <label class="quick-btn primary" for="fileInput">拍照/选图</label>
+        <button id="startQueueBtn" class="quick-btn accent" type="button" disabled>开始排队识别</button>
+        <button id="clearQueueBtn" class="quick-btn ghost" type="button" disabled>清空队列</button>
+      </div>
+
+      <label class="upload-box" for="fileInput">
+        <div class="up-icon">📷</div>
+        <div class="up-title">点击拍照或选择多张图片</div>
+        <div class="up-hint">支持 JPG / PNG / HEIC，建议近距离拍摄，单张 ≤ 20 MB</div>
+        <input id="fileInput" type="file" name="image" accept="image/*" capture="environment" multiple>
+      </label>
+
+      <div class="queue-wrap" id="queueWrap">
+        <div class="queue-title">识别队列</div>
+        <div id="queueList" class="queue-list">
+          <div class="queue-empty">还没有图片，先点上方“拍照/选图”。</div>
+        </div>
+      </div>
 
       {% if error %}
       <div class="error">⚠️ {{ error }}</div>
       {% endif %}
-
-      {% if has_result %}
-      <div class="notice">
-        ✅ 识别完成，结果已同步到 <strong>总览大屏</strong>，请查看
-        <strong>精灵芽芽</strong> 给出的防治方案。
-      </div>
-      {% endif %}
     </section>
 
-    {% if has_result %}
-    <!-- Result Card -->
-    <section class="card">
-      <h1 class="card-title">
-        <span class="icon">🔬</span>
-        识别结果
-      </h1>
+    <section id="resultCard" class="card glass result-card{% if not has_result %} hidden{% endif %}">
+      <h1 class="card-title"><span class="icon">🌾</span>识别结果</h1>
 
       <div class="result">
-        <div class="preview">
-          <img src="{{ image_path }}" alt="uploaded image">
-        </div>
-
+        <div class="preview"><img id="resultImage" src="{{ image_path if has_result else '' }}" alt="uploaded image"></div>
         <div class="metrics">
           <div class="result-summary">
-            <div class="pest-zh">{{ top1_name_zh }}</div>
-            <div class="pest-en">{{ top1_name_en }}</div>
+            <div class="pest-zh" id="resultZh">{{ top1_name_zh if has_result else '-' }}</div>
+            <div class="pest-en" id="resultEn">{{ top1_name_en if has_result else '-' }}</div>
             <div class="conf">
               <span class="conf-label">置信度</span>
-              <div class="conf-bar"><span data-percent="{{ '%.2f' % (top1_conf * 100) }}"></span></div>
-              <span class="conf-value">{{ '%.2f' % (top1_conf * 100) }}%</span>
+              <div class="conf-bar"><span id="resultConfBar" style="width:{% if has_result %}{{ '%.2f' % (top1_conf * 100) }}{% else %}0{% endif %}%"></span></div>
+              <span class="conf-value" id="resultConf">{% if has_result %}{{ '%.2f' % (top1_conf * 100) }}%{% else %}0.00%{% endif %}</span>
             </div>
           </div>
 
-          <h3>Top-5 候选</h3>
-          <div class="top5-bars">
-            {% for row in top5_rows %}
-            <div class="bar-row">
-              <div class="bar-label">{{ row.class_zh }} <span style="color:#9ca3af;font-weight:400;font-size:11px">· {{ row.class_en }}</span></div>
-              <div class="bar-track">
-                <div class="bar-fill" data-percent="{{ '%.2f' % row.percent }}"></div>
+          <h3>候选结果（中文优先）</h3>
+          <div id="top5List" class="top5-bars">
+            {% if has_result %}
+              {% for row in top5_rows %}
+              <div class="bar-row">
+                <div class="bar-label">{{ row.class_zh }} <span class="bar-en">· {{ row.class_en }}</span></div>
+                <div class="bar-track"><div class="bar-fill" style="width:{{ '%.2f' % row.percent }}%"></div></div>
+                <div class="bar-value">{{ '%.2f' % row.percent }}%</div>
               </div>
-              <div class="bar-value">{{ '%.2f' % row.percent }}%</div>
-            </div>
-            {% endfor %}
+              {% endfor %}
+            {% endif %}
           </div>
 
-          <p class="meta" style="margin-top:14px">
-            <strong>识别模型：</strong>{{ model_path }}
-          </p>
+          <p class="meta"><strong>识别模型：</strong>{{ model_path if has_result else 'ONNX' }}</p>
         </div>
       </div>
     </section>
-    {% endif %}
 
     <footer class="app-footer">
-      <div><span class="brand">BearPi-agri</span> · 智慧农业 · NFC + AI 害虫识别</div>
-      <div style="margin-top:2px">© 2026 智慧农业研究小组</div>
+      <div><span class="brand">BearPi-agri</span> · NFC + AI 害虫识别</div>
+      <div>识别后可返回总览大屏，查看精灵芽芽语音建议</div>
     </footer>
   </main>
 
   <script>
-    // 进度条动画
-    requestAnimationFrame(() => {
-      document.querySelectorAll('[data-percent]').forEach((el) => {
-        const p = Number(el.getAttribute('data-percent') || '0');
-        const safe = Math.max(0, Math.min(100, p));
-        el.style.width = safe.toFixed(2) + '%';
-      });
-    });
-
-    // 文件名预览 + loading 态
     const fileInput = document.getElementById('fileInput');
-    const fileName = document.getElementById('fileName');
-    const form = document.getElementById('uploadForm');
-    const submitBtn = document.getElementById('submitBtn');
-    const submitText = document.getElementById('submitText');
+    const queueList = document.getElementById('queueList');
+    const queueWrap = document.getElementById('queueWrap');
+    const startQueueBtn = document.getElementById('startQueueBtn');
+    const clearQueueBtn = document.getElementById('clearQueueBtn');
+    const resultCard = document.getElementById('resultCard');
+    const resultImage = document.getElementById('resultImage');
+    const resultZh = document.getElementById('resultZh');
+    const resultEn = document.getElementById('resultEn');
+    const resultConf = document.getElementById('resultConf');
+    const resultConfBar = document.getElementById('resultConfBar');
+    const top5List = document.getElementById('top5List');
 
-    if (fileInput) {
-      fileInput.addEventListener('change', () => {
-        const f = fileInput.files && fileInput.files[0];
-        if (f) {
-          const sizeKB = (f.size / 1024).toFixed(1);
-          fileName.textContent = '📎 ' + f.name + ' (' + sizeKB + ' KB)';
-          fileName.classList.add('show');
-        } else {
-          fileName.classList.remove('show');
-        }
-      });
+    const queue = [];
+    let uploading = false;
+
+    function formatSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / 1024 / 1024).toFixed(2) + ' MB';
     }
 
-    if (form) {
-      form.addEventListener('submit', () => {
-        if (submitBtn && submitText) {
-          submitBtn.disabled = true;
-          submitText.innerHTML = '<span class="btn-spinner"></span>识别中，请稍候…';
-        }
-      });
+    function statusText(status) {
+      if (status === 'waiting') return '待识别';
+      if (status === 'uploading') return '识别中';
+      if (status === 'done') return '完成';
+      return '失败';
     }
-  </script>
-</body>
-</html>
-<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>BearPi-agri · 害虫识别</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-</head>
-<body>
-  <main class="page">
-    <section class="card">
-      <h1>🌾 害虫识别</h1>
-      <p class="sub">拍照或上传近拍图片，识别完成后请返回电脑·总览大屏查看<strong>精灵芽芽的防治建议</strong>。</p>
 
-      <form method="post" enctype="multipart/form-data" class="upload-form">
-        <input type="file" name="image" accept="image/*" capture="environment" required>
-        <button type="submit">开始识别</button>
-      </form>
+    function renderQueue() {
+      if (!queue.length) {
+        queueList.innerHTML = '<div class="queue-empty">还没有图片，先点上方“拍照/选图”。</div>';
+        startQueueBtn.disabled = true;
+        clearQueueBtn.disabled = true;
+        return;
+      }
 
-      {% if error %}
-      <div class="error">{{ error }}</div>
-      {% endif %}
-
-      {% if has_result %}
-      <div class="notice" style="margin:16px 0;padding:12px 14px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;color:#047857;font-size:14px">
-        ✅ 识别完成，结果已同步到总览大屏，请查看<strong>精灵芽芽</strong>给出的防治方案。
-      </div>
-      <div class="result">
-        <div class="preview">
-          <img src="{{ image_path }}" alt="uploaded image">
-        </div>
-        <div class="metrics">
-          <h2>预测结果</h2>
-          <p><strong>Top-1 英文：</strong>{{ top1_name_en }}</p>
-          <p><strong>Top-1 中文：</strong>{{ top1_name_zh }}</p>
-          <p><strong>置信度：</strong>{{ '%.2f' % (top1_conf * 100) }}%</p>
-          <p class="meta"><strong>模型：</strong>{{ model_path }}</p>
-          <p class="meta"><strong>检测模型：</strong>{{ detector_model_path }}</p>
-
-          <h3>Top-5 置信度可视化</h3>
-          <div class="top5-bars">
-            {% for row in top5_rows %}
-            <div class="bar-row">
-              <div class="bar-label">{{ loop.index }}. {{ row.class_zh }} ({{ row.class_en }})</div>
-              <div class="bar-track">
-                <div class="bar-fill" data-percent="{{ '%.2f' % row.percent }}"></div>
-              </div>
-              <div class="bar-value">{{ '%.2f' % row.percent }}%</div>
+      queueList.innerHTML = queue.map((item, idx) => `
+        <div class="queue-item ${item.status}">
+          <div class="queue-left">
+            <div class="queue-index">${idx + 1}</div>
+            <div>
+              <div class="queue-name">${item.file.name}</div>
+              <div class="queue-meta">${formatSize(item.file.size)}</div>
             </div>
-            {% endfor %}
           </div>
+          <div class="queue-status">${statusText(item.status)}</div>
         </div>
-      </div>
-      {% endif %}
-    </section>
-  </main>
+      `).join('');
 
-  <script>
-    document.querySelectorAll('.bar-fill[data-percent]').forEach((el) => {
-      const p = Number(el.getAttribute('data-percent') || '0');
-      const safe = Math.max(0, Math.min(100, p));
-      el.style.width = safe.toFixed(2) + '%';
+      startQueueBtn.disabled = uploading || !queue.some(x => x.status === 'waiting' || x.status === 'failed');
+      clearQueueBtn.disabled = uploading || !queue.length;
+    }
+
+    function renderTop5(rows) {
+      top5List.innerHTML = '';
+      rows.forEach((row) => {
+        const percent = Number(row.percent || (Number(row.conf || 0) * 100));
+        const safe = Math.max(0, Math.min(100, percent));
+        const div = document.createElement('div');
+        div.className = 'bar-row';
+        div.innerHTML = `
+          <div class="bar-label">${row.class_zh || '-'} <span class="bar-en">· ${row.class_en || '-'}</span></div>
+          <div class="bar-track"><div class="bar-fill" style="width:${safe.toFixed(2)}%"></div></div>
+          <div class="bar-value">${safe.toFixed(2)}%</div>
+        `;
+        top5List.appendChild(div);
+      });
+    }
+
+    function updateResult(payload) {
+      const data = payload || {};
+      resultCard.classList.remove('hidden');
+      resultZh.textContent = data.top1_name_zh || '-';
+      resultEn.textContent = data.top1_name_en || '-';
+
+      const conf = Number(data.top1_conf || 0) * 100;
+      const safe = Math.max(0, Math.min(100, conf));
+      resultConf.textContent = safe.toFixed(2) + '%';
+      resultConfBar.style.width = safe.toFixed(2) + '%';
+
+      if (data.image_url) {
+        resultImage.src = data.image_url;
+      }
+      renderTop5(data.top5_rows || []);
+      window.scrollTo({ top: resultCard.offsetTop - 16, behavior: 'smooth' });
+    }
+
+    async function uploadOne(item) {
+      item.status = 'uploading';
+      renderQueue();
+
+      const fd = new FormData();
+      fd.append('image', item.file, item.file.name);
+
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: fd,
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error || '上传失败');
+      }
+
+      item.status = 'done';
+      item.response = json.data;
+      updateResult(json.data);
+      renderQueue();
+    }
+
+    async function runQueue() {
+      if (uploading) return;
+      uploading = true;
+      renderQueue();
+
+      for (const item of queue) {
+        if (item.status === 'done') continue;
+        try {
+          await uploadOne(item);
+        } catch (e) {
+          item.status = 'failed';
+          item.error = String(e.message || e);
+          renderQueue();
+        }
+      }
+
+      uploading = false;
+      renderQueue();
+    }
+
+    fileInput.addEventListener('change', () => {
+      const files = Array.from(fileInput.files || []);
+      files.forEach((f) => queue.push({ file: f, status: 'waiting' }));
+      fileInput.value = '';
+      renderQueue();
     });
+
+    startQueueBtn.addEventListener('click', runQueue);
+    clearQueueBtn.addEventListener('click', () => {
+      if (uploading) return;
+      queue.length = 0;
+      renderQueue();
+    });
+
+    renderQueue();
+    queueWrap.classList.add('visible');
   </script>
 </body>
 </html>

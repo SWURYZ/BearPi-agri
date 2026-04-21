@@ -1,5 +1,6 @@
 flask>=3.0.0
 flask-cors>=4.0.0
 pillow>=10.0.0
+pillow-heif>=0.18.0
 numpy>=1.24
 onnxruntime>=1.16

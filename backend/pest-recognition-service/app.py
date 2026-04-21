@@ -4,23 +4,35 @@
 """
 from __future__ import annotations
 
+import base64
 import csv
+import io
 import json
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 import onnxruntime as ort
 from flask import Flask, jsonify, render_template, request, send_from_directory, url_for
 from flask_cors import CORS
-from PIL import Image
+from PIL import Image, ImageOps
 from werkzeug.utils import secure_filename
+
+try:
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+except Exception:
+    pass
 
 ROOT = Path(__file__).resolve().parent
 UPLOAD_DIR = ROOT / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+ASSET_VERSION = int(time.time())
 
 LATEST_FILE = ROOT / "latest.json"
 
@@ -31,6 +43,16 @@ NAMES_PATH = ROOT / "models" / "names.json"
 NAME_MAP_CSV = ROOT / "insect_names_en_zh.csv"
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+ALLOWED_MIME_TO_EXT = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/bmp": ".bmp",
+    "image/tiff": ".tiff",
+    "image/heic": ".heic",
+    "image/heif": ".heif",
+}
+ALLOWED_EXTENSIONS = ALLOWED_EXTENSIONS | {".heic", ".heif"}
 
 if not MODEL_PATH.exists():
     raise FileNotFoundError(
@@ -77,8 +99,79 @@ def to_cn_name(name: str) -> str:
     return NAME_MAP.get(name.lower(), name)
 
 
+def to_farmer_cn_name(name: str, idx: int) -> str:
+    zh = to_cn_name(name)
+    if zh != name:
+        return zh
+    return f"虫种{idx + 1:03d}"
+
+
 def allowed_file(filename: str) -> bool:
     return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
+
+
+def infer_extension(filename: str, mimetype: str | None = None) -> str:
+    ext = Path(filename or "").suffix.lower()
+    if ext in ALLOWED_EXTENSIONS:
+        return ext
+    if mimetype:
+        mapped = ALLOWED_MIME_TO_EXT.get(mimetype.lower())
+        if mapped:
+            return mapped
+    return ""
+
+
+def load_image_from_bytes(raw: bytes) -> Image.Image:
+    img = Image.open(io.BytesIO(raw))
+    img = ImageOps.exif_transpose(img)
+    return img.convert("RGB")
+
+
+def persist_upload(raw: bytes, ext: str, stem: str = "upload") -> str:
+    safe_stem = secure_filename(stem) or "upload"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    name = f"{safe_stem}_{ts}_{uuid4().hex[:8]}{ext}"
+    (UPLOAD_DIR / name).write_bytes(raw)
+    return name
+
+
+def parse_request_image() -> tuple[str, Image.Image]:
+    if "image" in request.files:
+        file = request.files["image"]
+        if not file.filename:
+            raise ValueError("empty filename")
+        ext = infer_extension(file.filename, file.mimetype)
+        if not ext:
+            raise ValueError("unsupported format")
+
+        raw = file.read()
+        if not raw:
+            raise ValueError("empty payload")
+
+        img = load_image_from_bytes(raw)
+        saved = persist_upload(raw, ext, Path(file.filename).stem or "camera")
+        return saved, img
+
+    payload = request.get_json(silent=True) or {}
+    data_url = payload.get("image", "")
+    if not isinstance(data_url, str) or not data_url:
+        raise ValueError("no image")
+
+    if "," in data_url:
+        header, b64 = data_url.split(",", 1)
+        mime = header.split(";")[0].replace("data:", "").strip().lower()
+        ext = ALLOWED_MIME_TO_EXT.get(mime, ".jpg")
+        raw = base64.b64decode(b64)
+    else:
+        ext = ".jpg"
+        raw = base64.b64decode(data_url)
+
+    if not raw:
+        raise ValueError("empty payload")
+
+    img = load_image_from_bytes(raw)
+    saved = persist_upload(raw, ext, "mobile")
+    return saved, img
 
 
 def softmax(x: np.ndarray) -> np.ndarray:
@@ -120,14 +213,14 @@ def infer_from_pil(img: Image.Image) -> dict[str, Any]:
         en_name = NAMES_MAP.get(idx_i, str(idx_i))
         top5_rows.append({
             "class_en": en_name,
-            "class_zh": to_cn_name(en_name),
+            "class_zh": to_farmer_cn_name(en_name, idx_i),
             "conf": score,
             "percent": score * 100.0,
         })
 
     return {
         "top1_name_en": top1_name_en,
-        "top1_name_zh": to_cn_name(top1_name_en),
+        "top1_name_zh": to_farmer_cn_name(top1_name_en, top1_idx),
         "top1_conf": top1_conf,
         "top5_rows": top5_rows,
     }
@@ -136,7 +229,21 @@ def infer_from_pil(img: Image.Image) -> dict[str, Any]:
 # ── Flask App ──
 app = Flask(__name__)
 CORS(app)
-app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
+
+
+@app.context_processor
+def inject_asset_version():
+    return {"ASSET_VERSION": ASSET_VERSION}
+
+
+@app.after_request
+def disable_html_cache(resp):
+    if resp.content_type and "text/html" in resp.content_type:
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+    return resp
 
 
 def save_latest(result: dict[str, Any], image_url: str | None = None) -> None:
@@ -169,20 +276,18 @@ def index():
     if request.method == "GET":
         return render_template("index.html", has_result=False)
 
-    if "image" not in request.files:
-        return render_template("index.html", has_result=False, error="未检测到上传文件。")
+    try:
+        filename, img = parse_request_image()
+    except ValueError as e:
+        msg = str(e)
+        if msg == "unsupported format":
+            return render_template("index.html", has_result=False, error="文件格式不支持，请上传 JPG/PNG/HEIC。")
+        if msg in {"empty filename", "empty payload", "no image"}:
+            return render_template("index.html", has_result=False, error="未检测到可识别图片，请重试。")
+        return render_template("index.html", has_result=False, error="上传失败，请重试。")
+    except Exception:
+        return render_template("index.html", has_result=False, error="图片读取失败，请换一张清晰照片。")
 
-    file = request.files["image"]
-    if file.filename == "":
-        return render_template("index.html", has_result=False, error="请选择一张图片。")
-    if not allowed_file(file.filename):
-        return render_template("index.html", has_result=False, error="不支持的文件格式。")
-
-    filename = secure_filename(file.filename)
-    save_path = UPLOAD_DIR / filename
-    file.save(save_path)
-
-    img = Image.open(save_path).convert("RGB")
     infer = infer_from_pil(img)
 
     image_url = url_for("uploaded_file", filename=filename, _external=True)
@@ -227,16 +332,18 @@ def api_clear():
 
 @app.route("/api/upload", methods=["POST"])
 def api_upload():
-    if "image" not in request.files:
-        return jsonify({"ok": False, "error": "No image"}), 400
-    file = request.files["image"]
-    if file.filename == "" or not allowed_file(file.filename):
+    try:
+        filename, img = parse_request_image()
+    except ValueError as e:
+        msg = str(e)
+        if msg == "unsupported format":
+            return jsonify({"ok": False, "error": "Unsupported format"}), 400
+        if msg in {"empty filename", "empty payload", "no image"}:
+            return jsonify({"ok": False, "error": "No image"}), 400
         return jsonify({"ok": False, "error": "Invalid image"}), 400
+    except Exception:
+        return jsonify({"ok": False, "error": "Decode failed"}), 400
 
-    filename = secure_filename(file.filename)
-    save_path = UPLOAD_DIR / filename
-    file.save(save_path)
-    img = Image.open(save_path).convert("RGB")
     infer = infer_from_pil(img)
     image_url = url_for("uploaded_file", filename=filename, _external=True)
     save_latest(infer, image_url=image_url)
