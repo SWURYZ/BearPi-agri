@@ -77,6 +77,46 @@ const KEYFRAMES = `
   50%  { transform: translateY(-8px) rotate(1deg)  scale(1.03); }
   100% { transform: translateY(0px)  rotate(-1deg) scale(1);    }
 }
+/* Rich idle "dance" — float + squash hop + curious look + tail wiggle, 7s loop */
+@keyframes yaya-idle-dance {
+  0%   { transform: translateY(0)    rotate(-1deg) scale(1, 1); }
+  8%   { transform: translateY(-5px) rotate(-3deg) scale(1.02, 1.02); }
+  16%  { transform: translateY(0)    rotate(0deg)  scale(1, 1); }
+  24%  { transform: translateY(-5px) rotate(3deg)  scale(1.02, 1.02); }
+  32%  { transform: translateY(0)    rotate(0deg)  scale(1, 1); }
+  /* squash before hop */
+  40%  { transform: translateY(3px)  rotate(0deg)  scale(1.10, 0.90); }
+  /* stretch up */
+  48%  { transform: translateY(-18px) rotate(-2deg) scale(0.92, 1.10); }
+  /* squash on landing */
+  54%  { transform: translateY(2px)  rotate(0deg)  scale(1.08, 0.94); }
+  60%  { transform: translateY(0)    rotate(0deg)  scale(1, 1); }
+  /* curious look L → R */
+  70%  { transform: translateY(-4px) rotate(-7deg) scale(1.02, 1.02); }
+  78%  { transform: translateY(-4px) rotate(7deg)  scale(1.02, 1.02); }
+  /* tail wiggle */
+  88%  { transform: translateY(-2px) rotate(-5deg) scale(1.02, 1.02); }
+  94%  { transform: translateY(-2px) rotate(5deg)  scale(1.02, 1.02); }
+  100% { transform: translateY(0)    rotate(-1deg) scale(1, 1); }
+}
+/* Breathing drop-shadow glow — for filter on the FAB button */
+@keyframes yaya-breath-glow {
+  0%,100% { filter: drop-shadow(0 6px 14px rgba(22,163,74,0.30)) drop-shadow(0 0 6px rgba(74,222,128,0.25)); }
+  50%     { filter: drop-shadow(0 12px 24px rgba(22,163,74,0.55)) drop-shadow(0 0 18px rgba(74,222,128,0.55)); }
+}
+/* Orbiting sparkle around FAB — radius driven by translate */
+@keyframes yaya-orbit {
+  0%   { transform: rotate(0deg)   translateX(58px) rotate(0deg); }
+  100% { transform: rotate(360deg) translateX(58px) rotate(-360deg); }
+}
+@keyframes yaya-orbit-rev {
+  0%   { transform: rotate(0deg)    translateX(64px) rotate(0deg); }
+  100% { transform: rotate(-360deg) translateX(64px) rotate(360deg); }
+}
+@keyframes yaya-twinkle {
+  0%,100% { opacity: 0.3; transform: scale(0.6); }
+  50%     { opacity: 1;   transform: scale(1.2); }
+}
 @keyframes yaya-glow {
   0%,100% { box-shadow: 0 10px 26px rgba(22,163,74,0.35), 0 0 0 0 rgba(74,222,128,0.2); }
   50%     { box-shadow: 0 20px 44px rgba(22,163,74,0.55), 0 0 0 14px rgba(74,222,128,0.06); }
@@ -1360,6 +1400,87 @@ export function YayaFloatingAssistant() {
         {/* Particle canvas */}
         <ParticleCanvas active={alwaysListening} voiceState={voiceState} />
 
+        {/* Orbiting sparkles — only when idle and not in any gesture animation */}
+        {voiceState === "idle" && gestureAnim === "none" && !dragging && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0"
+            style={{ zIndex: 0 }}
+          >
+            <div
+              className="absolute"
+              style={{
+                left: "50%",
+                top: "50%",
+                width: 6,
+                height: 6,
+                marginLeft: -3,
+                marginTop: -3,
+                animation: "yaya-orbit 6s linear infinite",
+              }}
+            >
+              <div
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: "radial-gradient(circle, #fef08a 0%, #facc15 60%, transparent 100%)",
+                  boxShadow: "0 0 10px #facc15, 0 0 4px #fff",
+                  animation: "yaya-twinkle 1.4s ease-in-out infinite",
+                }}
+              />
+            </div>
+            <div
+              className="absolute"
+              style={{
+                left: "50%",
+                top: "50%",
+                width: 5,
+                height: 5,
+                marginLeft: -2.5,
+                marginTop: -2.5,
+                animation: "yaya-orbit 8s linear infinite",
+                animationDelay: "-2.6s",
+              }}
+            >
+              <div
+                style={{
+                  width: 5,
+                  height: 5,
+                  borderRadius: "50%",
+                  background: "radial-gradient(circle, #bbf7d0 0%, #4ade80 60%, transparent 100%)",
+                  boxShadow: "0 0 10px #4ade80, 0 0 4px #fff",
+                  animation: "yaya-twinkle 1.8s ease-in-out infinite",
+                }}
+              />
+            </div>
+            <div
+              className="absolute"
+              style={{
+                left: "50%",
+                top: "50%",
+                width: 5,
+                height: 5,
+                marginLeft: -2.5,
+                marginTop: -2.5,
+                animation: "yaya-orbit-rev 10s linear infinite",
+                animationDelay: "-1.3s",
+              }}
+            >
+              <div
+                style={{
+                  width: 5,
+                  height: 5,
+                  borderRadius: "50%",
+                  background: "radial-gradient(circle, #e9d5ff 0%, #a78bfa 60%, transparent 100%)",
+                  boxShadow: "0 0 10px #a78bfa, 0 0 4px #fff",
+                  animation: "yaya-twinkle 2.2s ease-in-out infinite",
+                }}
+              />
+            </div>
+          </div>
+        )}
+
         {/* Avatar button – floating mascot, no container */}
         <button
           onClick={() => {
@@ -1393,7 +1514,7 @@ export function YayaFloatingAssistant() {
                         ? "yaya-nav-leap 0.75s cubic-bezier(0.34,1.56,0.64,1)"
                         : voiceState === "speaking"
                           ? "yaya-float-mini 0.5s ease-in-out infinite"
-                          : "yaya-float-mini 3.6s ease-in-out infinite",
+                          : "yaya-idle-dance 7s cubic-bezier(0.45,0.05,0.55,0.95) infinite, yaya-breath-glow 4.6s ease-in-out infinite",
           }}
           aria-label="打开芽芽助手"
         >

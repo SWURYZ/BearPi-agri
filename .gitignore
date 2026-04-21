@@ -20,6 +20,14 @@ backend/models/
 !backend/models/gesture_model/labels.json
 !backend/models/gesture_model.tflite
 !backend/models/labels.json
+# 害虫识别 ONNX 模型（6.5MB，远小于 GitHub 100MB 限制，需要纳入版本管理）
+!backend/pest-recognition-service/models/
+!backend/pest-recognition-service/models/best.onnx
+!backend/pest-recognition-service/models/names.json
+# 前端手势识别 ONNX 模型（<300KB）
+!public/models/gesture_model/
+!public/models/gesture_model/gesture_model.onnx
+!public/models/gesture_model/labels.json
 人脸检测模型/
 人脸识别模型/
 活体检测模型/

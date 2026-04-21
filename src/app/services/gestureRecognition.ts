@@ -29,7 +29,6 @@ const HAND_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 const GESTURE_MODEL_URL = "/models/gesture_model/gesture_model.onnx";
 const GESTURE_LABELS_URL = "/models/gesture_model/labels.json";
-const ONNX_WASM_CDN = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
 
 const NUM_FEATURES = 72;
 
@@ -91,7 +90,10 @@ async function ensureInit(): Promise<void> {
     }
     gestureLabels = labels.map((x) => String(x));
 
-    ort.env.wasm.wasmPaths = ONNX_WASM_CDN;
+    // 用运行时拼接的 origin + 路径，避免 Vite 静态分析 dynamic import 触发
+    // "should not be imported from source code" 报错
+    const ortBase = (typeof window !== "undefined" ? window.location.origin : "") + "/ort/";
+    ort.env.wasm.wasmPaths = ortBase;
     ort.env.wasm.numThreads = 1;
     gestureSession = await ort.InferenceSession.create(GESTURE_MODEL_URL, {
       executionProviders: ["wasm"],
