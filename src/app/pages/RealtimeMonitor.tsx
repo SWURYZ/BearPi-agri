@@ -78,7 +78,7 @@ const sensorConfigs = [
     borderColor: "border-yellow-200",
     min: 0,
     max: 15000,
-    normal: [3000, 12000],
+    normal: [100, 1000],
     defaultValue: 8500,
     defaultData: generateData(8500, 2000, 24),
   },

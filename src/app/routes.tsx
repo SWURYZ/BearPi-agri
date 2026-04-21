@@ -8,7 +8,6 @@ import { AutomationRules } from "./pages/AutomationRules";
 import { HistoricalData } from "./pages/HistoricalData";
 import { DeviceManagement } from "./pages/DeviceManagement";
 import { AIAssistant } from "./pages/AIAssistant";
-import { SmartDecision } from "./pages/SmartDecision";
 import { Login } from "./pages/Login";
 import { UserManagement } from "./pages/UserManagement";
 import { LoginLogs } from "./pages/LoginLogs";
@@ -63,7 +62,6 @@ export const router = createBrowserRouter([
       { path: "history", Component: HistoricalData },
       { path: "devices", Component: DeviceManagement },
       { path: "ai", Component: AIAssistant },
-      { path: "decision", Component: SmartDecision },
       { path: "users", Component: UserManagement },
       { path: "logs", element: <AdminGuard><LoginLogs /></AdminGuard> },
     ],

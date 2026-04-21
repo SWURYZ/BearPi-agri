@@ -13,7 +13,6 @@ import {
   ChevronRight,
   Users,
   LogOut,
-  Brain,
   ClipboardList,
 } from "lucide-react";
 import { getCurrentUser, logout, type User } from "../services/auth";
@@ -28,7 +27,6 @@ const baseNavItems = [
   { to: "/history", icon: BarChart2, label: "历史分析", desc: "数据趋势图表" },
   { to: "/devices", icon: Cpu, label: "设备管理", desc: "绑定/解绑设备" },
   { to: "/ai", icon: Bot, label: "农事问答", desc: "AI智能助手" },
-  { to: "/decision", icon: Brain, label: "智控决策", desc: "LangGraph智能引擎" },
 ];
 
 const adminNavItem = { to: "/users", icon: Users, label: "用户管理", desc: "用户与人脸管理" };

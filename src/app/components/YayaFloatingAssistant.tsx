@@ -234,7 +234,6 @@ const NAV_COMMANDS: Array<NavCommand & { aliases: string[] }> = [
   { to: "/history", label: "历史分析", aliases: ["历史分析", "历史数据", "趋势分析", "历史页面"] },
   { to: "/devices", label: "设备管理", aliases: ["设备管理", "设备页面", "设备列表"] },
   { to: "/ai", label: "农事问答", aliases: ["农事问答", "问答助手", "AI问答", "智能问答"] },
-  { to: "/decision", label: "智控决策", aliases: ["智控决策", "决策页面", "芽芽助手", "芽芽"] },
   { to: "/users", label: "用户管理", aliases: ["用户管理", "用户页面", "账号管理"] },
   { to: "/logs", label: "登录日志", aliases: ["登录日志", "日志页面", "用户日志"] },
 ];
@@ -1678,7 +1677,9 @@ export function YayaFloatingAssistant() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    void executeUnified(input).then(() => setInput(""));
+                    const textToSend = input;
+                    setInput("");
+                    void executeUnified(textToSend);
                   }
                 }}
                 className="flex-1 bg-transparent text-sm text-gray-800 placeholder-gray-400 outline-none"
@@ -1693,7 +1694,11 @@ export function YayaFloatingAssistant() {
                 </button>
               )}
               <button
-                onClick={() => { void executeUnified(input).then(() => setInput("")); }}
+                onClick={() => {
+                  const textToSend = input;
+                  setInput("");
+                  void executeUnified(textToSend);
+                }}
                 className="flex h-7 w-7 items-center justify-center rounded-full text-white transition-opacity hover:opacity-80"
                 style={{ background: "linear-gradient(135deg,#4ade80,#16a34a)" }}
               >
