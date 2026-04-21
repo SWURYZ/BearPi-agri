@@ -126,6 +126,13 @@ const trendData = [
   { time: "23:59", temp: 22, humidity: 66 },
 ];
 
+const alertsData = [
+  { gh: "2号大棚", type: "温度过高", value: "32.1°C", time: "14:28", level: "danger" },
+  { gh: "2号大棚", type: "湿度过高", value: "85%", time: "14:25", level: "danger" },
+  { gh: "6号大棚", type: "光照过强", value: "11200lux", time: "13:50", level: "warn" },
+  { gh: "4号大棚", type: "设备离线", value: "全部离线", time: "12:00", level: "gray" },
+];
+
 const statusIconMap: Record<string, React.ReactNode> = {
   正常: <CheckCircle className="w-4 h-4 text-green-500" />,
   告警: <AlertTriangle className="w-4 h-4 text-red-500" />,
@@ -146,6 +153,7 @@ export function Dashboard() {
   const [offlineDialogOpen, setOfflineDialogOpen] = useState(false);
   const [offlineGhName, setOfflineGhName] = useState("");
   const [tick, setTick] = useState(0);
+  const [selectedView, setSelectedView] = useState<"pest" | "trend" | "alert">("pest");
   const headerRef = useRef<HTMLDivElement>(null);
 
   // Animation tick for live feel
@@ -310,165 +318,272 @@ export function Dashboard() {
         ))}
       </div>
 
-      {/* Greenhouse Cards Grid */}
-      <div>
-        <h2 className="text-sm font-semibold text-gray-700 mb-3">大棚列表</h2>
-        <div className="grid grid-cols-3 gap-4">
-          {greenhouseData.map((gh, idx) => (
+      {/* Main Row: 大棚轮播 + 害虫识别（重点突出） */}
+      <div className="grid grid-cols-3 gap-4" style={{ minHeight: 420 }}>
+        {/* 左：大棚列表（可垂直滑动的紧凑卡片） */}
+        <div className="col-span-1 bg-white rounded-xl border border-gray-100 p-4 shadow-sm flex flex-col">
+          <div className="flex items-center justify-between mb-3 flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-gray-700">大棚列表</h2>
+              <span className="text-[10px] text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded">
+                {onlineCount}/{greenhouseData.length} 在线
+              </span>
+            </div>
+            <span className="text-[10px] text-gray-400">滚动查看</span>
+          </div>
           <div
-              key={gh.id}
-              className={`bg-white rounded-xl border-2 p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer ${statusBgMap[gh.status]}`}
-              style={{
-                animation: `dash-card-in 0.5s ease ${0.1 + idx * 0.07}s both`,
-                ...(gh.status === "正常" ? { animation: `dash-card-in 0.5s ease ${0.1 + idx * 0.07}s both, dash-border 3s ease-in-out infinite` } : {}),
-              }}
-            >
-              {/* Card Header */}
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-gray-800">{gh.name}</span>
-                    <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{gh.crop}</span>
-                  </div>
-                  <div className="text-xs text-gray-400 mt-0.5">{gh.id}</div>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {statusIconMap[gh.status]}
-                  <span
-                    className={`text-xs font-medium ${
-                      gh.status === "正常"
-                        ? "text-green-600"
-                        : gh.status === "告警"
-                        ? "text-red-500"
-                        : "text-gray-400"
-                    }`}
-                  >
-                    {gh.status}
-                  </span>
-                </div>
-              </div>
-
-              {/* Sensor Data */}
-              <div className="grid grid-cols-2 gap-2 mb-3">
-                {[
-                  { icon: <Thermometer className="w-3.5 h-3.5 text-orange-500" />, label: "温度", value: gh.temp, unit: "°C" },
-                  { icon: <Droplets className="w-3.5 h-3.5 text-blue-500" />, label: "湿度", value: gh.humidity, unit: "%" },
-                  { icon: <Sun className="w-3.5 h-3.5 text-yellow-500" />, label: "光照", value: gh.light, unit: "lux" },
-                  { icon: <Wind className="w-3.5 h-3.5 text-green-500" />, label: "CO₂", value: gh.co2, unit: "ppm" },
-                ].map((sensor) => (
-                  <div key={sensor.label} className="flex items-center gap-1.5 bg-white/70 rounded-lg px-2 py-1.5">
-                    {sensor.icon}
-                    <div>
-                      <div className="text-xs text-gray-400">{sensor.label}</div>
-                      <div className="text-sm font-semibold text-gray-700">
-                        {sensor.value}
-                        <span className="text-xs font-normal text-gray-400 ml-0.5">{sensor.unit}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Footer */}
-              <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-                <div className="text-xs text-gray-500">
-                  设备: {gh.onlineDevices}/{gh.deviceCount} 在线
-                </div>
-                {gh.alerts > 0 && (
-                  <div className="flex items-center gap-1 text-xs text-red-500">
-                    <AlertTriangle className="w-3 h-3" />
-                    {gh.alerts} 条告警
-                  </div>
-                )}
-                <button
-                  onClick={() => toMonitor(gh.name, gh.status)}
-                  className="flex items-center gap-1 text-xs text-green-600 hover:text-green-700"
-                >
-                  <Eye className="w-3 h-3" />
-                  详情
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Bottom Row: Trend Chart + Alert List + Pest Recognition (NFC) */}
-      <div className="grid grid-cols-3 gap-4">
-        {/* Trend Chart */}
-        <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-sm font-semibold text-gray-800">今日温湿度趋势（全场均值）</h3>
-              <p className="text-xs text-gray-400 mt-0.5">业务六：历史数据趋势分析</p>
-            </div>
-            <div className="flex items-center gap-3 text-xs text-gray-500">
-              <span className="flex items-center gap-1"><span className="w-3 h-1.5 bg-orange-400 rounded inline-block" />温度</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-1.5 bg-blue-400 rounded inline-block" />湿度</span>
-            </div>
-          </div>
-          <ResponsiveContainer width="100%" height={180}>
-            <AreaChart data={trendData}>
-              <defs>
-                <linearGradient id="tempGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#fb923c" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#fb923c" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="humGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#60a5fa" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#60a5fa" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis dataKey="time" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip />
-              <Area type="monotone" dataKey="temp" stroke="#fb923c" fill="url(#tempGrad)" strokeWidth={2} name="温度(°C)" />
-              <Area type="monotone" dataKey="humidity" stroke="#60a5fa" fill="url(#humGrad)" strokeWidth={2} name="湿度(%)" />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Recent Alerts */}
-        <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-gray-800">最新告警</h3>
-            <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">{totalAlerts} 条</span>
-          </div>
-          <div className="space-y-2">
-            {[
-              { gh: "2号大棚", type: "温度过高", value: "32.1°C", time: "14:28", level: "danger" },
-              { gh: "2号大棚", type: "湿度过高", value: "85%", time: "14:25", level: "danger" },
-              { gh: "6号大棚", type: "光照过强", value: "11200lux", time: "13:50", level: "warn" },
-              { gh: "4号大棚", type: "设备离线", value: "全部离线", time: "12:00", level: "gray" },
-            ].map((alert, i) => (
+            className="flex-1 overflow-y-auto pr-1 space-y-2 -mr-1"
+            style={{ scrollbarWidth: "thin" }}
+          >
+            {greenhouseData.map((gh, idx) => (
               <div
-                key={i}
-                className={`flex items-start gap-2 p-2 rounded-lg border ${
-                  alert.level === "danger" ? "bg-red-50 border-red-100" :
-                  alert.level === "warn" ? "bg-yellow-50 border-yellow-100" :
-                  "bg-gray-50 border-gray-100"
-                }`}
+                key={gh.id}
+                onClick={() => toMonitor(gh.name, gh.status)}
+                className={`group rounded-lg border-2 p-2.5 cursor-pointer hover:shadow-md transition-all ${statusBgMap[gh.status]}`}
+                style={{ animation: `dash-card-in 0.45s ease ${0.05 + idx * 0.05}s both` }}
               >
-                <AlertTriangle
-                  className={`w-3.5 h-3.5 mt-0.5 flex-shrink-0 ${
-                    alert.level === "danger" ? "text-red-500" :
-                    alert.level === "warn" ? "text-yellow-500" :
-                    "text-gray-400"
-                  }`}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-medium text-gray-700 truncate">{alert.gh} · {alert.type}</div>
-                  <div className="text-xs text-gray-500">{alert.value}</div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-sm font-semibold text-gray-800 truncate">{gh.name}</span>
+                    <span className="text-[10px] bg-white/70 text-gray-500 px-1.5 py-0.5 rounded-full flex-shrink-0">
+                      {gh.crop}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {statusIconMap[gh.status]}
+                    <span
+                      className={`text-[10px] font-medium ${
+                        gh.status === "正常"
+                          ? "text-green-600"
+                          : gh.status === "告警"
+                          ? "text-red-500"
+                          : "text-gray-400"
+                      }`}
+                    >
+                      {gh.status}
+                    </span>
+                  </div>
                 </div>
-                <div className="text-xs text-gray-400 flex-shrink-0">{alert.time}</div>
+                <div className="grid grid-cols-4 gap-1 mb-1.5">
+                  {[
+                    { icon: <Thermometer className="w-3 h-3 text-orange-500" />, value: gh.temp, unit: "°C" },
+                    { icon: <Droplets className="w-3 h-3 text-blue-500" />, value: gh.humidity, unit: "%" },
+                    { icon: <Sun className="w-3 h-3 text-yellow-500" />, value: gh.light, unit: "" },
+                    { icon: <Wind className="w-3 h-3 text-green-500" />, value: gh.co2, unit: "" },
+                  ].map((s, i) => (
+                    <div key={i} className="flex items-center gap-1 bg-white/60 rounded px-1 py-0.5">
+                      {s.icon}
+                      <span className="text-[10px] font-medium text-gray-700 truncate">
+                        {s.value}
+                        {s.unit && <span className="text-gray-400 ml-0.5">{s.unit}</span>}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="text-gray-500">
+                    设备 {gh.onlineDevices}/{gh.deviceCount}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {gh.alerts > 0 && (
+                      <span className="flex items-center gap-0.5 text-red-500">
+                        <AlertTriangle className="w-2.5 h-2.5" />
+                        {gh.alerts}
+                      </span>
+                    )}
+                    <span className="flex items-center gap-0.5 text-green-600 group-hover:translate-x-0.5 transition-transform">
+                      <Eye className="w-2.5 h-2.5" />
+                      详情
+                    </span>
+                  </div>
+                </div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Pest Recognition: NFC 触碰识别 + 精灵芽芽自动给出防治方案 */}
-        <PestRecognitionCard />
+        {/* 右：当前选中的大卡片（害虫识别 / 温湿度趋势 / 最新告警） */}
+        <div className="col-span-2 min-h-0">
+          {selectedView === "pest" && <PestRecognitionCard />}
+          {selectedView === "trend" && (
+            <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm h-full flex flex-col">
+              <div className="flex items-center justify-between mb-4 flex-shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center shadow-md">
+                    <TrendingUp className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-gray-800">今日温湿度趋势（全场均值）</h3>
+                    <p className="text-xs text-gray-400 mt-0.5">业务六：历史数据趋势分析</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 text-xs text-gray-500">
+                  <span className="flex items-center gap-1"><span className="w-3 h-1.5 bg-orange-400 rounded inline-block" />温度</span>
+                  <span className="flex items-center gap-1"><span className="w-3 h-1.5 bg-blue-400 rounded inline-block" />湿度</span>
+                </div>
+              </div>
+              <div className="flex-1 min-h-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={trendData}>
+                    <defs>
+                      <linearGradient id="tempGradBig" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#fb923c" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#fb923c" stopOpacity={0} />
+                      </linearGradient>
+                      <linearGradient id="humGradBig" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#60a5fa" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#60a5fa" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="time" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Area type="monotone" dataKey="temp" stroke="#fb923c" fill="url(#tempGradBig)" strokeWidth={2} name="温度(°C)" />
+                    <Area type="monotone" dataKey="humidity" stroke="#60a5fa" fill="url(#humGradBig)" strokeWidth={2} name="湿度(%)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+          {selectedView === "alert" && (
+            <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm h-full flex flex-col">
+              <div className="flex items-center justify-between mb-4 flex-shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-400 to-red-600 flex items-center justify-center shadow-md">
+                    <AlertTriangle className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-gray-800">最新告警</h3>
+                    <p className="text-xs text-gray-400 mt-0.5">超阈与设备异常集中呈现</p>
+                  </div>
+                </div>
+                <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-semibold">{alertsData.length} 条</span>
+              </div>
+              <div className="space-y-2 flex-1 overflow-y-auto pr-1">
+                {alertsData.map((alert, i) => (
+                  <div
+                    key={i}
+                    className={`flex items-start gap-2.5 p-3 rounded-lg border ${
+                      alert.level === "danger" ? "bg-red-50 border-red-100" :
+                      alert.level === "warn" ? "bg-yellow-50 border-yellow-100" :
+                      "bg-gray-50 border-gray-100"
+                    }`}
+                  >
+                    <AlertTriangle
+                      className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
+                        alert.level === "danger" ? "text-red-500" :
+                        alert.level === "warn" ? "text-yellow-500" :
+                        "text-gray-400"
+                      }`}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-gray-700 truncate">{alert.gh} · {alert.type}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">当前值：{alert.value}</div>
+                    </div>
+                    <div className="text-xs text-gray-400 flex-shrink-0">{alert.time}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Bottom Row: 3 迷你卡片切换器 */}
+      <div className="grid grid-cols-3 gap-4">
+        {/* 温湿度趋势 迷你 */}
+        <button
+          type="button"
+          onClick={() => setSelectedView("trend")}
+          className={`text-left bg-white rounded-xl border-2 p-4 shadow-sm hover:shadow-md transition-all ${
+            selectedView === "trend" ? "border-orange-400 ring-2 ring-orange-100" : "border-gray-100 hover:border-orange-200"
+          }`}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center">
+                <TrendingUp className="w-4 h-4 text-white" />
+              </div>
+              <span className="text-sm font-semibold text-gray-800">温湿度趋势</span>
+            </div>
+            {selectedView === "trend" && (
+              <span className="text-[10px] text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded">查看中</span>
+            )}
+          </div>
+          <ResponsiveContainer width="100%" height={60}>
+            <AreaChart data={trendData} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
+              <defs>
+                <linearGradient id="tempGradMini" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#fb923c" stopOpacity={0.4} />
+                  <stop offset="95%" stopColor="#fb923c" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <Area type="monotone" dataKey="temp" stroke="#fb923c" fill="url(#tempGradMini)" strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+          <div className="text-[11px] text-gray-500 mt-1 flex items-center gap-2">
+            <span className="flex items-center gap-0.5"><TrendingUp className="w-3 h-3 text-orange-500" />峰值 28°C</span>
+            <span className="flex items-center gap-0.5"><TrendingDown className="w-3 h-3 text-blue-500" />低值 20°C</span>
+          </div>
+        </button>
+
+        {/* 最新告警 迷你 */}
+        <button
+          type="button"
+          onClick={() => setSelectedView("alert")}
+          className={`text-left bg-white rounded-xl border-2 p-4 shadow-sm hover:shadow-md transition-all ${
+            selectedView === "alert" ? "border-red-400 ring-2 ring-red-100" : "border-gray-100 hover:border-red-200"
+          }`}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-red-400 to-red-600 flex items-center justify-center">
+                <AlertTriangle className="w-4 h-4 text-white" />
+              </div>
+              <span className="text-sm font-semibold text-gray-800">最新告警</span>
+            </div>
+            {selectedView === "alert" && (
+              <span className="text-[10px] text-red-600 bg-red-50 px-1.5 py-0.5 rounded">查看中</span>
+            )}
+          </div>
+          <div className="flex items-baseline gap-1 mb-1">
+            <span className="text-2xl font-bold text-red-500">{alertsData.length}</span>
+            <span className="text-xs text-gray-400">条未处理</span>
+          </div>
+          <div className="text-[11px] text-gray-500 truncate">
+            最新：{alertsData[0].gh} · {alertsData[0].type} {alertsData[0].value}
+          </div>
+          <div className="text-[10px] text-gray-400 mt-0.5">{alertsData[0].time}</div>
+        </button>
+
+        {/* 害虫识别 迷你 */}
+        <button
+          type="button"
+          onClick={() => setSelectedView("pest")}
+          className={`text-left bg-white rounded-xl border-2 p-4 shadow-sm hover:shadow-md transition-all ${
+            selectedView === "pest" ? "border-emerald-400 ring-2 ring-emerald-100" : "border-gray-100 hover:border-emerald-200"
+          }`}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center">
+                <span className="text-white text-sm">🐛</span>
+              </div>
+              <span className="text-sm font-semibold text-gray-800">害虫识别</span>
+            </div>
+            {selectedView === "pest" && (
+              <span className="text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">查看中</span>
+            )}
+          </div>
+          <div className="text-xs text-gray-600 leading-snug">
+            扫码 / NFC 上传害虫图片
+          </div>
+          <div className="flex items-center gap-1 mt-1.5 text-[11px] text-emerald-600">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            精灵芽芽自动语音播报防治方案
+          </div>
+        </button>
       </div>
     </div>
   );

@@ -24,3 +24,7 @@ backend/models/
 人脸识别模型/
 活体检测模型/
 smartai/
+
+# Pest recognition runtime artifacts
+backend/pest-recognition-service/latest.json
+backend/pest-recognition-service/uploads/

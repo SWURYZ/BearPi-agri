@@ -38,7 +38,7 @@ declare global {
   }
 }
 
-type PetState = "idle" | "listening" | "thinking" | "speaking";
+export type PetState = "idle" | "listening" | "thinking" | "speaking";
 
 const AGRI_KEYWORDS = [
   "\u704c\u6e89","\u65bd\u8098","\u6e29\u5ea6","\u6e7f\u5ea6","\u5149\u7167","\u5149\u5f3a","\u8865\u5149",
@@ -67,7 +67,7 @@ function quickReply(t: string) {
 }
 
 // ─── Yaya SVG (same face, smaller) ────────────────────────────────────────
-function YayaFace({ state, size = 68 }: { state: PetState; size?: number }) {
+export function YayaFace({ state, size = 68 }: { state: PetState; size?: number }) {
   const thinking = state === "thinking";
   const speaking = state === "speaking";
   const listening = state === "listening";

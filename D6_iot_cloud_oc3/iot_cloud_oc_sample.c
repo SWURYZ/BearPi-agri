@@ -46,7 +46,7 @@
 #define PWM_DUTY_STEP 200
 #define PWM_STEP_DELAY_US 10000
 
-#define NFC_URI "harmonyos.com"
+#define NFC_URI "10.157.218.245:5000"
 #define NFC_BOOT_TEXT "BearPi OC3 NFC Ready"
 #define NFC_SYNC_INTERVAL_S 30
 

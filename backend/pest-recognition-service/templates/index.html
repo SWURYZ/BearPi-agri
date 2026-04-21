@@ -2,6 +2,158 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#059669">
+  <title>BearPi-agri · 害虫识别</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="page">
+    <!-- App Header -->
+    <header class="app-header">
+      <div class="app-logo">🐛</div>
+      <div>
+        <div class="app-title">害虫识别 · 智能防治</div>
+        <div class="app-subtitle">BearPi-agri · 智慧农业平台</div>
+      </div>
+      <div class="app-badge">
+        <span class="dot"></span>
+        在线
+      </div>
+    </header>
+
+    <!-- Upload Card -->
+    <section class="card">
+      <h1 class="card-title">
+        <span class="icon">📷</span>
+        拍照 / 上传图片
+      </h1>
+      <p class="card-sub">
+        请对准害虫近距离拍摄一张清晰图片，AI 将识别种类，识别完成后请返回电脑端总览大屏查看
+        <strong>精灵芽芽</strong>语音播报的防治方案。
+      </p>
+
+      <form method="post" enctype="multipart/form-data" class="upload-form" id="uploadForm">
+        <label class="upload-box" for="fileInput">
+          <div class="up-icon">📸</div>
+          <div class="up-title">点击拍照或选择图片</div>
+          <div class="up-hint">支持 JPG / PNG，建议正面近拍 · 单张 ≤ 10 MB</div>
+          <input id="fileInput" type="file" name="image" accept="image/*" capture="environment" required>
+        </label>
+        <div class="file-name" id="fileName"></div>
+        <button type="submit" id="submitBtn">
+          <span id="submitText">开始 AI 识别</span>
+        </button>
+      </form>
+
+      {% if error %}
+      <div class="error">⚠️ {{ error }}</div>
+      {% endif %}
+
+      {% if has_result %}
+      <div class="notice">
+        ✅ 识别完成，结果已同步到 <strong>总览大屏</strong>，请查看
+        <strong>精灵芽芽</strong> 给出的防治方案。
+      </div>
+      {% endif %}
+    </section>
+
+    {% if has_result %}
+    <!-- Result Card -->
+    <section class="card">
+      <h1 class="card-title">
+        <span class="icon">🔬</span>
+        识别结果
+      </h1>
+
+      <div class="result">
+        <div class="preview">
+          <img src="{{ image_path }}" alt="uploaded image">
+        </div>
+
+        <div class="metrics">
+          <div class="result-summary">
+            <div class="pest-zh">{{ top1_name_zh }}</div>
+            <div class="pest-en">{{ top1_name_en }}</div>
+            <div class="conf">
+              <span class="conf-label">置信度</span>
+              <div class="conf-bar"><span data-percent="{{ '%.2f' % (top1_conf * 100) }}"></span></div>
+              <span class="conf-value">{{ '%.2f' % (top1_conf * 100) }}%</span>
+            </div>
+          </div>
+
+          <h3>Top-5 候选</h3>
+          <div class="top5-bars">
+            {% for row in top5_rows %}
+            <div class="bar-row">
+              <div class="bar-label">{{ row.class_zh }} <span style="color:#9ca3af;font-weight:400;font-size:11px">· {{ row.class_en }}</span></div>
+              <div class="bar-track">
+                <div class="bar-fill" data-percent="{{ '%.2f' % row.percent }}"></div>
+              </div>
+              <div class="bar-value">{{ '%.2f' % row.percent }}%</div>
+            </div>
+            {% endfor %}
+          </div>
+
+          <p class="meta" style="margin-top:14px">
+            <strong>识别模型：</strong>{{ model_path }}
+          </p>
+        </div>
+      </div>
+    </section>
+    {% endif %}
+
+    <footer class="app-footer">
+      <div><span class="brand">BearPi-agri</span> · 智慧农业 · NFC + AI 害虫识别</div>
+      <div style="margin-top:2px">© 2026 智慧农业研究小组</div>
+    </footer>
+  </main>
+
+  <script>
+    // 进度条动画
+    requestAnimationFrame(() => {
+      document.querySelectorAll('[data-percent]').forEach((el) => {
+        const p = Number(el.getAttribute('data-percent') || '0');
+        const safe = Math.max(0, Math.min(100, p));
+        el.style.width = safe.toFixed(2) + '%';
+      });
+    });
+
+    // 文件名预览 + loading 态
+    const fileInput = document.getElementById('fileInput');
+    const fileName = document.getElementById('fileName');
+    const form = document.getElementById('uploadForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const submitText = document.getElementById('submitText');
+
+    if (fileInput) {
+      fileInput.addEventListener('change', () => {
+        const f = fileInput.files && fileInput.files[0];
+        if (f) {
+          const sizeKB = (f.size / 1024).toFixed(1);
+          fileName.textContent = '📎 ' + f.name + ' (' + sizeKB + ' KB)';
+          fileName.classList.add('show');
+        } else {
+          fileName.classList.remove('show');
+        }
+      });
+    }
+
+    if (form) {
+      form.addEventListener('submit', () => {
+        if (submitBtn && submitText) {
+          submitBtn.disabled = true;
+          submitText.innerHTML = '<span class="btn-spinner"></span>识别中，请稍候…';
+        }
+      });
+    }
+  </script>
+</body>
+</html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>BearPi-agri · 害虫识别</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">

@@ -1074,6 +1074,28 @@ export function YayaFloatingAssistant() {
     }
   }, [handleContinuousTranscript, push]);
 
+  // ── 全局桥：其它组件可通过 window.dispatchEvent(new CustomEvent("yaya:speak", { detail: {...} })) 让芽芽开口
+  useEffect(() => {
+    const onSpeak = (e: Event) => {
+      const detail = (e as CustomEvent<{ text: string; userText?: string; openPanel?: boolean }>).detail;
+      if (!detail || !detail.text) return;
+      if (detail.userText) push("user", detail.userText);
+      push("assistant", detail.text);
+      if (detail.openPanel) setOpen(true);
+      speakText(detail.text);
+    };
+    const onStop = () => {
+      try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
+      setVoiceState("idle");
+    };
+    window.addEventListener("yaya:speak", onSpeak as EventListener);
+    window.addEventListener("yaya:stop", onStop);
+    return () => {
+      window.removeEventListener("yaya:speak", onSpeak as EventListener);
+      window.removeEventListener("yaya:stop", onStop);
+    };
+  }, [push, speakText]);
+
   // ── Gesture recognition handler ────────────────────────────────────────────
   const triggerGestureAnim = useCallback((anim: GestureAnim, duration: number) => {
     if (gestureAnimTimerRef.current !== null) window.clearTimeout(gestureAnimTimerRef.current);

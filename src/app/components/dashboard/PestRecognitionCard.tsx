@@ -1,21 +1,54 @@
 import { useEffect, useRef, useState } from "react";
-import { Bug, Smartphone, RefreshCw, Sparkles, X, Radio, Copy, Check } from "lucide-react";
+import {
+  Bug,
+  Smartphone,
+  RefreshCw,
+  Sparkles,
+  X,
+  Radio,
+  Copy,
+  Check,
+  Volume2,
+  VolumeX,
+  QrCode,
+} from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import {
   fetchLatestInsectResult,
   clearLatestInsectResult,
   type InsectLatestResult,
 } from "../../services/insectRecognition";
 import { streamAgriAgentChat } from "../../services/agriAgent";
+import { speak, stopSpeaking, isTTSSupported, isSpeaking } from "../../lib/speech";
+
+// 向全局漂浮芽芽发送说话指令
+function triggerYayaSpeak(text: string, userText?: string) {
+  window.dispatchEvent(
+    new CustomEvent("yaya:speak", {
+      detail: { text, userText, openPanel: true },
+    }),
+  );
+}
+function triggerYayaStop() {
+  window.dispatchEvent(new Event("yaya:stop"));
+}
 
 /**
- * 总览大屏 · 害虫识别卡片（NFC 版）
- * - 通过 NFC 把 Flask 上传页 URL 推送给手机（Web NFC 写卡 / NT3H 标签）
- * - 自动轮询最新识别结果
- * - 拿到害虫名后自动询问精灵芽芽防治方案
+ * 总览大屏 · 害虫识别大卡片（NFC + 二维码 双入口）
+ * 左侧：NFC 写入 / 二维码扫码
+ * 右侧：识别结果 + 精灵芽芽流式防治方案 + TTS 播报
  */
 export function PestRecognitionCard() {
   const [mobileUrl] = useState(() => {
+    // 手机端需要可路由到本机的局域网 IP，与 D6 NFC 配置保持一致
+    // 优先用环境变量；否则若浏览器是 localhost 则回退到固定局域网 IP，
+    // 若已经用 IP 访问则沿用当前 hostname
+    const envIp = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_PEST_HOST;
+    if (envIp) return `http://${envIp}:5000/`;
     const host = window.location.hostname || "localhost";
+    if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0") {
+      return "http://10.157.218.245:5000/";
+    }
     return `http://${host}:5000/`;
   });
 
@@ -24,12 +57,16 @@ export function PestRecognitionCard() {
 
   const [agentText, setAgentText] = useState<string>("");
   const [agentLoading, setAgentLoading] = useState(false);
-  const [showResult, setShowResult] = useState(false);
 
+  const [entry, setEntry] = useState<"nfc" | "qr">("qr");
   const [nfcSupported] = useState<boolean>(typeof window !== "undefined" && "NDEFReader" in window);
   const [nfcStatus, setNfcStatus] = useState<"idle" | "writing" | "ok" | "fail">("idle");
   const [nfcMsg, setNfcMsg] = useState<string>("");
   const [copied, setCopied] = useState(false);
+
+  const ttsSupported = isTTSSupported();
+  const [ttsEnabled, setTtsEnabled] = useState(true);
+  const [speaking, setSpeaking] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -40,7 +77,6 @@ export function PestRecognitionCard() {
       if (data.timestamp <= lastTimestampRef.current) return;
       lastTimestampRef.current = data.timestamp;
       setLatest(data);
-      setShowResult(true);
       askAgent(data.top1_name_zh || data.top1_name_en);
       clearLatestInsectResult();
     };
@@ -50,6 +86,13 @@ export function PestRecognitionCard() {
     return () => {
       alive = false;
       window.clearInterval(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopSpeaking();
     };
   }, []);
 
@@ -72,6 +115,15 @@ export function PestRecognitionCard() {
           },
         },
       );
+      if (ttsEnabled && acc.trim()) {
+        setSpeaking(true);
+        // 优先走全局漂浮芽芽，避免两处同时说话
+        const summary = `检测到害虫${pestName}。${acc}`;
+        triggerYayaSpeak(summary, `帮我分析害虫「${pestName}」的防治方案`);
+        // 本地状态在下一轮流式启动时重置；这里粗略估计一个播报时长
+        const estMs = Math.min(60_000, Math.max(4000, summary.length * 180));
+        window.setTimeout(() => setSpeaking(false), estMs);
+      }
     } catch (err) {
       setAgentText(`查询失败：${err instanceof Error ? err.message : "未知错误"}`);
     } finally {
@@ -79,8 +131,34 @@ export function PestRecognitionCard() {
     }
   };
 
+  const toggleTts = () => {
+    if (speaking || isSpeaking()) {
+      triggerYayaStop();
+      stopSpeaking();
+      setSpeaking(false);
+      setTtsEnabled(false);
+    } else {
+      setTtsEnabled((v) => !v);
+    }
+  };
+
+  const replaySpeak = () => {
+    if (!agentText.trim()) return;
+    triggerYayaStop();
+    stopSpeaking();
+    setSpeaking(true);
+    setTtsEnabled(true);
+    const pest = latest?.top1_name_zh || latest?.top1_name_en || "";
+    const summary = pest ? `检测到害虫${pest}。${agentText}` : agentText;
+    triggerYayaSpeak(summary, pest ? `重新讲一次「${pest}」的防治方案` : undefined);
+    const estMs = Math.min(60_000, Math.max(4000, summary.length * 180));
+    window.setTimeout(() => setSpeaking(false), estMs);
+  };
+
   const dismiss = () => {
-    setShowResult(false);
+    triggerYayaStop();
+    stopSpeaking();
+    setSpeaking(false);
     setLatest(null);
     setAgentText("");
   };
@@ -115,124 +193,221 @@ export function PestRecognitionCard() {
     }
   };
 
+  const hasResult = !!latest;
+
   return (
-    <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm relative overflow-hidden h-full flex flex-col">
-      <div className="flex items-center justify-between mb-3 flex-shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center flex-shrink-0">
-            <Bug className="w-4 h-4 text-white" />
+    <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm relative overflow-hidden h-full flex flex-col">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4 flex-shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center shadow-md flex-shrink-0">
+            <Bug className="w-5 h-5 text-white" />
           </div>
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-gray-800">害虫识别</h3>
-            <p className="text-[11px] text-gray-400 mt-0.5 truncate">NFC 触碰 · AI 识别 · 智能防治</p>
+            <h3 className="text-base font-bold text-gray-800">害虫识别 · 智能防治</h3>
+            <p className="text-xs text-gray-400 mt-0.5 truncate">手机端拍照上传 · AI 识别 · 精灵芽芽自动给出防治方案</p>
           </div>
         </div>
-        {showResult && (
-          <button
-            onClick={dismiss}
-            className="text-gray-400 hover:text-gray-600 text-xs flex items-center gap-1 flex-shrink-0"
-            title="清除当前结果"
-          >
-            <RefreshCw className="w-3 h-3" />
-          </button>
-        )}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-[11px]">
+            <button
+              onClick={() => setEntry("qr")}
+              className={`px-2.5 py-1 rounded-md flex items-center gap-1 transition-colors ${
+                entry === "qr" ? "bg-white text-emerald-700 shadow-sm" : "text-gray-500"
+              }`}
+            >
+              <QrCode className="w-3 h-3" /> 二维码
+            </button>
+            <button
+              onClick={() => setEntry("nfc")}
+              className={`px-2.5 py-1 rounded-md flex items-center gap-1 transition-colors ${
+                entry === "nfc" ? "bg-white text-emerald-700 shadow-sm" : "text-gray-500"
+              }`}
+            >
+              <Radio className="w-3 h-3" /> NFC
+            </button>
+          </div>
+          {hasResult && (
+            <button
+              onClick={dismiss}
+              className="text-gray-400 hover:text-gray-600 text-xs p-1 rounded hover:bg-gray-100"
+              title="清除当前结果"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
-      {!showResult ? (
-        <div className="flex-1 flex flex-col gap-2.5">
-          <div className="relative flex items-center justify-center py-3 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-lg border border-emerald-100">
-            <div className="relative">
-              <div className="w-14 h-14 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-md">
-                <Radio className="w-7 h-7 text-white" />
+      {/* Body: 左侧入口 + 右侧识别结果 */}
+      <div className="flex-1 grid grid-cols-5 gap-4 min-h-0">
+        {/* ========== 左侧：登录入口 ========== */}
+        <div className="col-span-2 bg-gradient-to-br from-emerald-50 via-teal-50 to-green-50 border border-emerald-100 rounded-xl p-3 flex flex-col">
+          {entry === "qr" ? (
+            <>
+              <div className="text-xs font-semibold text-emerald-700 flex items-center gap-1.5 mb-2 flex-shrink-0">
+                <QrCode className="w-3.5 h-3.5" />
+                <span>扫码登录拍照</span>
               </div>
-              <span className="absolute inset-0 rounded-full border-2 border-emerald-400 animate-ping opacity-40" />
-              <span className="absolute -inset-2 rounded-full border border-emerald-300 animate-ping opacity-20" style={{ animationDelay: "0.5s" }} />
-            </div>
-          </div>
-
-          <div className="text-[11px] text-gray-600 space-y-1.5">
-            <div className="flex items-center gap-1.5 text-emerald-700 font-medium">
-              <Smartphone className="w-3.5 h-3.5" />
-              <span>手机靠近 NFC 标签</span>
-            </div>
-            <p className="text-gray-500 leading-snug text-[11px]">
-              触碰后浏览器自动打开拍照页，识别结果将在此卡片<strong className="text-emerald-700">自动展示</strong>。
-            </p>
-
-            <div className="flex items-center gap-1 bg-gray-50 rounded border border-gray-200 px-2 py-1">
-              <code className="flex-1 text-[10px] text-gray-700 truncate" title={mobileUrl}>{mobileUrl}</code>
-              <button onClick={copyUrl} className="text-emerald-600 hover:text-emerald-700 flex-shrink-0" title="复制链接">
-                {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-              </button>
-            </div>
-
-            <button
-              onClick={writeNfc}
-              disabled={nfcStatus === "writing"}
-              className="w-full px-2 py-1 text-[11px] rounded bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1"
-              title={nfcSupported ? "调用 Web NFC 写入" : "浏览器不支持，请到 NT3H 标签预烧录"}
-            >
-              <Radio className="w-3 h-3" />
-              {nfcStatus === "writing" ? "写入中…" : "写入 NFC 标签"}
-            </button>
-
-            {nfcStatus !== "idle" && (
-              <div
-                className={`text-[10px] leading-tight ${
-                  nfcStatus === "ok" ? "text-emerald-600" : nfcStatus === "fail" ? "text-red-500" : "text-gray-500"
-                }`}
+              <div className="flex-1 flex items-center justify-center">
+                <div className="bg-white p-2.5 rounded-lg shadow-md border border-emerald-100">
+                  <QRCodeSVG
+                    value={mobileUrl}
+                    size={140}
+                    level="M"
+                    bgColor="#ffffff"
+                    fgColor="#047857"
+                    includeMargin={false}
+                  />
+                </div>
+              </div>
+              <div className="text-[10px] text-gray-500 text-center mt-2 leading-snug">
+                <Smartphone className="w-3 h-3 inline mr-0.5" />
+                微信/相机扫一扫，跳转上传页
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-xs font-semibold text-emerald-700 flex items-center gap-1.5 mb-2 flex-shrink-0">
+                <Radio className="w-3.5 h-3.5" />
+                <span>NFC 触碰登录</span>
+              </div>
+              <div className="flex-1 flex items-center justify-center relative">
+                <div className="relative">
+                  <div className="w-20 h-20 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-lg">
+                    <Radio className="w-10 h-10 text-white" />
+                  </div>
+                  <span className="absolute inset-0 rounded-full border-2 border-emerald-400 animate-ping opacity-40" />
+                  <span
+                    className="absolute -inset-3 rounded-full border border-emerald-300 animate-ping opacity-20"
+                    style={{ animationDelay: "0.5s" }}
+                  />
+                </div>
+              </div>
+              <button
+                onClick={writeNfc}
+                disabled={nfcStatus === "writing"}
+                className="w-full mt-2 px-2 py-1.5 text-[11px] rounded bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50 flex items-center justify-center gap-1"
               >
-                {nfcMsg}
-              </div>
-            )}
-            {!nfcSupported && nfcStatus === "idle" && (
-              <div className="text-[10px] text-gray-400 leading-tight">
-                提示：BearPi 板载 NT3H 标签可预烧录此 URL，手机靠近即跳转。
-              </div>
-            )}
+                <Radio className="w-3 h-3" />
+                {nfcStatus === "writing" ? "写入中…" : "写入 NFC 标签"}
+              </button>
+              {nfcStatus !== "idle" && (
+                <div
+                  className={`text-[10px] leading-tight mt-1 text-center ${
+                    nfcStatus === "ok" ? "text-emerald-600" : nfcStatus === "fail" ? "text-red-500" : "text-gray-500"
+                  }`}
+                >
+                  {nfcMsg}
+                </div>
+              )}
+              {!nfcSupported && nfcStatus === "idle" && (
+                <div className="text-[10px] text-gray-400 leading-tight mt-1 text-center">
+                  BearPi 板载 NT3H 已预烧录
+                </div>
+              )}
+            </>
+          )}
+          <div className="flex items-center gap-1 bg-white rounded border border-emerald-100 px-2 py-1 mt-2 flex-shrink-0">
+            <code className="flex-1 text-[10px] text-gray-700 truncate" title={mobileUrl}>
+              {mobileUrl}
+            </code>
+            <button
+              onClick={copyUrl}
+              className="text-emerald-600 hover:text-emerald-700 flex-shrink-0"
+              title="复制链接"
+            >
+              {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+            </button>
           </div>
         </div>
-      ) : (
-        <div className="space-y-2 flex-1 flex flex-col min-h-0">
-          {latest && (
-            <div className="flex items-start gap-2">
-              {latest.image_url && (
-                <img
-                  src={latest.image_url}
-                  alt={latest.top1_name_zh}
-                  className="w-14 h-14 rounded-lg object-cover border border-gray-200 flex-shrink-0"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = "none";
-                  }}
-                />
-              )}
-              <div className="flex-1 min-w-0">
-                <div className="text-[10px] text-gray-400">识别结果</div>
-                <div className="text-sm font-bold text-emerald-700 truncate">
-                  {latest.top1_name_zh || latest.top1_name_en}
+
+        {/* ========== 右侧：识别结果 + 精灵芽芽 ========== */}
+        <div className="col-span-3 flex flex-col min-h-0 gap-2">
+          {hasResult ? (
+            <>
+              <div className="flex items-center gap-3 bg-white border border-emerald-100 rounded-lg p-2.5 flex-shrink-0">
+                {latest?.image_url && (
+                  <img
+                    src={latest.image_url}
+                    alt={latest.top1_name_zh}
+                    className="w-16 h-16 rounded-lg object-cover border border-gray-200 flex-shrink-0"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = "none";
+                    }}
+                  />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-[10px] text-gray-400">识别结果</div>
+                  <div className="text-base font-bold text-emerald-700 truncate">
+                    {latest?.top1_name_zh || latest?.top1_name_en}
+                  </div>
+                  <div className="text-[11px] text-gray-500 truncate">
+                    {latest?.top1_name_en} · 置信度 {((latest?.top1_conf || 0) * 100).toFixed(1)}%
+                  </div>
                 </div>
-                <div className="text-[10px] text-gray-500 truncate">
-                  {latest.top1_name_en} · {(latest.top1_conf * 100).toFixed(1)}%
+                <button
+                  onClick={dismiss}
+                  className="text-gray-400 hover:text-red-500 flex-shrink-0 p-1"
+                  title="关闭"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="bg-gradient-to-br from-emerald-50 to-green-50 border border-emerald-100 rounded-lg p-3 flex-1 min-h-0 flex flex-col">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 mb-1.5 flex-shrink-0">
+                  <Sparkles className={`w-3.5 h-3.5 flex-shrink-0 ${agentLoading ? "animate-pulse" : ""}`} />
+                  <span className="truncate">精灵芽芽 · 防治方案</span>
+                  {agentLoading && <span className="text-emerald-500 text-[10px] flex-shrink-0">生成中…</span>}
+                  {speaking && !agentLoading && (
+                    <span className="text-emerald-500 text-[10px] flex-shrink-0">📢 芽芽播报中…</span>
+                  )}
+                  <div className="ml-auto flex items-center gap-1 flex-shrink-0">
+                    {ttsSupported && agentText && !agentLoading && (
+                      <button
+                        onClick={replaySpeak}
+                        className="text-emerald-600 hover:text-emerald-700 p-0.5"
+                        title="让芽芽重新播报"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                      </button>
+                    )}
+                    {ttsSupported && (
+                      <button
+                        onClick={toggleTts}
+                        className={`${ttsEnabled ? "text-emerald-600" : "text-gray-400"} hover:text-emerald-700 p-0.5`}
+                        title={ttsEnabled ? (speaking ? "停止芽芽播报" : "已开启语音播报") : "已关闭语音播报"}
+                      >
+                        {ttsEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap overflow-y-auto flex-1">
+                  {agentText || (agentLoading ? "正在分析…" : "等待精灵芽芽响应…")}
                 </div>
               </div>
-              <button onClick={dismiss} className="text-gray-400 hover:text-red-500 flex-shrink-0" title="关闭">
-                <X className="w-4 h-4" />
-              </button>
+            </>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-center bg-gray-50/50 border border-dashed border-gray-200 rounded-lg p-4">
+              <div className="w-16 h-16 rounded-full bg-emerald-50 flex items-center justify-center mb-3">
+                <Bug className="w-8 h-8 text-emerald-400" />
+              </div>
+              <div className="text-sm font-semibold text-gray-700 mb-1">等待手机端上传图片</div>
+              <p className="text-[11px] text-gray-500 leading-relaxed max-w-[260px]">
+                {entry === "qr" ? "微信/相机扫描左侧二维码" : "手机靠近 NFC 标签"}，
+                打开拍照页上传害虫图片，识别结果将
+                <strong className="text-emerald-700">自动展示</strong>并由
+                <strong className="text-emerald-700">精灵芽芽</strong>语音播报防治方案。
+              </p>
+              <div className="mt-3 flex items-center gap-1.5 text-[10px] text-gray-400">
+                <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+                每 3 秒自动检测中…
+              </div>
             </div>
           )}
-
-          <div className="bg-gradient-to-br from-emerald-50 to-green-50 border border-emerald-100 rounded-lg p-2.5 flex-1 min-h-0 flex flex-col">
-            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 mb-1 flex-shrink-0">
-              <Sparkles className={`w-3.5 h-3.5 ${agentLoading ? "animate-pulse" : ""}`} />
-              <span>精灵芽芽 · 防治方案</span>
-              {agentLoading && <span className="text-emerald-500 text-[10px]">生成中…</span>}
-            </div>
-            <div className="text-[11px] text-gray-700 leading-relaxed whitespace-pre-wrap overflow-y-auto flex-1">
-              {agentText || (agentLoading ? "正在分析…" : "等待精灵芽芽响应…")}
-            </div>
-          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
