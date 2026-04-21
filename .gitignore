@@ -14,6 +14,8 @@ backend/face-service.log
 *.onnx
 *.pt
 backend/models/
+!backend/models/gesture_model.tflite
+!backend/models/labels.json
 人脸检测模型/
 人脸识别模型/
 活体检测模型/
