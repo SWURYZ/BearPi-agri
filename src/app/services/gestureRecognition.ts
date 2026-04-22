@@ -223,6 +223,47 @@ function processFrame(): void {
     const lm = result.landmarks[0];
     detected = latestModelGesture;
 
+    // 全局广播原始 landmark（每帧），供 3D 视角拖拽等连续控制使用
+    if (typeof window !== "undefined") {
+      const wrist = lm[0];
+      const p9 = lm[9], p4 = lm[4], p8 = lm[8];
+      // 4 指（食指/中指/无名指/小指）的指尖与对应 MCP（掌指关节）距腕距离
+      // 用于消费端做握拳几何判定（指尖距腕 < MCP 距腕 → 弯曲）
+      const dist = (a: typeof wrist, b: typeof wrist) =>
+        Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+      const tipsToWrist = [
+        dist(lm[8],  wrist), dist(lm[12], wrist),
+        dist(lm[16], wrist), dist(lm[20], wrist),
+      ];
+      const mcpsToWrist = [
+        dist(lm[5],  wrist), dist(lm[9],  wrist),
+        dist(lm[13], wrist), dist(lm[17], wrist),
+      ];
+      // 手掌基准长度：腕(0) → 中指根(9) 的距离，用于标准化位移
+      const palmRefLength = dist(wrist, p9);
+      // 手掌宽度：食指根(5) → 小指根(17)；用于标准化捏合距离（与离镜头远近无关）
+      const palmWidth = dist(lm[5], lm[17]);
+      // 原始捏合像素距离
+      const pinchPx = Math.hypot(p4.x - p8.x, p4.y - p8.y, p4.z - p8.z);
+      // 标准化捏合比例：捏紧 ≈ 0~0.1；自然 ≈ 0.5；张开 > 1.2
+      const pinchRatio = pinchPx / Math.max(palmWidth, 1e-4);
+
+      window.dispatchEvent(new CustomEvent("yaya:hand", {
+        detail: {
+          timestamp: now,
+          anchor: { x: p9.x, y: p9.y, z: p9.z },          // 中指根部 → 旋转锚点
+          thumbTip: { x: p4.x, y: p4.y, z: p4.z },        // 大拇指尖
+          indexTip: { x: p8.x, y: p8.y, z: p8.z },        // 食指尖
+          pinchDistance: pinchPx,                         // 原始像素距离（保留兼容）
+          pinchRatio,                                     // ★ 标准化捏合比例（推荐使用）
+          palmWidth,                                      // 手掌宽度（5→17）
+          tipsToWrist,                                    // [食指,中指,无名指,小指] 指尖距腕
+          mcpsToWrist,                                    // [食指,中指,无名指,小指] MCP 距腕
+          palmRefLength,                                  // 手掌基准长度（用于标准化位移）
+        },
+      }));
+    }
+
     if (!inferenceInFlight) {
       inferenceInFlight = true;
       const seq = ++inferenceSeq;
@@ -239,6 +280,9 @@ function processFrame(): void {
   } else {
     latestModelGesture = "none";
     inferenceSeq += 1;
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("yaya:hand-lost"));
+    }
   }
 
   // Debounce: gesture must be held continuously for the required duration before emitting
@@ -261,7 +305,12 @@ function processFrame(): void {
         lastEmittedTime    = now;
         lastAnyTime        = now;
         pendingStartTime   = now; // 重置，下次需再持续 2 秒
-        currentCallback?.({ gesture: detected, timestamp: now });
+        const evt: GestureEvent = { gesture: detected, timestamp: now };
+        currentCallback?.(evt);
+        // 全局广播：其它模块（如 3D 数字孪生视角控制）可监听
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent<GestureEvent>("yaya:gesture", { detail: evt }));
+        }
       }
     }
   } else {

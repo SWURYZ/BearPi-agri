@@ -6,10 +6,11 @@
  * - 鼠标悬浮高亮，名字浮空显示
  * - 状态指示：补光灯亮 → 灯泡发黄光；风扇开 → 蓝色风扇标识旋转
  */
-import { Suspense, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, type ThreeEvent } from "@react-three/fiber";
 import { OrbitControls, Html, ContactShadows } from "@react-three/drei";
 import * as THREE from "three";
+import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 
 const CROP_PAL: Record<string, [string, string]> = {
   "番茄": ["#ef4444", "#16a34a"],
@@ -812,6 +813,262 @@ function FarmScene({
 // ============================================================
 export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
   const [hoveredName, setHoveredName] = useState<string | null>(null);
+  // 进入此组件即自动开启手势控制
+  const [gestureMode, setGestureMode] = useState(true);
+  const [handStatus, setHandStatus] = useState<"idle" | "tracking" | "lost">("idle");
+  const orbitRef = useRef<OrbitControlsImpl | null>(null);
+  const initialCamPos = useRef<[number, number, number]>([9, 7, 9]);
+  const initialTarget = useRef<[number, number, number]>([0, 0.5, 0]);
+
+  // ── 手势驱动 3D 视角："地球仪式握拳拖拽" + 张开手时双指捏合缩放（带平滑） ──
+  useEffect(() => {
+    if (!gestureMode) {
+      setHandStatus("idle");
+      return;
+    }
+    setHandStatus("tracking");
+
+    // ── 状态机：是否正在抓取 ──
+    let isGrabbing = false;
+    // 抓取瞬间记录的锚点（手掌中心 X/Y）+ 手掌基准长度（用于标准化）
+    let anchorX = 0;
+    let anchorY = 0;
+    let anchorTheta = 0;     // 抓取瞬间的相机 theta
+    let anchorPhi = 0;       // 抓取瞬间的相机 phi
+    let refLength = 1;       // 手掌基准长度（腕 → 中指根）
+
+    // 缩放（仅在"未抓取"时启用，连续增量式：每帧 Δratio 转指数因子乘到 targetRadius）
+    let prevPinchRatio: number | null = null;       // 上一帧已平滑的 pinchRatio
+
+    // 相机平滑目标
+    let targetTheta = 0;
+    let targetPhi = 0;
+    let targetRadius = 0;
+    let initialized = false;
+
+    // ── 参数 ──
+    // 拖拽：标准化位移 = ΔX / 手掌基准长度，再乘以以下系数得到弧度
+    const DRAG_GAIN_X = 3.5;            // 横向：手平移≈1 个手掌长度 → 转 3.5 弧度
+    const DRAG_GAIN_Y = 2.6;            // 纵向：稍弱
+    const DRAG_DEADZONE = 0.05;         // 标准化偏移 < 5% 视为不动（死区）
+    // ── 缩放：行业标准"增量 + 指数 + 目标逼近"三步走 ──
+    // 1) 增量驱动：取 pinchRatio 的"帧间差值 Δ"作为信号源（手指捏合像鼠标滚轮）
+    // 2) 指数映射：Δ → 比例因子，乘到 targetRadius 上（人对缩放的感知是乘法）
+    // 3) 目标逼近：targetRadius 由 One Euro Filter 平滑收敛到实际相机半径
+    // 标准化捏合比例 pinchRatio = dist(拇指尖4, 食指尖8) / dist(食指根5, 小指根17)
+    const ZOOM_GAIN = 1.6;                // 指数增益：Δratio=1 → 半径 ×e^(±1.6) ≈ ±5x
+    const ZOOM_DEADZONE = 0.012;          // |Δratio| < 0.012 视为手颤，丢弃
+    const ZOOM_DELTA_CLAMP = 0.15;        // 单帧 |Δratio| 超过 0.15 视为跳变（识别噪声），丢弃
+    const PINCH_VALID_MIN = 0.05;         // pinchRatio 太小（手指完全重叠）通常是误检，跳过
+    const PINCH_VALID_MAX = 1.6;          // pinchRatio 太大（关键点跳飞）跳过
+    // ── 平滑滤波：One Euro Filter ──
+    // 静止/微动时大幅平滑（消除手颤），快速移动时几乎零延迟跟随
+    // 参考: https://gery.casiez.net/1euro/
+    class OneEuroFilter {
+      private xPrev: number | null = null;
+      private dxPrev = 0;
+      private tPrev = 0;
+      constructor(private minCutoff: number, private beta: number, private dCutoff: number) {}
+      private alpha(cutoff: number, dt: number) {
+        const tau = 1 / (2 * Math.PI * cutoff);
+        return 1 / (1 + tau / dt);
+      }
+      reset() { this.xPrev = null; this.dxPrev = 0; this.tPrev = 0; }
+      filter(x: number, t: number): number {
+        if (this.xPrev === null) { this.xPrev = x; this.tPrev = t; return x; }
+        const dt = Math.max((t - this.tPrev) / 1000, 1e-3); // 秒
+        const dx = (x - this.xPrev) / dt;
+        const aD = this.alpha(this.dCutoff, dt);
+        const dxHat = aD * dx + (1 - aD) * this.dxPrev;
+        const cutoff = this.minCutoff + this.beta * Math.abs(dxHat);
+        const aX = this.alpha(cutoff, dt);
+        const xHat = aX * x + (1 - aX) * this.xPrev;
+        this.xPrev = xHat;
+        this.dxPrev = dxHat;
+        this.tPrev = t;
+        return xHat;
+      }
+    }
+    // 角度（弧度）：minCutoff 越小越柔；beta 越大对快速运动响应越灵敏
+    const filterTheta  = new OneEuroFilter(/*min*/0.8, /*beta*/0.4, /*dCutoff*/1.0);
+    const filterPhi    = new OneEuroFilter(0.8, 0.4, 1.0);
+    // 半径：minCutoff 偏柔，beta 略大，让快速捏合时仍能跟住，慢动作时极致平滑
+    const filterRadius = new OneEuroFilter(/*min*/1.2, /*beta*/0.6, /*dCutoff*/1.0);
+    // pinchRatio 源头平滑：手指尖抖动幅度大，必须在【输入端】先吃掉抖动
+    const filterPinch  = new OneEuroFilter(/*min*/1.5, /*beta*/0.05, /*dCutoff*/1.0);
+
+    const initSpherical = () => {
+      const ctl = orbitRef.current;
+      if (!ctl || initialized) return;
+      const cam = ctl.object as THREE.PerspectiveCamera;
+      const offset = new THREE.Vector3().subVectors(cam.position, ctl.target);
+      const sph = new THREE.Spherical().setFromVector3(offset);
+      targetTheta = sph.theta;
+      targetPhi = sph.phi;
+      targetRadius = sph.radius;
+      initialized = true;
+    };
+
+    // 几何判定：4 指（食指/中指/无名指/小指）指尖距腕 < MCP 距腕 → 该指弯曲
+    // 4 指都弯曲 → 握拳
+    const detectFist = (tipsToWrist: number[], mcpsToWrist: number[]): boolean => {
+      let bent = 0;
+      for (let i = 0; i < 4; i += 1) {
+        // 指尖距腕 / MCP 距腕 < 0.95 视为弯曲（留 5% 缓冲，避免临界抖动）
+        if (tipsToWrist[i] < mcpsToWrist[i] * 0.95) bent += 1;
+      }
+      return bent >= 4;
+    };
+
+    const handHandler = (ev: Event) => {
+      const detail = (ev as CustomEvent<{
+        anchor: { x: number; y: number };
+        pinchDistance: number;
+        pinchRatio: number;
+        palmWidth: number;
+        tipsToWrist: number[];
+        mcpsToWrist: number[];
+        palmRefLength: number;
+        timestamp?: number;
+      }>).detail;
+      if (!detail) return;
+      setHandStatus("tracking");
+      initSpherical();
+
+      const now = detail.timestamp ?? performance.now();
+      const fistNow = detectFist(detail.tipsToWrist, detail.mcpsToWrist);
+
+      // ── 状态切换：张开 → 握拳：设定锚点 ──
+      if (fistNow && !isGrabbing) {
+        isGrabbing = true;
+        anchorX = detail.anchor.x;
+        anchorY = detail.anchor.y;
+        anchorTheta = targetTheta;
+        anchorPhi = targetPhi;
+        refLength = Math.max(detail.palmRefLength, 1e-3);
+      }
+
+      // ── 状态切换：握拳 → 张开：释放 ──
+      if (!fistNow && isGrabbing) {
+        isGrabbing = false;
+        // 释放后立即把缩放基线重置（避免把"释放瞬间的快速变化"当作有效缩放增量）
+        prevPinchRatio = null;
+        filterPinch.reset();
+      }
+
+      if (isGrabbing) {
+        // 握拳拖拽：相对于锚点 + 标准化 + 死区 → 绝对设定相机
+        const dx = detail.anchor.x - anchorX;
+        const dy = detail.anchor.y - anchorY;
+        const normX = dx / refLength;
+        const normY = dy / refLength;
+
+        // 死区：小于阈值视为零
+        const ndx = Math.abs(normX) < DRAG_DEADZONE ? 0 : normX;
+        const ndy = Math.abs(normY) < DRAG_DEADZONE ? 0 : normY;
+
+        // 手向右移 (ndx>0) → 视角向左转（theta 减少）→ 拖拽地球的体感
+        targetTheta = anchorTheta - ndx * DRAG_GAIN_X;
+        targetPhi = Math.max(0.15, Math.min(Math.PI / 2.05,
+          anchorPhi + ndy * DRAG_GAIN_Y,
+        ));
+      } else {
+        // 张开手时：连续缩放（增量驱动 + 指数映射 + 目标逼近）
+        const rawRatio = detail.pinchRatio;
+
+        // 输入端有效性过滤：跳过明显的关键点跳变 / 误检
+        if (rawRatio < PINCH_VALID_MIN || rawRatio > PINCH_VALID_MAX) {
+          // 视为无效帧，不更新基线，等待下一帧稳定
+        } else {
+          // ① 源头先做 One Euro 平滑，吃掉指尖颤抖（这步是关键！）
+          const smoothedRatio = filterPinch.filter(rawRatio, now);
+
+          if (prevPinchRatio === null) {
+            // 第一帧：仅建立基线，不缩放
+            prevPinchRatio = smoothedRatio;
+          } else {
+            // ② 计算帧间增量 Δ（手指张开 → Δ>0 → 放大；捏合 → Δ<0 → 缩小）
+            let delta = smoothedRatio - prevPinchRatio;
+
+            // 死区：< 1.2% 视为手颤丢弃
+            if (Math.abs(delta) < ZOOM_DEADZONE) delta = 0;
+            // 跳变保护：单帧位移过大视为识别噪声，丢弃
+            if (Math.abs(delta) > ZOOM_DELTA_CLAMP) delta = 0;
+
+            if (delta !== 0) {
+              // ③ 指数映射：delta 转比例因子，乘到目标半径
+              //   delta>0（张开）→ factor<1 → 半径减小 → 拉近
+              //   delta<0（捏合）→ factor>1 → 半径增大 → 拉远
+              const factor = Math.exp(-delta * ZOOM_GAIN);
+              targetRadius = Math.max(6, Math.min(20, targetRadius * factor));
+            }
+            prevPinchRatio = smoothedRatio;
+          }
+        }
+      }
+    };
+
+    const lostHandler = () => {
+      setHandStatus("lost");
+      // 手丢失：释放抓取，清空缩放状态
+      isGrabbing = false;
+      prevPinchRatio = null;
+      filterPinch.reset();
+    };
+
+    // 平滑 lerp 循环
+    let raf = 0;
+    const EPS_ANGLE = 1e-4;
+    const EPS_RADIUS = 1e-3;
+    const animate = () => {
+      const ctl = orbitRef.current;
+      if (ctl && initialized) {
+        const cam = ctl.object as THREE.PerspectiveCamera;
+        const offset = new THREE.Vector3().subVectors(cam.position, ctl.target);
+        const sph = new THREE.Spherical().setFromVector3(offset);
+
+        const tNow = performance.now();
+        // 用 One Euro Filter 把"目标值"过滤为这一帧应该到达的值
+        // 静止 → 强平滑（吃掉手颤）；快速运动 → 弱平滑（紧贴手）
+        const newTheta  = filterTheta.filter(targetTheta,   tNow);
+        const newPhi    = filterPhi.filter(targetPhi,       tNow);
+        const newRadius = filterRadius.filter(targetRadius, tNow);
+
+        const dTheta  = newTheta  - sph.theta;
+        const dPhi    = newPhi    - sph.phi;
+        const dRadius = newRadius - sph.radius;
+        if (Math.abs(dTheta) > EPS_ANGLE || Math.abs(dPhi) > EPS_ANGLE || Math.abs(dRadius) > EPS_RADIUS) {
+          sph.theta  = newTheta;
+          sph.phi    = newPhi;
+          sph.radius = newRadius;
+          offset.setFromSpherical(sph);
+          cam.position.copy(ctl.target).add(offset);
+          cam.lookAt(ctl.target);
+          ctl.update();
+        }
+      }
+      raf = requestAnimationFrame(animate);
+    };
+    raf = requestAnimationFrame(animate);
+
+    window.addEventListener("yaya:hand", handHandler as EventListener);
+    window.addEventListener("yaya:hand-lost", lostHandler as EventListener);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("yaya:hand", handHandler as EventListener);
+      window.removeEventListener("yaya:hand-lost", lostHandler as EventListener);
+    };
+  }, [gestureMode]);
+
+  // 双击「手势已开启」按钮可重置视角
+  const resetView = () => {
+    const ctl = orbitRef.current;
+    if (!ctl) return;
+    const cam = ctl.object as THREE.PerspectiveCamera;
+    cam.position.set(...initialCamPos.current);
+    ctl.target.set(...initialTarget.current);
+    ctl.update();
+  };
 
   return (
     <div
@@ -835,7 +1092,27 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
           <span className="text-cyan-400 text-xs">·</span>
           <span className="text-cyan-300 text-xs font-semibold">{greenhouses.length} 座大棚</span>
         </div>
-        <span className="text-[11px] text-gray-400">点击大棚进入实时详情</span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={resetView}
+            className="text-[11px] px-2 py-1 rounded border border-gray-600 bg-black/40 text-gray-300 hover:border-cyan-400 hover:text-cyan-200 transition-colors"
+            title="重置视角"
+          >
+            ↺ 重置
+          </button>
+          <button
+            onClick={() => setGestureMode((v) => !v)}
+            className={`text-[11px] px-2.5 py-1 rounded border transition-all ${
+              gestureMode
+                ? "bg-green-500/20 border-green-400 text-green-200 shadow-[0_0_8px_rgba(74,222,128,0.5)]"
+                : "bg-black/40 border-gray-600 text-gray-300 hover:border-green-500"
+            }`}
+            title="手势控制：手掌移动旋转视角，拇指食指捏合缩放"
+          >
+            {gestureMode ? "✋ 手势已开启" : "✋ 手势控制"}
+          </button>
+          <span className="text-[11px] text-gray-400">点击大棚进入详情</span>
+        </div>
       </div>
 
       <Canvas
@@ -852,19 +1129,52 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
             onSelect={onSelect}
           />
           <OrbitControls
+            ref={orbitRef as any}
             enablePan={false}
             minDistance={6}
             maxDistance={20}
             maxPolarAngle={Math.PI / 2.05}
             target={[0, 2.2, 0]}
+            // 手势模式下：关闭阻尼，避免与我们自己的 lerp 平滑产生叠加惯性导致"无手时仍漂移"
+            enableDamping={!gestureMode}
+            // 手势模式下禁用鼠标，以免与手势冲突
+            enableRotate={!gestureMode}
+            enableZoom={!gestureMode}
           />
         </Suspense>
       </Canvas>
 
       {/* 操作提示 */}
-      <div className="absolute right-3 top-12 text-[10px] text-gray-400 bg-black/40 rounded px-2 py-1 z-10 pointer-events-none">
-        鼠标拖拽旋转 · 滚轮缩放 · 点击大棚查看详情
-      </div>
+      {!gestureMode && (
+        <div className="absolute right-3 top-12 text-[10px] text-gray-400 bg-black/40 rounded px-2 py-1 z-10 pointer-events-none">
+          鼠标拖拽旋转 · 滚轮缩放 · 点击大棚查看详情
+        </div>
+      )}
+
+      {/* 手势模式提示面板 */}
+      {gestureMode && (
+        <div className="absolute left-3 top-12 z-10 pointer-events-none bg-black/70 border border-green-700 text-green-200 rounded p-2 text-[11px] leading-relaxed shadow-lg">
+          <div className="flex items-center gap-1.5 mb-1">
+            <span className={`w-2 h-2 rounded-full ${
+              handStatus === "tracking" ? "bg-green-400 animate-pulse" :
+              handStatus === "lost" ? "bg-yellow-400" : "bg-gray-500"
+            }`} />
+            <span className="font-bold text-green-300">手势控制（地球仪式拖拽）</span>
+          </div>
+          <div>✊ 握拳并移动 → 拖动旋转视角</div>
+          <div>🖐️ 张开手 → 释放（停止旋转）</div>
+          <div>🤏 拇指食指<b>持续捏合</b>（越捏越近）→ 缩小</div>
+          <div>👌 拇指食指<b>持续张开</b>（越张越远）→ 放大</div>
+          <div className="mt-1 pt-1 border-t border-green-800 text-[10px]">
+            状态: <span className={
+              handStatus === "tracking" ? "text-green-300" :
+              handStatus === "lost" ? "text-yellow-300" : "text-gray-400"
+            }>
+              {handStatus === "tracking" ? "已追踪到手部" : handStatus === "lost" ? "未检测到手" : "等待识别"}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* 当前 hover 信息条 */}
       {hoveredName && (

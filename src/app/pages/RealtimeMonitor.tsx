@@ -393,6 +393,24 @@ export function RealtimeMonitor() {
   const [thresholdOpen, setThresholdOpen] = useState(false);
   const [alertRecOpen, setAlertRecOpen] = useState(false);
 
+  // 监听芽芽语音指令："聚焦/查看 N 号大棚" → 切到详情视图
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ greenhouse: string }>).detail;
+      if (!detail?.greenhouse) return;
+      if (GREENHOUSE_LIST.includes(detail.greenhouse)) {
+        setFocusedGH(detail.greenhouse);
+      }
+    };
+    const backHandler = () => setFocusedGH(null);
+    window.addEventListener("yaya:focus-greenhouse", handler as EventListener);
+    window.addEventListener("yaya:focus-greenhouse-back", backHandler as EventListener);
+    return () => {
+      window.removeEventListener("yaya:focus-greenhouse", handler as EventListener);
+      window.removeEventListener("yaya:focus-greenhouse-back", backHandler as EventListener);
+    };
+  }, []);
+
   // Sensor data — always fetched for ONLINE_GREENHOUSE
   useEffect(() => {
     let disposed = false;

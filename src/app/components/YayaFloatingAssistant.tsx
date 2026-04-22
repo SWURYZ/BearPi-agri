@@ -355,6 +355,34 @@ function parseGreenhouseNo(text: string): string {
   return m?.[1] || "1";
 }
 
+/**
+ * 解析"聚焦于 N 号大棚 / 查看 N 号大棚 / 进入 N 号大棚"等指令
+ * 返回 { ghNo: 1-6, label: "1号大棚" } 或 null
+ * "返回全景 / 退出大棚 / 关闭大棚视图" → { back: true }
+ */
+function parseGreenhouseFocusCommand(
+  text: string,
+): { ghNo: number; label: string } | { back: true } | null {
+  const t = text.replace(/\s+/g, "");
+  // 返回全景指令
+  if (/(返回|退出|关闭|离开)(全景|大棚|大棚视图|大棚详情|聚焦)/.test(t)) {
+    return { back: true };
+  }
+  if (/^(全景|总览|返回|退出)$/.test(t)) {
+    return { back: true };
+  }
+  // 中文数字 → 阿拉伯数字（仅 1~6）
+  const cn2num: Record<string, string> = { 一: "1", 二: "2", 两: "2", 三: "3", 四: "4", 五: "5", 六: "6" };
+  const norm = t.replace(/(一|二|两|三|四|五|六)号大棚/g, (_, c) => `${cn2num[c]}号大棚`);
+  // 必须出现 "N号大棚" 且包含聚焦/查看/进入/打开/看看 等动词
+  const m = norm.match(/([1-6])号大棚/);
+  if (!m) return null;
+  const verbRe = /(聚焦|查看|看看|看一下|看一看|进入|打开|跳到|跳转到|切到|切换到|前往|去|到|展开)/;
+  if (!verbRe.test(norm)) return null;
+  const ghNo = parseInt(m[1], 10);
+  return { ghNo, label: `${ghNo}号大棚` };
+}
+
 function parseNavigationCommand(text: string): NavCommand | null {
   const t = text.replace(/\s+/g, "");
   const hasNavVerb = /(打开|进入|跳到|跳转到|切到|切换到|去|前往|到)/.test(t);
@@ -1042,6 +1070,30 @@ export function YayaFloatingAssistant() {
       const reply = `好的，已为你打开${nav.label}页面。`;
       push("assistant", reply);
       speakText(reply);
+      return;
+    }
+
+    // 「聚焦/查看 N 号大棚」→ 切到实时监测页并打开对应大棚详情
+    const ghFocus = parseGreenhouseFocusCommand(text);
+    if (ghFocus) {
+      // 先确保切到实时监测页
+      navigate("/monitor");
+      // 等待页面挂载后再分发事件
+      setTimeout(() => {
+        if ("back" in ghFocus) {
+          window.dispatchEvent(new CustomEvent("yaya:focus-greenhouse-back"));
+          const reply = "好的，已返回大棚全景视图。";
+          push("assistant", reply);
+          speakText(reply);
+        } else {
+          window.dispatchEvent(new CustomEvent("yaya:focus-greenhouse", {
+            detail: { greenhouse: ghFocus.label },
+          }));
+          const reply = `好的，已为你聚焦到${ghFocus.label}。`;
+          push("assistant", reply);
+          speakText(reply);
+        }
+      }, 100);
       return;
     }
 
