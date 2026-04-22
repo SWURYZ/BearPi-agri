@@ -19,6 +19,8 @@ export interface InsectTopRow {
 
 export interface InsectLatestResult {
   timestamp: number;
+  /** 识别类型：害虫 / 植物病害；后端 latest.json 写入 */
+  kind?: "insect" | "plant";
   top1_name_en: string;
   top1_name_zh: string;
   top1_conf: number;
@@ -71,6 +73,33 @@ export async function uploadInsectImage(image: Blob): Promise<InsectUploadResult
   // 文件名后缀用 jpg；后端按 MIME 也能识别
   form.append("image", image, "capture.jpg");
   const res = await fetch(`${INSECT_BASE}/upload`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    let msg = `上传失败 (${res.status})`;
+    try {
+      const j = await res.json();
+      if (j?.error) msg = j.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  const json: ApiResponse<InsectUploadResult> = await res.json();
+  if (!json.ok || !json.data) throw new Error(json.error || "识别失败");
+  return json.data;
+}
+
+/**
+ * 植物病害识别（PlantVillage 38 类）
+ * Flask 端点 /api/plant/upload（Vite 代理 → :5000/api/plant/upload）
+ * 返回格式与害虫识别完全一致，复用 InsectUploadResult。
+ */
+export async function uploadPlantImage(image: Blob): Promise<InsectUploadResult> {
+  const form = new FormData();
+  form.append("image", image, "plant.jpg");
+  const res = await fetch(`/api/plant/upload`, {
     method: "POST",
     body: form,
   });

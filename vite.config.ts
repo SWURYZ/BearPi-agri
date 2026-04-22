@@ -59,6 +59,10 @@ export default defineConfig(({ mode }) => {
             changeOrigin: true,
             rewrite: (p) => p.replace(/^\/api\/insect/, '/api'),
           },
+          '/api/plant': {
+            target: pestRecognitionProxyTarget,
+            changeOrigin: true,
+          },
           '/api/face': {
             target: faceProxyTarget,
             changeOrigin: true,

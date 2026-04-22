@@ -29,7 +29,7 @@ const baseNavItems = [
   { to: "/automation", icon: Zap, label: "联动规则", desc: "复合条件自动化" },
   { to: "/history", icon: BarChart2, label: "历史分析", desc: "数据趋势图表" },
   { to: "/devices", icon: Cpu, label: "设备管理", desc: "绑定/解绑设备" },
-  { to: "/insect", icon: Bug, label: "害虫识别", desc: "拍照识别+防治方案" },
+  { to: "/insect", icon: Bug, label: "病虫害识别", desc: "害虫+病害 拍照识别" },
   { to: "/ai", icon: Bot, label: "农事问答", desc: "AI智能助手" },
 ];
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Bug,
+  Leaf,
   Smartphone,
   RefreshCw,
   Sparkles,
@@ -34,9 +35,9 @@ function triggerYayaStop() {
 }
 
 /**
- * 总览大屏 · 害虫识别大卡片（NFC + 二维码 双入口）
+ * 总览大屏 · 病虫害识别大卡片（NFC + 二维码 双入口）
  * 左侧：NFC 写入 / 二维码扫码
- * 右侧：识别结果 + 精灵芽芽流式防治方案 + TTS 播报
+ * 右侧：识别结果（害虫 / 植物病害） + 精灵芽芽流式防治方案 + TTS 播报
  */
 export function PestRecognitionCard() {
   const [mobileUrl] = useState(() => {
@@ -100,11 +101,17 @@ export function PestRecognitionCard() {
     setAgentLoading(true);
     setAgentText("");
     let acc = "";
+    const isPlant = latest?.kind === "plant";
+    const question = isPlant
+      ? `检测到大棚植株出现「${pestName}」。请给出详细的处理建议，包括：1）病状识别要点 2）应急措施（隔离、修剪、是否需要拔除） 3）化学防治推荐药剂与用量 4）生物/生态防治方法 5）后期预防要点。请条理清晰，不超过300字。`
+      : `大棚里发现了「${pestName}」这种害虫，请给出针对性的防治方案，包括：1）危害症状识别 2）化学防治推荐药剂 3）生物防治措施 4）日常预防建议。请条理清晰，不超过300字。`;
+    const prefix = isPlant ? `检测到植物问题${pestName}。` : `检测到害虫${pestName}。`;
+    const userText = isPlant
+      ? `帮我分析植物病害「${pestName}」的处理方案`
+      : `帮我分析害虫「${pestName}」的防治方案`;
     try {
       await streamAgriAgentChat(
-        {
-          question: `大棚里发现了「${pestName}」这种害虫，请给出针对性的防治方案，包括：1）危害症状识别 2）化学防治推荐药剂 3）生物防治措施 4）日常预防建议。请条理清晰，不超过300字。`,
-        },
+        { question },
         {
           onToken: (t) => {
             acc += t;
@@ -118,8 +125,8 @@ export function PestRecognitionCard() {
       if (ttsEnabled && acc.trim()) {
         setSpeaking(true);
         // 优先走全局漂浮芽芽，避免两处同时说话
-        const summary = `检测到害虫${pestName}。${acc}`;
-        triggerYayaSpeak(summary, `帮我分析害虫「${pestName}」的防治方案`);
+        const summary = `${prefix}${acc}`;
+        triggerYayaSpeak(summary, userText);
         // 本地状态在下一轮流式启动时重置；这里粗略估计一个播报时长
         const estMs = Math.min(60_000, Math.max(4000, summary.length * 180));
         window.setTimeout(() => setSpeaking(false), estMs);
@@ -148,9 +155,14 @@ export function PestRecognitionCard() {
     stopSpeaking();
     setSpeaking(true);
     setTtsEnabled(true);
-    const pest = latest?.top1_name_zh || latest?.top1_name_en || "";
-    const summary = pest ? `检测到害虫${pest}。${agentText}` : agentText;
-    triggerYayaSpeak(summary, pest ? `重新讲一次「${pest}」的防治方案` : undefined);
+    const isPlant = latest?.kind === "plant";
+    const target = latest?.top1_name_zh || latest?.top1_name_en || "";
+    const prefix = target ? (isPlant ? `检测到植物问题${target}。` : `检测到害虫${target}。`) : "";
+    const summary = `${prefix}${agentText}`;
+    const userText = target
+      ? (isPlant ? `重新讲一次植物病害「${target}」的处理方案` : `重新讲一次「${target}」的防治方案`)
+      : undefined;
+    triggerYayaSpeak(summary, userText);
     const estMs = Math.min(60_000, Math.max(4000, summary.length * 180));
     window.setTimeout(() => setSpeaking(false), estMs);
   };
@@ -194,18 +206,19 @@ export function PestRecognitionCard() {
   };
 
   const hasResult = !!latest;
+  const isPlantResult = latest?.kind === "plant";
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm relative overflow-hidden h-full flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between mb-4 flex-shrink-0">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center shadow-md flex-shrink-0">
-            <Bug className="w-5 h-5 text-white" />
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-md flex-shrink-0 bg-gradient-to-br ${isPlantResult ? "from-green-400 to-lime-600" : "from-emerald-400 to-green-600"}`}>
+            {isPlantResult ? <Leaf className="w-5 h-5 text-white" /> : <Bug className="w-5 h-5 text-white" />}
           </div>
           <div className="min-w-0">
-            <h3 className="text-base font-bold text-gray-800">害虫识别 · 智能防治</h3>
-            <p className="text-xs text-gray-400 mt-0.5 truncate">手机端拍照上传 · AI 识别 · 精灵芽芽自动给出防治方案</p>
+            <h3 className="text-base font-bold text-gray-800">病虫害识别 · 智能防治</h3>
+            <p className="text-xs text-gray-400 mt-0.5 truncate">手机拍照识别害虫/植物病害 · AI 识别 · 精灵芽芽自动给出防治方案</p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -338,8 +351,13 @@ export function PestRecognitionCard() {
                   />
                 )}
                 <div className="flex-1 min-w-0">
-                  <div className="text-[10px] text-gray-400">识别结果</div>
-                  <div className="text-base font-bold text-emerald-700 truncate">
+                  <div className="text-[10px] text-gray-400 flex items-center gap-1">
+                    <span>识别结果</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold ${isPlantResult ? "bg-lime-100 text-lime-700" : "bg-emerald-100 text-emerald-700"}`}>
+                      {isPlantResult ? "植物病害" : "害虫"}
+                    </span>
+                  </div>
+                  <div className={`text-base font-bold truncate ${isPlantResult ? "text-lime-700" : "text-emerald-700"}`}>
                     {latest?.top1_name_zh || latest?.top1_name_en}
                   </div>
                   <div className="text-[11px] text-gray-500 truncate">
@@ -390,14 +408,15 @@ export function PestRecognitionCard() {
             </>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-center bg-gray-50/50 border border-dashed border-gray-200 rounded-lg p-4">
-              <div className="w-16 h-16 rounded-full bg-emerald-50 flex items-center justify-center mb-3">
-                <Bug className="w-8 h-8 text-emerald-400" />
+              <div className="w-16 h-16 rounded-full bg-emerald-50 flex items-center justify-center mb-3 relative">
+                <Bug className="w-7 h-7 text-emerald-400 absolute -translate-x-2" />
+                <Leaf className="w-7 h-7 text-lime-500 absolute translate-x-2" />
               </div>
               <div className="text-sm font-semibold text-gray-700 mb-1">等待手机端上传图片</div>
               <p className="text-[11px] text-gray-500 leading-relaxed max-w-[260px]">
                 {entry === "qr" ? "微信/相机扫描左侧二维码" : "手机靠近 NFC 标签"}，
-                打开拍照页上传害虫图片，识别结果将
-                <strong className="text-emerald-700">自动展示</strong>并由
+                打开拍照页上传<strong className="text-emerald-700">害虫</strong>或<strong className="text-lime-700">植物病害</strong>图片，
+                识别结果将<strong className="text-emerald-700">自动展示</strong>并由
                 <strong className="text-emerald-700">精灵芽芽</strong>语音播报防治方案。
               </p>
               <div className="mt-3 flex items-center gap-1.5 text-[10px] text-gray-400">

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Send, Square, X } from "lucide-react";
 import { startGestureRecognition, stopGestureRecognition, describeGestureError, type GestureLabel, type GestureEvent } from "../services/gestureRecognition";
-import { sendManualControl } from "../services/deviceControl";
+import { sendManualControl, createScheduleRule } from "../services/deviceControl";
 import { createCompositeRule } from "../services/compositeCondition";
 import { createThresholdRule, runThresholdCheckNow } from "../services/thresholdAlert";
 import { executeDecision, type SensorSnapshot } from "../services/smartDecision";
@@ -274,6 +274,7 @@ const NAV_COMMANDS: Array<NavCommand & { aliases: string[] }> = [
   { to: "/history", label: "历史分析", aliases: ["历史分析", "历史数据", "趋势分析", "历史页面"] },
   { to: "/devices", label: "设备管理", aliases: ["设备管理", "设备页面", "设备列表"] },
   { to: "/ai", label: "农事问答", aliases: ["农事问答", "问答助手", "AI问答", "智能问答"] },
+  { to: "/insect", label: "害虫识别", aliases: ["害虫识别", "虫害识别", "虫子识别", "拍虫", "识别虫害"] },
   { to: "/users", label: "用户管理", aliases: ["用户管理", "用户页面", "账号管理"] },
   { to: "/logs", label: "登录日志", aliases: ["登录日志", "日志页面", "用户日志"] },
 ];
@@ -304,6 +305,7 @@ function scoreCommandCandidate(text: string): number {
   let score = 0;
   if (parseNavigationCommand(text)) score += 4;
   if (parseDeviceCommand(text)) score += 4;
+  if (parseLightScheduleIntent(text)) score += 5;
   if (parseAutomationRuleIntent(text)) score += 5;
   if (parseThresholdIntent(text)) score += 5;
   if (quickReply(text)) score += 2;
@@ -367,6 +369,75 @@ function parseNavigationCommand(text: string): NavCommand | null {
   return null;
 }
 
+/**
+ * 中文时段表达式 → "HH:mm" "HH:mm"。识别：
+ *   下午2点到4点 / 上午8点到10点 / 晚上7点到9点半 / 凌晨1点到3点
+ *   14点到16点 / 14:00到16:00 / 2点30到4点
+ * 不带时段词时，按 24 小时制原值（若 ≤12 视作上午）。
+ */
+function parseTimeRange(text: string): { turnOnTime: string; turnOffTime: string } | null {
+  const t = text.replace(/\s+/g, "").replace(/[：]/g, ":");
+  // 中文数字 → 阿拉伯数字（仅小时常见用法）
+  const cn2num: Record<string, string> = { 零: "0", 一: "1", 二: "2", 两: "2", 三: "3", 四: "4", 五: "5", 六: "6", 七: "7", 八: "8", 九: "9", 十: "10", 十一: "11", 十二: "12" };
+  const normalized = t.replace(/(十一|十二|十|零|一|二|两|三|四|五|六|七|八|九)/g, (m) => cn2num[m] ?? m);
+
+  // 形如：(period)?(H)(:|点)(M)?(分)?(半)?到(period)?(H)(:|点)(M)?(分)?(半)?
+  const re = /(凌晨|早上|早晨|上午|中午|下午|傍晚|晚上|夜里|夜晚)?(\d{1,2})(?::|点)(\d{1,2})?(?:分)?(半)?(?:到|至|~|-|—)(凌晨|早上|早晨|上午|中午|下午|傍晚|晚上|夜里|夜晚)?(\d{1,2})(?::|点)?(\d{1,2})?(?:分)?(半)?/;
+  const m = normalized.match(re);
+  if (!m) return null;
+
+  const toHour = (period: string | undefined, hStr: string): number => {
+    let h = Math.min(23, Math.max(0, parseInt(hStr, 10)));
+    if (period === "下午" || period === "傍晚" || period === "晚上" || period === "夜里" || period === "夜晚") {
+      if (h < 12) h += 12;
+    } else if (period === "中午") {
+      if (h < 12) h += 12; // 中午1点 → 13
+      if (h === 12) h = 12;
+    } else if (period === "凌晨" || period === "早上" || period === "早晨" || period === "上午") {
+      if (h === 12) h = 0; // 凌晨12点
+    }
+    return h;
+  };
+  const toMin = (mStr: string | undefined, halfFlag: string | undefined): number => {
+    if (mStr) {
+      const v = parseInt(mStr, 10);
+      return isNaN(v) ? 0 : Math.min(59, Math.max(0, v));
+    }
+    if (halfFlag) return 30;
+    return 0;
+  };
+  const fmt = (h: number, mi: number) => `${String(h).padStart(2, "0")}:${String(mi).padStart(2, "0")}`;
+
+  const onH = toHour(m[1], m[2]);
+  const onM = toMin(m[3], m[4]);
+  // 第二段：若没显式 period，沿用第一段的 period（"下午2点到4点" → 第二段也用下午）
+  const offPeriod = m[5] ?? m[1];
+  const offH = toHour(offPeriod, m[6]);
+  const offM = toMin(m[7], m[8]);
+
+  const turnOnTime = fmt(onH, onM);
+  const turnOffTime = fmt(offH, offM);
+  if (turnOnTime >= turnOffTime) return null; // 跨天暂不支持
+  return { turnOnTime, turnOffTime };
+}
+
+interface LightScheduleIntent {
+  turnOnTime: string;
+  turnOffTime: string;
+  label: string;
+}
+
+function parseLightScheduleIntent(text: string): LightScheduleIntent | null {
+  const t = text.replace(/\s+/g, "");
+  // 必须同时包含「灯/补光灯」字样 + 时间段
+  if (!/(补光灯|灯光|灯)/.test(t)) return null;
+  // 必须有「到/至/-/~」连接的时间段，否则交给普通 parseDeviceCommand
+  if (!/(到|至|~|-|—)/.test(t)) return null;
+  const range = parseTimeRange(t);
+  if (!range) return null;
+  return { turnOnTime: range.turnOnTime, turnOffTime: range.turnOffTime, label: "补光灯" };
+}
+
 function parseDeviceCommand(text: string): DeviceCommand | null {
   const t = text.replace(/\s+/g, "");
 
@@ -402,13 +473,13 @@ function parseAutomationRuleIntent(text: string) {
         ? { sensorMetric: "co2", sensorLabel: "二氧化碳", unit: "ppm" }
         : { sensorMetric: "Temperature", sensorLabel: "空气温度", unit: "°C" };
 
-  const operator = /(小于|低于|<|不高于)/.test(t)
+  const operator = (/(小于|低于|<|不高于)/.test(t)
     ? "LT"
     : /(大于等于|不少于|>=)/.test(t)
       ? "GTE"
       : /(小于等于|不超过|<=)/.test(t)
         ? "LTE"
-        : "GT";
+        : "GT") as "LT" | "GTE" | "LTE" | "GT";
 
   const number = t.match(/(-?\d+(?:\.\d+)?)/);
   const threshold = number ? Number(number[1]) : metric.sensorMetric === "Temperature" ? 30 : 500;
@@ -475,6 +546,96 @@ function parseThresholdIntent(text: string) {
   }
 
   return { deviceId, metric, min, max, gh };
+}
+
+/* ==================== LLM 意图理解（兜底智能化） ==================== */
+
+type LlmIntent =
+  | { action: "navigate"; to: string; label: string; reply: string }
+  | {
+      action: "device_control";
+      commandType: "LIGHT_CONTROL" | "MOTOR_CONTROL";
+      commandAction: "ON" | "OFF";
+      greenhouseNo?: string;
+      label: string;
+      reply: string;
+    }
+  | { action: "light_schedule"; turnOnTime: string; turnOffTime: string; reply: string }
+  | {
+      action: "threshold_alert";
+      greenhouseNo: string;
+      metric: "temp" | "humidity" | "light" | "co2";
+      min: number;
+      max: number;
+      reply: string;
+    }
+  | {
+      action: "automation_rule";
+      greenhouseNo: string;
+      metric: "Temperature" | "Humidity" | "Luminance" | "co2";
+      operator: "GT" | "LT" | "GTE" | "LTE";
+      threshold: number;
+      commandType: "LIGHT_CONTROL" | "MOTOR_CONTROL";
+      commandAction: "ON" | "OFF";
+      reply: string;
+    }
+  | { action: "answer"; reply: string }
+  | { action: "unknown"; reply?: string };
+
+const INTENT_SCHEMA_PROMPT = `你是芽芽智能农业助手的"指令路由器"。把用户语音指令解析成 **严格 JSON**，绝对不要输出 markdown 代码块、不要解释。
+可选 action 与字段：
+1. navigate —— 跳转页面：{ "action":"navigate", "to":"路径", "label":"中文名", "reply":"播报" }
+   to 必须是：/ /monitor /alerts /control /automation /history /devices /ai /users /logs /insect
+2. device_control —— 立即开关设备：{ "action":"device_control", "commandType":"LIGHT_CONTROL|MOTOR_CONTROL", "commandAction":"ON|OFF", "greenhouseNo":"1-6可选", "label":"补光灯|风机", "reply":"播报" }
+3. light_schedule —— 创建补光灯定时规则：{ "action":"light_schedule", "turnOnTime":"HH:mm", "turnOffTime":"HH:mm", "reply":"播报" }（24 小时制）
+4. threshold_alert —— 创建阈值告警：{ "action":"threshold_alert", "greenhouseNo":"1-6", "metric":"temp|humidity|light|co2", "min":数, "max":数, "reply":"播报" }
+5. automation_rule —— 创建联动规则：{ "action":"automation_rule", "greenhouseNo":"1-6", "metric":"Temperature|Humidity|Luminance|co2", "operator":"GT|LT|GTE|LTE", "threshold":数, "commandType":"LIGHT_CONTROL|MOTOR_CONTROL", "commandAction":"ON|OFF", "reply":"播报" }
+6. answer —— 用户在问问题/聊天而非下达指令：{ "action":"answer", "reply":"" }（reply 留空，让后续 Q&A 处理）
+7. unknown —— 完全无法理解：{ "action":"unknown" }
+reply 字段简短中文，≤30 字，是芽芽要语音回复用户的话。
+用户输入：`;
+
+function safeJsonExtract(raw: string): unknown | null {
+  if (!raw) return null;
+  // 去掉 markdown 围栏
+  const cleaned = raw.replace(/```json\s*|```/gi, "").trim();
+  // 取第一个 {…} 段
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+}
+
+async function inferIntentWithLLM(userText: string): Promise<LlmIntent | null> {
+  // 8 秒超时，避免阻塞用户
+  const ctrl = new AbortController();
+  const timer = window.setTimeout(() => ctrl.abort(), 8000);
+  let acc = "";
+  try {
+    await streamAgriAgentChat(
+      { question: `${INTENT_SCHEMA_PROMPT}"${userText}"` },
+      {
+        onToken: (t) => {
+          acc += t;
+        },
+        onError: () => {
+          /* swallow */
+        },
+      },
+      ctrl.signal,
+    );
+  } catch {
+    return null;
+  } finally {
+    window.clearTimeout(timer);
+  }
+
+  const parsed = safeJsonExtract(acc);
+  if (!parsed || typeof parsed !== "object" || !("action" in parsed)) return null;
+  return parsed as LlmIntent;
 }
 
 function buildEnvAdvice(snapshot: SensorSnapshot): string[] {
@@ -656,9 +817,15 @@ export function YayaFloatingAssistant() {
   const busyRef = useRef(false);
   const shouldListenRef = useRef(false);
   const ignoreInputUntilRef = useRef(0);
+  /** TTS 播报期间暂停识别的标志（强防自我回放）。true 时 onresult/onend 全忽略 */
+  const pausedForTtsRef = useRef(false);
+  /** 暂停识别的恢复定时器 */
+  const ttsResumeTimerRef = useRef<number | null>(null);
   const restartTimerRef = useRef<number | null>(null);
   const silenceTimerRef = useRef<number | null>(null);
   const pendingPickRef = useRef<{ text: string; confidence: number }>({ text: "", confidence: 0 });
+  /** startAlwaysListening 的 ref 镜像（用于在 speakText 内调用，避免循环依赖） */
+  const startListeningFnRef = useRef<(() => void) | null>(null);
   const heardTextRef = useRef(""); // 镜像 heardText state，供手势 callback 读取最新值
   heardTextRef.current = heardText; // 每次渲染同步，保证 gesture callback 读到最新值
   const lastResultIndexRef = useRef<number>(-1);
@@ -790,26 +957,60 @@ export function YayaFloatingAssistant() {
     }
 
     synth.cancel();
-    ignoreInputUntilRef.current = Date.now() + 1500;
-    const spokenText = text.length > 180 ? `${text.slice(0, 176)}...` : text;
 
+    // 防自我回放：彻底暂停语音识别（abort 比 stop 更立即），不让麦克风听到 TTS
+    pausedForTtsRef.current = true;
+    if (ttsResumeTimerRef.current != null) {
+      window.clearTimeout(ttsResumeTimerRef.current);
+      ttsResumeTimerRef.current = null;
+    }
+    if (silenceTimerRef.current != null) {
+      window.clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    pendingPickRef.current = { text: "", confidence: 0 };
+    try {
+      recRef.current?.abort();
+    } catch {
+      /* ignore */
+    }
+
+    // 长 ignore 窗口：兜底防止 abort 之后还有残留 onresult 触发
+    ignoreInputUntilRef.current = Date.now() + 30_000;
+
+    const spokenText = text.length > 180 ? `${text.slice(0, 176)}...` : text;
     const pickVoice = pickYayaVoice;
+
+    /** TTS 真正结束（或失败）时的统一收尾：恢复识别 */
+    const finishTts = () => {
+      pendingPickRef.current = { text: "", confidence: 0 };
+      // 短暂 ignore：再过 600ms 才允许 dispatch，避免余音/回声被识别
+      ignoreInputUntilRef.current = Date.now() + 600;
+      if (ttsResumeTimerRef.current != null) {
+        window.clearTimeout(ttsResumeTimerRef.current);
+      }
+      ttsResumeTimerRef.current = window.setTimeout(() => {
+        ttsResumeTimerRef.current = null;
+        pausedForTtsRef.current = false;
+        // 恢复 listening 状态
+        if (shouldListenRef.current) {
+          // 通过 ref 调用 startAlwaysListening，避免依赖循环
+          startListeningFnRef.current?.();
+        } else {
+          setVoiceState("idle");
+        }
+      }, 600);
+    };
 
     const doSpeak = (voice?: SpeechSynthesisVoice) => {
       const utt = new SpeechSynthesisUtterance(spokenText);
       utt.lang = "zh-CN";
-      utt.rate = 1.0;   // 自然语速，偏离 1.0 越远越机械
-      utt.pitch = 1.0;  // 不升调，Natural 语音本身已有情感
+      utt.rate = 1.0;
+      utt.pitch = 1.0;
       utt.volume = 1;
       if (voice) utt.voice = voice;
-      utt.onend = () => {
-        ignoreInputUntilRef.current = Date.now() + 900;
-        setVoiceState("idle");
-      };
-      utt.onerror = () => {
-        ignoreInputUntilRef.current = Date.now() + 900;
-        setVoiceState("idle");
-      };
+      utt.onend = finishTts;
+      utt.onerror = finishTts;
       setVoiceState("speaking");
       synth.speak(utt);
     };
@@ -841,6 +1042,33 @@ export function YayaFloatingAssistant() {
       const reply = `好的，已为你打开${nav.label}页面。`;
       push("assistant", reply);
       speakText(reply);
+      return;
+    }
+
+    // 优先匹配「定时灯控」：开启 下午2点到4点 的补光灯
+    const lightSchedule = parseLightScheduleIntent(text);
+    if (lightSchedule) {
+      try {
+        const ruleName = `语音创建 ${lightSchedule.turnOnTime}-${lightSchedule.turnOffTime}`;
+        await createScheduleRule({
+          deviceId: deviceIdRef.current,
+          ruleName,
+          turnOnTime: lightSchedule.turnOnTime,
+          turnOffTime: lightSchedule.turnOffTime,
+          repeatMode: "DAILY",
+          commandType: "LIGHT_CONTROL",
+          enabled: true,
+        });
+        navigate("/control");
+        const reply = `好的，已设置${lightSchedule.label}每天 ${lightSchedule.turnOnTime} 自动开启，${lightSchedule.turnOffTime} 自动关闭。`;
+        push("assistant", reply);
+        speakText(reply);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "未知错误";
+        const reply = `${lightSchedule.label}定时规则创建失败：${msg}`;
+        push("assistant", reply);
+        speakText(reply);
+      }
       return;
     }
 
@@ -929,6 +1157,107 @@ export function YayaFloatingAssistant() {
       return;
     }
 
+    // ── 规则全没命中 → 让大模型理解意图（智能化兜底） ──────────────────────
+    setVoiceState("thinking");
+    const intent = await inferIntentWithLLM(text);
+    if (intent) {
+      try {
+        if (intent.action === "navigate") {
+          // 校验 to 是合法路由
+          const valid = NAV_COMMANDS.some((n) => n.to === intent.to);
+          if (valid) {
+            navigate(intent.to);
+            const reply = intent.reply || `已为你打开${intent.label}页面。`;
+            push("assistant", reply);
+            speakText(reply);
+            return;
+          }
+        } else if (intent.action === "device_control") {
+          const targetDeviceId = intent.greenhouseNo
+            ? GREENHOUSE_DEVICE_MAP[intent.greenhouseNo] || deviceIdRef.current
+            : deviceIdRef.current;
+          const result = await sendManualControl({
+            deviceId: targetDeviceId,
+            commandType: intent.commandType,
+            action: intent.commandAction,
+          });
+          const reply = intent.reply || `${intent.label}指令已发送。状态：${result.status}。`;
+          push("assistant", reply);
+          speakText(reply);
+          return;
+        } else if (intent.action === "light_schedule") {
+          await createScheduleRule({
+            deviceId: deviceIdRef.current,
+            ruleName: `语音创建 ${intent.turnOnTime}-${intent.turnOffTime}`,
+            turnOnTime: intent.turnOnTime,
+            turnOffTime: intent.turnOffTime,
+            repeatMode: "DAILY",
+            commandType: "LIGHT_CONTROL",
+            enabled: true,
+          });
+          navigate("/control");
+          const reply = intent.reply || `已设置补光灯每天 ${intent.turnOnTime} 自动开启，${intent.turnOffTime} 自动关闭。`;
+          push("assistant", reply);
+          speakText(reply);
+          return;
+        } else if (intent.action === "threshold_alert") {
+          const suffix = intent.metric === "humidity" ? "H01" : intent.metric === "light" ? "L01" : intent.metric === "co2" ? "C01" : "T01";
+          const alertDeviceId = `DEV-GH${intent.greenhouseNo.padStart(2, "0")}-${suffix}`;
+          await createThresholdRule({
+            deviceId: alertDeviceId,
+            metric: intent.metric,
+            operator: "BELOW",
+            threshold: intent.min,
+            enabled: true,
+          });
+          await createThresholdRule({
+            deviceId: alertDeviceId,
+            metric: intent.metric,
+            operator: "ABOVE",
+            threshold: intent.max,
+            enabled: true,
+          });
+          await runThresholdCheckNow();
+          navigate("/alerts");
+          const reply = intent.reply || `${intent.greenhouseNo}号大棚阈值告警已创建。`;
+          push("assistant", reply);
+          speakText(reply);
+          return;
+        } else if (intent.action === "automation_rule") {
+          const targetDeviceId = GREENHOUSE_DEVICE_MAP[intent.greenhouseNo] || deviceIdRef.current;
+          await createCompositeRule({
+            name: `语音联动-${Date.now().toString().slice(-6)}`,
+            description: `语音创建：${intent.greenhouseNo}号大棚 ${intent.metric}`,
+            logicOperator: "AND",
+            enabled: true,
+            targetDeviceId,
+            commandType: intent.commandType,
+            commandAction: intent.commandAction,
+            conditions: [
+              {
+                sensorMetric: intent.metric,
+                sourceDeviceId: targetDeviceId,
+                operator: intent.operator,
+                threshold: intent.threshold,
+              },
+            ],
+          });
+          navigate("/automation");
+          const reply = intent.reply || "联动规则已创建。";
+          push("assistant", reply);
+          speakText(reply);
+          return;
+        }
+        // intent.action === "answer" 或 "unknown" → 落到下面的 Q&A
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "未知错误";
+        const reply = `操作失败：${msg}`;
+        push("assistant", reply);
+        speakText(reply);
+        return;
+      }
+    }
+
     if (!isAgriQuery(text)) {
       let accumulated = "";
       try {
@@ -996,6 +1325,10 @@ export function YayaFloatingAssistant() {
       window.clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
     }
+    if (ttsResumeTimerRef.current != null) {
+      window.clearTimeout(ttsResumeTimerRef.current);
+      ttsResumeTimerRef.current = null;
+    }
     pendingPickRef.current = { text: "", confidence: 0 };
     recRef.current?.stop();
     recRef.current = null;
@@ -1019,6 +1352,10 @@ export function YayaFloatingAssistant() {
     recRef.current = rec;
 
     rec.onresult = (e) => {
+      // 防自我回放：TTS 期间所有识别结果直接丢弃
+      if (pausedForTtsRef.current) {
+        return;
+      }
       // Use resultIndex to always work on the current utterance, not accumulated history
       const resultIndex = e.resultIndex ?? (e.results.length - 1);
       const result = e.results[resultIndex];
@@ -1048,12 +1385,22 @@ export function YayaFloatingAssistant() {
       }
 
       const dispatch = () => {
+        // 再次防护：dispatch 前检查 TTS 状态
+        if (pausedForTtsRef.current) {
+          pendingPickRef.current = { text: "", confidence: 0 };
+          return;
+        }
         const { text, confidence } = pendingPickRef.current;
         if (!text) return;
         pendingPickRef.current = { text: "", confidence: 0 };
         if (Date.now() < ignoreInputUntilRef.current) return;
+        // confidence 过滤：很多浏览器返回 0，我们只在「极短文本」才用低置信度提醒
+        // - 文本 ≥ 4 字直接信任（一般已经能表达完整意图）
+        // - 文本 ≤ 3 字且无明确指令关键词 + 浏览器明确给出低置信度才提醒
         const weakCommand = scoreCommandCandidate(text) < 3;
-        if (confidence < 0.45 && weakCommand) {
+        const tooShort = text.length <= 3;
+        const browserGaveLowConf = confidence > 0 && confidence < 0.35;
+        if (tooShort && weakCommand && browserGaveLowConf) {
           const reply = `我可能没听清，你刚才说的是"${text}"吗？请再说一次。`;
           push("assistant", reply);
           speakText(reply);
@@ -1070,16 +1417,16 @@ export function YayaFloatingAssistant() {
         lastResultIndexRef.current = resultIndex;
         dispatch();
       } else {
-        // Siri-style: 480 ms of silence = sentence end
+        // Siri-style: 800 ms of silence = sentence end（更接近自然停顿，避免误切）
         silenceTimerRef.current = window.setTimeout(() => {
           silenceTimerRef.current = null;
           dispatch();
-        }, 480);
+        }, 800);
       }
     };
 
     rec.onerror = () => {
-      if (!shouldListenRef.current) {
+      if (!shouldListenRef.current || pausedForTtsRef.current) {
         return;
       }
       setAlwaysListening(false);
@@ -1087,19 +1434,20 @@ export function YayaFloatingAssistant() {
         window.clearTimeout(restartTimerRef.current);
       }
       restartTimerRef.current = window.setTimeout(() => {
-        startAlwaysListening();
+        if (!pausedForTtsRef.current) startAlwaysListening();
       }, 800);
     };
 
     rec.onend = () => {
-      if (!shouldListenRef.current) {
+      if (!shouldListenRef.current || pausedForTtsRef.current) {
+        // TTS 暂停期间：让 finishTts 来负责重启
         return;
       }
       if (restartTimerRef.current != null) {
         window.clearTimeout(restartTimerRef.current);
       }
       restartTimerRef.current = window.setTimeout(() => {
-        startAlwaysListening();
+        if (!pausedForTtsRef.current) startAlwaysListening();
       }, 250);
     };
 
@@ -1112,7 +1460,10 @@ export function YayaFloatingAssistant() {
       setVoiceState("idle");
       push("assistant", "麦克风权限未就绪，请点击芽芽头像授权一次。授权后会持续监听。");
     }
-  }, [handleContinuousTranscript, push]);
+  }, [handleContinuousTranscript, push, speakText, stopAlwaysListening]);
+
+  // 把最新的 startAlwaysListening 写入 ref，供 speakText 内回调使用（避免循环依赖）
+  startListeningFnRef.current = startAlwaysListening;
 
   // ── 全局桥：其它组件可通过 window.dispatchEvent(new CustomEvent("yaya:speak", { detail: {...} })) 让芽芽开口
   useEffect(() => {

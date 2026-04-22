@@ -1,23 +1,26 @@
 import { useEffect, useRef, useState } from "react";
-import { Bug, Camera, Upload, RefreshCw, Sparkles, Volume2, VolumeX } from "lucide-react";
+import { Bug, Camera, Upload, RefreshCw, Sparkles, Volume2, VolumeX, Leaf } from "lucide-react";
 import {
   uploadInsectImage,
+  uploadPlantImage,
   type InsectUploadResult,
 } from "../services/insectRecognition";
 import { streamAgriAgentChat } from "../services/agriAgent";
 import { speak, stopSpeaking, isTTSSupported } from "../lib/speech";
 
+type RecogMode = "insect" | "plant";
+
 /**
- * 害虫识别页 - 移动端优先
- * - 支持调用相机直接拍照(input capture="environment")
- * - 也支持从相册选图
- * - 上传 → /api/insect/upload (Flask) → 显示 Top-5
- * - 拿到害虫名后流式调用精灵芽芽，给出防治方案 + TTS 朗读
+ * 识别页（害虫 + 植物病害） - 移动端优先
+ * - 顶部切换：害虫识别 / 植物病害
+ * - 拍照或相册选图 → 调用对应 ONNX 模型
+ * - 拿到识别名 → 流式调用精灵芽芽给出针对性建议 + TTS 朗读
  */
 export function InsectRecognition() {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
+  const [mode, setMode] = useState<RecogMode>("insect");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string>("");
@@ -56,10 +59,12 @@ export function InsectRecognition() {
 
     setUploading(true);
     try {
-      const data = await uploadInsectImage(file);
+      const data = mode === "plant"
+        ? await uploadPlantImage(file)
+        : await uploadInsectImage(file);
       setResult(data);
-      const pestName = data.top1_name_zh || data.top1_name_en;
-      if (pestName) askAgent(pestName);
+      const targetName = data.top1_name_zh || data.top1_name_en;
+      if (targetName) askAgent(targetName, mode);
     } catch (err) {
       setError(err instanceof Error ? err.message : "识别失败");
     } finally {
@@ -67,15 +72,19 @@ export function InsectRecognition() {
     }
   };
 
-  const askAgent = async (pestName: string) => {
+  const askAgent = async (targetName: string, m: RecogMode) => {
     setAgentLoading(true);
     setAgentText("");
     let acc = "";
+    const question = m === "plant"
+      ? `检测到植物可能出现「${targetName}」。请给出详细的处理建议，包括：1) 病状/害状识别要点；2) 应急处理措施（隔离、修剪、是否需要拔除）；3) 化学防治推荐药剂与用量；4) 生物/生态防治方法；5) 后期预防要点。条理清晰，不超过300字。`
+      : `大棚里发现了「${targetName}」这种害虫，请给出针对性的防治方案，包括：1）危害症状识别 2）化学防治推荐药剂 3）生物防治措施 4）日常预防建议。请条理清晰，不超过300字。`;
+    const ttsPrefix = m === "plant"
+      ? `检测到植物问题：${targetName}。`
+      : `检测到害虫：${targetName}。`;
     try {
       await streamAgriAgentChat(
-        {
-          question: `大棚里发现了「${pestName}」这种害虫，请给出针对性的防治方案，包括：1）危害症状识别 2）化学防治推荐药剂 3）生物防治措施 4）日常预防建议。请条理清晰，不超过300字。`,
-        },
+        { question },
         {
           onToken: (t) => {
             acc += t;
@@ -88,9 +97,7 @@ export function InsectRecognition() {
       );
       if (ttsEnabled && acc.trim() && ttsSupported) {
         setSpeaking(true);
-        speak(`检测到害虫${pestName}。${acc}`).finally(() =>
-          setSpeaking(false),
-        );
+        speak(`${ttsPrefix}${acc}`).finally(() => setSpeaking(false));
       }
     } catch (err) {
       setAgentText(`查询失败：${err instanceof Error ? err.message : "未知错误"}`);
@@ -122,13 +129,41 @@ export function InsectRecognition() {
       {/* 头部 */}
       <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-3 bg-white border-b border-gray-100 sticky top-0 z-10">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-emerald-500 flex items-center justify-center text-white">
-            <Bug className="w-5 h-5" />
+          <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center text-white ${mode === "plant" ? "bg-green-600" : "bg-emerald-500"}`}>
+            {mode === "plant" ? <Leaf className="w-5 h-5" /> : <Bug className="w-5 h-5" />}
           </div>
-          <div className="min-w-0">
-            <div className="text-base sm:text-lg font-semibold text-gray-900">害虫识别</div>
-            <div className="text-xs sm:text-sm text-gray-500">拍照即可识别 102 种常见农业害虫</div>
+          <div className="min-w-0 flex-1">
+            <div className="text-base sm:text-lg font-semibold text-gray-900">
+              {mode === "plant" ? "植物病害识别" : "害虫识别"}
+            </div>
+            <div className="text-xs sm:text-sm text-gray-500">
+              {mode === "plant" ? "拍照即可识别 38 种常见植物病害" : "拍照即可识别 102 种常见农业害虫"}
+            </div>
           </div>
+        </div>
+
+        {/* 模式切换 */}
+        <div className="mt-3 grid grid-cols-2 gap-1.5 p-1 bg-gray-100 rounded-xl">
+          <button
+            type="button"
+            onClick={() => { if (mode !== "insect") { setMode("insect"); reset(); } }}
+            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition ${
+              mode === "insect" ? "bg-white text-emerald-600 shadow-sm" : "text-gray-500"
+            }`}
+          >
+            <Bug className="w-4 h-4" />
+            害虫识别
+          </button>
+          <button
+            type="button"
+            onClick={() => { if (mode !== "plant") { setMode("plant"); reset(); } }}
+            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition ${
+              mode === "plant" ? "bg-white text-green-700 shadow-sm" : "text-gray-500"
+            }`}
+          >
+            <Leaf className="w-4 h-4" />
+            植物病害
+          </button>
         </div>
       </div>
 
@@ -286,9 +321,15 @@ export function InsectRecognition() {
         {/* 空状态提示 */}
         {!previewUrl && !result && (
           <div className="rounded-2xl border-2 border-dashed border-emerald-200 bg-white/60 p-6 text-center">
-            <Bug className="w-10 h-10 text-emerald-300 mx-auto mb-2" />
+            {mode === "plant" ? (
+              <Leaf className="w-10 h-10 text-green-400 mx-auto mb-2" />
+            ) : (
+              <Bug className="w-10 h-10 text-emerald-300 mx-auto mb-2" />
+            )}
             <div className="text-sm text-gray-600 mb-1">
-              请使用上方按钮拍照或选择一张害虫图片
+              {mode === "plant"
+                ? "请拍摄或选择一张叶片/植株照片"
+                : "请使用上方按钮拍照或选择一张害虫图片"}
             </div>
             <div className="text-xs text-gray-400">
               支持 JPG / PNG / HEIC 格式
