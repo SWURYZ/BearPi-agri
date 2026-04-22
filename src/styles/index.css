@@ -5,6 +5,28 @@
 html, body { height: 100%; margin: 0; }
 #root { height: 100%; }
 
+/* ===== 移动端全局兜底 ===== */
+/* 防止页面主内容（多用 px-* py-* 较大 padding）在窄屏被挤压 */
+@media (max-width: 767px) {
+  /* 主区块统一减小内边距 */
+  main > div, main > section, main > .px-8, main > .p-8 {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  /* 大字号缩一档 */
+  main h1 { font-size: 1.25rem; line-height: 1.6rem; }
+  main h2 { font-size: 1.125rem; line-height: 1.5rem; }
+  /* 表格容器允许横向滚动 */
+  main table { display: block; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  /* 防止 fixed 漂浮元素挡住底部内容 */
+  main { padding-bottom: env(safe-area-inset-bottom); }
+}
+
+/* iOS Safari 输入框聚焦时不要自动放大 */
+@supports (-webkit-touch-callout: none) {
+  input, select, textarea { font-size: 16px; }
+}
+
 /* ===== WelcomeOverlay iOS-style animations ===== */
 @keyframes wOverlayIn {
   from { opacity: 0; }

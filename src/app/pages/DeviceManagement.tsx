@@ -227,7 +227,7 @@ export function DeviceManagement() {
   }
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
       <SimpleModal
         open={Boolean(pendingUnbindId)}
         title="确认解绑设备"
@@ -330,7 +330,7 @@ export function DeviceManagement() {
         </div>
       )}
 
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: "设备总数", value: devices.length, color: "gray", icon: "📡" },
           { label: "在线设备", value: onlineCount, color: "green", icon: "✅" },

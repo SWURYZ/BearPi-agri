@@ -40,16 +40,16 @@ function triggerYayaStop() {
  */
 export function PestRecognitionCard() {
   const [mobileUrl] = useState(() => {
-    // 手机端需要可路由到本机的局域网 IP，与 D6 NFC 配置保持一致
-    // 优先用环境变量；否则若浏览器是 localhost 则回退到固定局域网 IP，
-    // 若已经用 IP 访问则沿用当前 hostname
+    // 手机端二维码 / NFC 直接进入 React 主站的「害虫识别」页面
+    // 优先用 VITE_PEST_HOST 环境变量指定的 IP；否则若浏览器在 localhost
+    // 则回退到固定局域网 IP；否则沿用当前 hostname
     const envIp = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_PEST_HOST;
-    if (envIp) return `http://${envIp}:5000/`;
+    if (envIp) return `http://${envIp}:5173/insect`;
     const host = window.location.hostname || "localhost";
     if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0") {
-      return "http://10.157.218.245:5000/";
+      return "http://10.157.218.245:5173/insect";
     }
-    return `http://${host}:5000/`;
+    return `http://${host}:5173/insect`;
   });
 
   const [latest, setLatest] = useState<InsectLatestResult | null>(null);

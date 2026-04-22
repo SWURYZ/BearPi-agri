@@ -250,7 +250,7 @@ export function Dashboard() {
   }
 
   return (
-    <div className="p-6 space-y-6" style={{ position: "relative" }}>
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6" style={{ position: "relative" }}>
       <style>{DASH_KEYFRAMES}</style>
 
       <SimpleModal
@@ -292,7 +292,7 @@ export function Dashboard() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
         {[
           { label: "大棚总数", value: greenhouseData.length, unit: "个", color: "blue", icon: "🏗️" },
           { label: "在线大棚", value: onlineCount, unit: "个", color: "green", icon: "✅" },
@@ -319,7 +319,7 @@ export function Dashboard() {
       </div>
 
       {/* Main Row: 大棚轮播 + 害虫识别（重点突出） */}
-      <div className="grid grid-cols-3 gap-4" style={{ minHeight: 420 }}>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4" style={{ minHeight: 420 }}>
         {/* 左：大棚列表（可垂直滑动的紧凑卡片） */}
         <div className="col-span-1 bg-white rounded-xl border border-gray-100 p-4 shadow-sm flex flex-col">
           <div className="flex items-center justify-between mb-3 flex-shrink-0">
@@ -491,7 +491,7 @@ export function Dashboard() {
       </div>
 
       {/* Bottom Row: 3 迷你卡片切换器 */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* 温湿度趋势 迷你 */}
         <button
           type="button"

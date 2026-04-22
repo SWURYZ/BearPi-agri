@@ -713,7 +713,7 @@ export function AIAssistant() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="p-6 pb-0">
+      <div className="p-4 md:p-6 pb-0">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-xl font-bold text-gray-800">{"\u519c\u4e8b\u667a\u80fd\u95ee\u7b54"}</h1>
@@ -918,7 +918,7 @@ export function AIAssistant() {
 
       {/* Suggested Questions */}
       {messages.length <= 2 && (
-        <div className="px-6 mb-3">
+        <div className="px-4 md:px-6 mb-3">
           <p className="text-xs text-gray-400 mb-2">{"\ud83d\udca1 \u5e38\u89c1\u95ee\u9898\uff1a"}</p>
           <div className="flex flex-wrap gap-2">
             {suggestedQuestions.map((q) => (
@@ -955,7 +955,7 @@ export function AIAssistant() {
 
       {/* Image preview bar */}
       {selectedImage && (
-        <div className="px-6 mb-2">
+        <div className="px-4 md:px-6 mb-2">
           <div className="inline-flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
             <img src={selectedImage.preview} alt="preview" className="w-12 h-12 object-cover rounded-lg" />
             <span className="text-xs text-gray-500 max-w-[120px] truncate">{selectedImage.file.name}</span>
@@ -970,7 +970,7 @@ export function AIAssistant() {
       )}
 
       {/* Input Area */}
-      <div className="px-6 pb-6">
+      <div className="px-4 md:px-6 pb-4 md:pb-6">
         <div className="flex items-center gap-2 bg-white border-2 border-gray-200 rounded-2xl px-4 py-3 focus-within:border-green-400 transition-colors shadow-sm">
           {/* Image upload */}
           <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />

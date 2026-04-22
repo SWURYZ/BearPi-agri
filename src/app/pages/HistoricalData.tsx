@@ -236,7 +236,7 @@ export function HistoricalData() {
   }
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -323,7 +323,7 @@ export function HistoricalData() {
       </div>
 
       {/* Stats Row */}
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
         <StatCard label="当前温度" value={String(latestMetrics.temp ?? lastPoint?.temp ?? "--")} unit="°C" trend="up" />
         <StatCard label="当前湿度" value={String(latestMetrics.humidity ?? lastPoint?.humidity ?? "--")} unit="%" trend="flat" />
         <StatCard label="当前光照" value={String(latestMetrics.light ?? lastPoint?.light ?? "--")} unit="lux" trend="down" />
@@ -376,7 +376,7 @@ export function HistoricalData() {
 
       {/* Area charts for each selected sensor */}
       {selectedSensors.length > 0 && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {sensorOptions
             .filter((s) => selectedSensors.includes(s.key))
             .slice(0, 4)

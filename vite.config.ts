@@ -41,6 +41,9 @@ export default defineConfig(({ mode }) => {
     },
     server: apiProxyTarget
       ? {
+        host: true,
+        // 允许通过 cloudflared / ngrok 等隧道域名访问 dev server
+        allowedHosts: [".trycloudflare.com", ".ngrok-free.app", ".ngrok.io"],
         proxy: {
           '/api/v1/agri-agent': {
             target: agriAgentProxyTarget,

@@ -13,6 +13,10 @@ import {
   Sun,
   Droplets,
   RotateCcw,
+  Camera,
+  AlertTriangle,
+  Settings,
+  Copy,
 } from "lucide-react";
 import * as auth from "../services/auth";
 import { WelcomeOverlay } from "../components/WelcomeOverlay";
@@ -39,6 +43,10 @@ export function Login() {
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const busyRef = useRef(false);
+
+  /* ---- 摄像头权限错误对话框 ---- */
+  type CamErrKind = "insecure" | "denied" | "notfound" | "unsupported" | "inuse" | "unknown";
+  const [camErr, setCamErr] = useState<{ kind: CamErrKind; raw: string } | null>(null);
 
   useEffect(() => {
     auth.isFirstUser().then(setIsFirst);
@@ -104,6 +112,29 @@ export function Login() {
   const startFaceLogin = useCallback(async () => {
     setError("");
     setScanStatus("正在扫描人脸...");
+
+    // 在调用 getUserMedia 之前先做安全上下文校验：
+    // 移动浏览器在非 HTTPS（且非 localhost）下 mediaDevices 直接为 undefined
+    const isSecure =
+      typeof window !== "undefined" &&
+      (window.isSecureContext ||
+        window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1");
+    if (!isSecure) {
+      setCamErr({
+        kind: "insecure",
+        raw: "当前页面为 http://，移动浏览器禁止在非安全连接下访问摄像头",
+      });
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setCamErr({
+        kind: "unsupported",
+        raw: "浏览器不支持 mediaDevices API（常见于微信内置浏览器、QQ 浏览器极速模式等）",
+      });
+      return;
+    }
+
     setMode("face-login");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -170,8 +201,18 @@ export function Login() {
           busyRef.current = false;
         }
       }, 2000);
-    } catch {
-      setError("无法访问摄像头，请检查浏览器权限");
+    } catch (e) {
+      // 区分浏览器抛出的具体错误，方便引导
+      const err = e as DOMException & { name?: string; message?: string };
+      const name = err?.name || "";
+      const msg = err?.message || String(e);
+      let kind: CamErrKind = "unknown";
+      if (name === "NotAllowedError" || /Permission|denied/i.test(msg)) kind = "denied";
+      else if (name === "NotFoundError" || /not found|no.*camera/i.test(msg)) kind = "notfound";
+      else if (name === "NotReadableError" || name === "TrackStartError" || /in use|busy/i.test(msg))
+        kind = "inuse";
+      else if (name === "SecurityError") kind = "insecure";
+      setCamErr({ kind, raw: `${name || "Error"}: ${msg}` });
       setMode("login");
     }
   }, [navigate]);
@@ -207,6 +248,17 @@ export function Login() {
       </div>
 
       <canvas ref={canvasRef} className="hidden" />
+
+      {camErr && (
+        <CameraPermissionDialog
+          info={camErr}
+          onClose={() => setCamErr(null)}
+          onRetry={() => {
+            setCamErr(null);
+            startFaceLogin();
+          }}
+        />
+      )}
 
       <div className="w-full max-w-md relative z-10">
         {/* Logo */}
@@ -528,3 +580,218 @@ export function Login() {
     </div>
   );
 }
+
+/* ====================== 摄像头权限错误弹窗 ====================== */
+type CamErrInfo = {
+  kind: "insecure" | "denied" | "notfound" | "unsupported" | "inuse" | "unknown";
+  raw: string;
+};
+
+function CameraPermissionDialog({
+  info,
+  onClose,
+  onRetry,
+}: {
+  info: CamErrInfo;
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  // 设备 / 浏览器嗅探（仅用于展示对应的指引）
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  const isIOS = /iPad|iPhone|iPod/.test(ua) && !(window as unknown as { MSStream?: unknown }).MSStream;
+  const isAndroid = /Android/i.test(ua);
+  const isWeChat = /MicroMessenger/i.test(ua);
+  const isQQ = /QQ\//i.test(ua) || /MQQBrowser/i.test(ua);
+
+  const [copied, setCopied] = useState(false);
+  const currentUrl = typeof window !== "undefined" ? window.location.href : "";
+
+  const copyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(currentUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      // 降级：使用 execCommand
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = currentUrl;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1800);
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const titleMap: Record<CamErrInfo["kind"], string> = {
+    insecure: "需要 HTTPS 才能使用摄像头",
+    denied: "摄像头权限被拒绝",
+    notfound: "未检测到摄像头",
+    unsupported: "当前浏览器不支持人脸识别",
+    inuse: "摄像头被其他程序占用",
+    unknown: "无法访问摄像头",
+  };
+
+  // 针对当前情境给出操作步骤
+  const renderSteps = () => {
+    if (info.kind === "insecure" || isWeChat || isQQ) {
+      return (
+        <ol className="list-decimal list-inside space-y-2 text-sm text-gray-700">
+          {(isWeChat || isQQ) && (
+            <li className="text-amber-700">
+              检测到你正在使用<b>{isWeChat ? "微信" : "QQ"}内置浏览器</b>，无法调用摄像头。
+              请点击右上角「···」→「在浏览器打开」。
+            </li>
+          )}
+          <li>
+            服务器地址需要使用 <b>HTTPS</b>（或 <code>localhost</code>）。
+            当前访问的是 <code className="break-all text-rose-600">{currentUrl}</code>
+          </li>
+          <li>
+            解决办法：让管理员把前端配置成 HTTPS（例如使用 mkcert / nginx 反向代理 / cloudflared），
+            或在桌面端使用密码登录。
+          </li>
+        </ol>
+      );
+    }
+    if (info.kind === "denied") {
+      if (isIOS) {
+        return (
+          <ol className="list-decimal list-inside space-y-2 text-sm text-gray-700">
+            <li>
+              打开 iOS <b>「设置」→「Safari 浏览器」→「相机」</b>，把当前网站设为「允许」。
+            </li>
+            <li>或者：在地址栏左侧的「ぁA」按钮 → 「网站设置」→ 摄像头 → 允许。</li>
+            <li>修改后回到此页，点击下方「重试」。</li>
+          </ol>
+        );
+      }
+      if (isAndroid) {
+        return (
+          <ol className="list-decimal list-inside space-y-2 text-sm text-gray-700">
+            <li>
+              打开手机<b>「设置」→「应用」→「Chrome / 浏览器」→「权限」→「相机」</b>设为「允许」。
+            </li>
+            <li>
+              或者：在浏览器地址栏左侧点 <b>🔒/ⓘ</b> → 网站设置 → 相机 → 允许。
+            </li>
+            <li>修改后回到此页，点击下方「重试」。</li>
+          </ol>
+        );
+      }
+      return (
+        <ol className="list-decimal list-inside space-y-2 text-sm text-gray-700">
+          <li>
+            点击浏览器地址栏左侧的 <b>🔒</b> 或 <b>ⓘ</b> 图标 → 「网站设置」→「摄像头」→「允许」。
+          </li>
+          <li>修改后刷新本页，再次尝试人脸识别。</li>
+        </ol>
+      );
+    }
+    if (info.kind === "inuse") {
+      return (
+        <ol className="list-decimal list-inside space-y-2 text-sm text-gray-700">
+          <li>关闭其他正在使用相机的 App（视频通话 / 录像 / 直播等）。</li>
+          <li>点击「重试」再次扫描。</li>
+        </ol>
+      );
+    }
+    if (info.kind === "notfound") {
+      return (
+        <ol className="list-decimal list-inside space-y-2 text-sm text-gray-700">
+          <li>当前设备未检测到可用相机。</li>
+          <li>如果是电脑，请检查 USB 摄像头连接 / 笔记本相机隐私挡板。</li>
+        </ol>
+      );
+    }
+    if (info.kind === "unsupported") {
+      return (
+        <ol className="list-decimal list-inside space-y-2 text-sm text-gray-700">
+          <li>请使用<b> Chrome / Edge / Safari </b>等主流浏览器打开本页。</li>
+          <li>不支持微信内置浏览器、低版本 UC、QQ 浏览器极速模式等。</li>
+        </ol>
+      );
+    }
+    return (
+      <p className="text-sm text-gray-700">
+        请确认浏览器已授权摄像头权限，并使用 HTTPS / localhost 访问。
+      </p>
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4 animate-in fade-in">
+      <div className="w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl max-h-[90vh] overflow-hidden flex flex-col">
+        {/* 头部 */}
+        <div className="flex items-start gap-3 px-5 pt-5 pb-3 border-b border-gray-100">
+          <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+            <AlertTriangle className="w-5 h-5 text-amber-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-base font-semibold text-gray-900">{titleMap[info.kind]}</h3>
+            <p className="text-xs text-gray-500 mt-0.5 break-all">{info.raw}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 p-1"
+            aria-label="关闭"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* 指引 */}
+        <div className="px-5 py-4 overflow-y-auto">{renderSteps()}</div>
+
+        {/* 复制 URL */}
+        {currentUrl && (
+          <div className="px-5 pb-2">
+            <button
+              type="button"
+              onClick={copyUrl}
+              className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-gray-50 text-xs text-gray-700 hover:bg-gray-100"
+            >
+              <span className="truncate flex-1 text-left font-mono">{currentUrl}</span>
+              {copied ? (
+                <span className="text-green-600 flex-shrink-0">已复制</span>
+              ) : (
+                <Copy className="w-3.5 h-3.5 flex-shrink-0" />
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* 操作按钮 */}
+        <div className="px-5 py-4 grid grid-cols-2 gap-2 border-t border-gray-100">
+          <button
+            type="button"
+            onClick={onClose}
+            className="py-2.5 rounded-xl border border-gray-200 text-sm text-gray-700 hover:bg-gray-50 active:scale-95 transition"
+          >
+            <Settings className="w-4 h-4 inline -mt-0.5 mr-1" />
+            去设置
+          </button>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="py-2.5 rounded-xl bg-emerald-600 text-white text-sm shadow-md hover:bg-emerald-700 active:scale-95 transition"
+          >
+            <Camera className="w-4 h-4 inline -mt-0.5 mr-1" />
+            重试
+          </button>
+        </div>
+
+        <p className="px-5 pb-4 text-[11px] text-gray-400 text-center">
+          浏览器禁止网页直接跳转到系统设置，请按上方步骤手动操作
+        </p>
+      </div>
+    </div>
+  );
+}
+

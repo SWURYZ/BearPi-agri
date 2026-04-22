@@ -51,3 +51,41 @@ export async function clearLatestInsectResult(): Promise<void> {
     // ignore
   }
 }
+
+/**
+ * 直接在 React 端上传图片做识别（移动端拍照入口）
+ * 后端 Flask /api/upload 接受 multipart/form-data，字段名 image
+ * 返回 ok=true 时 data 包含 top1_name_zh / top5_rows / image_url
+ */
+export interface InsectUploadResult {
+  timestamp: number;
+  top1_name_en: string;
+  top1_name_zh: string;
+  top1_conf: number;
+  top5_rows: InsectTopRow[];
+  image_url: string | null;
+}
+
+export async function uploadInsectImage(image: Blob): Promise<InsectUploadResult> {
+  const form = new FormData();
+  // 文件名后缀用 jpg；后端按 MIME 也能识别
+  form.append("image", image, "capture.jpg");
+  const res = await fetch(`${INSECT_BASE}/upload`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    let msg = `上传失败 (${res.status})`;
+    try {
+      const j = await res.json();
+      if (j?.error) msg = j.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  const json: ApiResponse<InsectUploadResult> = await res.json();
+  if (!json.ok || !json.data) throw new Error(json.error || "识别失败");
+  return json.data;
+}
+

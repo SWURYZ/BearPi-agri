@@ -262,7 +262,7 @@ export function DeviceControl() {
   }
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
       {/* Header */}
       <div>
         <h1 className="text-xl font-bold text-gray-800">设备远程控制</h1>
@@ -336,7 +336,7 @@ export function DeviceControl() {
                 未发现可控设备，请先到设备管理页扫码绑定设备。
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {devices.map((device, idx) => {
                   const colors = colorMap[device.color] || colorMap.blue;
                   return (
@@ -442,7 +442,7 @@ export function DeviceControl() {
           {showAddTimer && (
             <div className="bg-white rounded-xl border-2 border-green-300 p-5 shadow-sm">
               <h4 className="text-sm font-semibold text-gray-800 mb-4">新增定时规则</h4>
-              <div className="grid grid-cols-5 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
                 <div>
                   <label className="text-xs text-gray-500 mb-1.5 block">控制类型</label>
                   <select

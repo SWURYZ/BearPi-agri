@@ -348,7 +348,7 @@ export function AutomationRules() {
   }
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
       <div>
         <h1 className="text-xl font-bold text-gray-800">复合条件联动控制</h1>
       </div>
@@ -414,7 +414,7 @@ export function AutomationRules() {
           {showAdd && (
             <div className="bg-white rounded-xl border-2 border-green-300 p-5 shadow-sm space-y-4">
               <h4 className="text-sm font-semibold text-gray-800">{editingRuleId == null ? "新建联动规则" : "编辑联动规则"}</h4>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="text-xs text-gray-500 mb-1 block">规则名称</label>
                   <input

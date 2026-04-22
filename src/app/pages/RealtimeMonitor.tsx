@@ -305,7 +305,7 @@ export function RealtimeMonitor() {
   }, [selectedGH]);
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -355,7 +355,7 @@ export function RealtimeMonitor() {
       </div>
 
       {/* Sensor Cards */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {sensorConfigs.map((sensor) => {
           const isSelected = sensor.key === selectedSensor;
           const rawValue = sensorValues[sensor.key as SensorKey];

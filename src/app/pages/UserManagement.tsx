@@ -300,7 +300,7 @@ export function UserManagement() {
       </div>
 
       {/* 统计卡片 */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
           <div className="text-2xl font-bold text-gray-800">{users.length}</div>
           <div className="text-xs text-gray-500 mt-1">总用户数</div>

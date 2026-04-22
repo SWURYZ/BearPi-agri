@@ -567,7 +567,7 @@ export function AlertManagement() {
   }, [records]);
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
       <SimpleModal
         open={pendingDeleteKey != null}
         title="删除规则"
@@ -654,7 +654,7 @@ export function AlertManagement() {
 
       {activeTab === "records" && (
         <>
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="bg-white rounded-xl border border-gray-100 p-3 shadow-sm text-center">
               <div className="text-2xl font-bold text-gray-700">{todayCount}</div>
               <div className="text-xs text-gray-500 mt-0.5">今日告警</div>
@@ -830,7 +830,7 @@ export function AlertManagement() {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {rules.map((rule) => {
               const draft = drafts[rule.key];
               if (!draft) {
