@@ -1,629 +1,482 @@
-import { useEffect, useMemo, useState } from "react";
-import {
-  Thermometer,
-  Droplets,
-  Sun,
-  Wind,
-  Gauge,
-  Leaf,
-  Activity,
-  Wifi,
-} from "lucide-react";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
+import { useEffect, useState } from "react";
+import { Activity, Wifi, ChevronLeft } from "lucide-react";
 import {
   SENSOR_KEYS,
   type SensorKey,
-  type SensorMetrics,
-  type SensorPoint,
   connectRealtimeStream,
   fetchRealtimeSnapshot,
-  fetchSensorHistory,
 } from "../services/realtime";
-import { fetchThresholdRules, type ThresholdRule } from "../services/thresholdAlert";
+import { fetchAllConnectedDevices } from "../services/greenhouseMonitor";
+import { fetchRealtimeDeviceStatus } from "../services/deviceControl";
+import { GreenhouseDigitalTwin } from "../components/GreenhouseDigitalTwin";
 
-const greenhouses = ["1号大棚", "2号大棚", "3号大棚", "4号大棚", "5号大棚", "6号大棚"];
+const GREENHOUSE_LIST = ["1号大棚", "2号大棚", "3号大棚", "4号大棚", "5号大棚", "6号大棚"];
 
-/**
- * 以 1号大棚的真实数据为基线，为其余大棚生成“靠谱的”模拟数据。
- * - 各大棚有固定偏移，体现不同阔叶面积/朝向/作物差异
- * - 在偏移上叠加 ±5% 带种子的微抖动，避免多个大棚看起来一模一样
- */
-const SIM_OFFSETS: Record<string, Partial<Record<SensorKey, { delta?: number; scale?: number }>>> = {
-  "2号大棚": { temp: { delta: 1.2 }, humidity: { delta: -3 }, light: { scale: 0.95 }, co2: { delta: 20 }, soilHumidity: { delta: -5 }, soilTemp: { delta: 0.8 } },
-  "3号大棚": { temp: { delta: -0.8 }, humidity: { delta: 4 }, light: { scale: 1.05 }, co2: { delta: -15 }, soilHumidity: { delta: 6 }, soilTemp: { delta: -0.5 } },
-  "4号大棚": { temp: { delta: 2.0 }, humidity: { delta: -6 }, light: { scale: 1.10 }, co2: { delta: 35 }, soilHumidity: { delta: -8 }, soilTemp: { delta: 1.5 } },
-  "5号大棚": { temp: { delta: -1.5 }, humidity: { delta: 2 }, light: { scale: 0.90 }, co2: { delta: -10 }, soilHumidity: { delta: 3 }, soilTemp: { delta: -1.0 } },
-  "6号大棚": { temp: { delta: 0.5 }, humidity: { delta: -1 }, light: { scale: 1.02 }, co2: { delta: 5 }, soilHumidity: { delta: -2 }, soilTemp: { delta: 0.3 } },
+const GREENHOUSE_CROPS: Record<string, string> = {
+  "1号大棚": "番茄", "2号大棚": "黄瓜", "3号大棚": "草莓",
+  "4号大棚": "辣椒", "5号大棚": "生菜", "6号大棚": "茄子",
 };
 
-// 简单确定性随机（项目中不需要加密，仅需多大棚微抖动不同步）
-function seededJitter(seed: number) {
-  const x = Math.sin(seed * 12.9898) * 43758.5453;
-  return x - Math.floor(x); // [0,1)
-}
-
-function simulateValue(gh: string, key: SensorKey, base: number, seed = Date.now()): number {
-  const cfg = SIM_OFFSETS[gh]?.[key];
-  let v = base;
-  if (cfg?.scale != null) v *= cfg.scale;
-  if (cfg?.delta != null) v += cfg.delta;
-  // ±3% 随机抖动（加入 gh 名称哈希 + seed，让不同大棚不同步）
-  const ghSeed = gh.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
-  const noise = (seededJitter(ghSeed * 991 + (seed % 100000)) - 0.5) * 0.06; // ±3%
-  v *= 1 + noise;
-  return +v.toFixed(2);
-}
-
-function simulateMetrics(gh: string, base: SensorMetrics, seed = Date.now()): SensorMetrics {
-  if (gh === ONLINE_GREENHOUSE) return base;
-  const out: SensorMetrics = {};
-  for (const key of SENSOR_KEYS) {
-    const v = base[key];
-    if (typeof v === "number" && Number.isFinite(v)) {
-      out[key] = simulateValue(gh, key, v, seed);
-    }
-  }
-  return out;
-}
-
-function simulateHistory(gh: string, key: SensorKey, basePoints: SensorPoint[]): SensorPoint[] {
-  if (gh === ONLINE_GREENHOUSE) return basePoints;
-  return basePoints.map((p, i) => ({
-    ...p,
-    value: simulateValue(gh, key, p.value, i * 100 + 1),
-  }));
-}
-
-/**
- * 从阈值告警规则提取「每个大棚 × 每个传感器」的有效 [min,max] 区间。
- * 设备命名约定: DEV-GH{02d}-{T01|H01|L01|C01|S01|G01}
- * 后端只支持 temp/humidity/light/co2 三个 metric，soilHumidity/soilTemp 未产生规则时返回 undefined，调用方回退默认 normal。
- */
-const METRIC_TO_SUFFIX: Record<string, SensorKey> = {
-  T01: "temp",
-  H01: "humidity",
-  L01: "light",
-  C01: "co2",
-  S01: "soilHumidity",
-  G01: "soilTemp",
+// Crop colors [fruit, leaf] for mini card plants
+const CROP_COLORS: Record<string, [string, string]> = {
+  "番茄": ["#ef4444", "#16a34a"], "黄瓜": ["#84cc16", "#15803d"],
+  "草莓": ["#e11d48", "#22c55e"], "辣椒": ["#dc2626", "#15803d"],
+  "生菜": ["#4ade80", "#166534"], "茄子": ["#9333ea", "#16a34a"],
 };
-function parseDeviceId(deviceId: string): { gh: string; sensorKey: SensorKey } | null {
-  const m = /^DEV-GH(\d{1,2})-([A-Z]\d{2})$/.exec(deviceId);
-  if (!m) return null;
-  const ghNo = String(parseInt(m[1], 10));
-  const sensorKey = METRIC_TO_SUFFIX[m[2]];
-  if (!sensorKey) return null;
-  return { gh: `${ghNo}号大棚`, sensorKey };
-}
-
-type RangeMap = Record<string, Partial<Record<SensorKey, [number, number]>>>;
-function buildRangeMap(rules: ThresholdRule[]): RangeMap {
-  const map: RangeMap = {};
-  for (const r of rules) {
-    if (!r.enabled) continue;
-    const parsed = parseDeviceId(r.deviceId);
-    if (!parsed) continue;
-    // 后端 metric 与 SensorKey 应一致（temp/humidity/light/co2），以 deviceId 解析为准
-    const { gh, sensorKey } = parsed;
-    if (!map[gh]) map[gh] = {};
-    const cur = map[gh][sensorKey];
-    if (r.operator === "BELOW") {
-      // BELOW 阈值 → 低于此值报警，即这是 “正常下限”
-      const min = r.threshold;
-      const max = cur ? cur[1] : Number.POSITIVE_INFINITY;
-      map[gh][sensorKey] = [min, max];
-    } else if (r.operator === "ABOVE") {
-      const min = cur ? cur[0] : Number.NEGATIVE_INFINITY;
-      const max = r.threshold;
-      map[gh][sensorKey] = [min, max];
-    }
-  }
-  return map;
-}
-
-function generateData(base: number, variance: number, points: number) {
-  return Array.from({ length: points }, (_, i) => ({
-    time: `${String(Math.floor(i * (24 / points))).padStart(2, "0")}:${String((i * 4) % 60).padStart(2, "0")}`,
-    value: +(base + (Math.random() - 0.5) * variance * 2).toFixed(1),
-  }));
-}
-
-const sensorConfigs = [
-  {
-    key: "temp",
-    label: "空气温度",
-    unit: "°C",
-    icon: Thermometer,
-    color: "#f97316",
-    iconColor: "text-orange-500",
-    bgColor: "bg-orange-50",
-    borderColor: "border-orange-200",
-    min: 15,
-    max: 35,
-    normal: [18, 30],
-    defaultValue: 24.5,
-    defaultData: generateData(24, 3, 24),
-  },
-  {
-    key: "humidity",
-    label: "空气湿度",
-    unit: "%",
-    icon: Droplets,
-    color: "#3b82f6",
-    iconColor: "text-blue-500",
-    bgColor: "bg-blue-50",
-    borderColor: "border-blue-200",
-    min: 0,
-    max: 100,
-    normal: [50, 80],
-    defaultValue: 68,
-    defaultData: generateData(68, 8, 24),
-  },
-  {
-    key: "light",
-    label: "光照强度",
-    unit: "lux",
-    icon: Sun,
-    color: "#eab308",
-    iconColor: "text-yellow-500",
-    bgColor: "bg-yellow-50",
-    borderColor: "border-yellow-200",
-    min: 0,
-    max: 15000,
-    normal: [100, 1000],
-    defaultValue: 8500,
-    defaultData: generateData(8500, 2000, 24),
-  },
-  {
-    key: "co2",
-    label: "CO₂浓度",
-    unit: "ppm",
-    icon: Wind,
-    color: "#22c55e",
-    iconColor: "text-green-500",
-    bgColor: "bg-green-50",
-    borderColor: "border-green-200",
-    min: 300,
-    max: 800,
-    normal: [350, 600],
-    defaultValue: 420,
-    defaultData: generateData(420, 50, 24),
-  },
-  {
-    key: "soilHumidity",
-    label: "土壤湿度",
-    unit: "%",
-    icon: Leaf,
-    color: "#10b981",
-    iconColor: "text-emerald-500",
-    bgColor: "bg-emerald-50",
-    borderColor: "border-emerald-200",
-    min: 0,
-    max: 100,
-    normal: [30, 70],
-    defaultValue: 45,
-    defaultData: generateData(45, 10, 24),
-  },
-  {
-    key: "soilTemp",
-    label: "土壤温度",
-    unit: "°C",
-    icon: Gauge,
-    color: "#a855f7",
-    iconColor: "text-purple-500",
-    bgColor: "bg-purple-50",
-    borderColor: "border-purple-200",
-    min: 10,
-    max: 40,
-    normal: [15, 30],
-    defaultValue: 21.2,
-    defaultData: generateData(21, 2, 24),
-  },
-] as const;
 
 type ConnectionMode = "live" | "waiting" | "offline";
 
 const ONLINE_GREENHOUSE = "1号大棚";
 
-const defaultSensorValues = sensorConfigs.reduce<Record<SensorKey, number>>((acc, sensor) => {
-  acc[sensor.key as SensorKey] = sensor.defaultValue;
-  return acc;
-}, {} as Record<SensorKey, number>);
-
-const emptySensorValues = sensorConfigs.reduce<Partial<Record<SensorKey, number>>>((acc, sensor) => {
-  acc[sensor.key as SensorKey] = undefined;
-  return acc;
-}, {} as Partial<Record<SensorKey, number>>);
-
-const defaultSensorSeries = sensorConfigs.reduce<Record<SensorKey, SensorPoint[]>>((acc, sensor) => {
-  acc[sensor.key as SensorKey] = sensor.defaultData;
-  return acc;
-}, {} as Record<SensorKey, SensorPoint[]>);
+const emptySensorValues: Partial<Record<SensorKey, number>> = SENSOR_KEYS.reduce(
+  (acc, k) => { acc[k] = undefined; return acc; },
+  {} as Partial<Record<SensorKey, number>>,
+);
 
 function toClockTime(input: Date) {
   return input.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-function rollSeries(points: SensorPoint[], value: number, maxPoints = 48) {
-  const next = [...points, { time: toClockTime(new Date()), value: +value.toFixed(2) }];
-  return next.slice(Math.max(0, next.length - maxPoints));
+// ── Mini greenhouse card for overview ───────────────────────────────────────
+interface MiniGHProps {
+  name: string; crop: string;
+  connectionMode: ConnectionMode;
+  sensorValues: Partial<Record<SensorKey, number>>;
+  ledOn: boolean; motorOn: boolean;
+  onClick: () => void;
 }
+function MiniGH({ name, crop, connectionMode, sensorValues: sv, ledOn, motorOn, onClick }: MiniGHProps) {
+  const borderColor = connectionMode === "live" ? "#22c55e"
+    : connectionMode === "waiting" ? "#3b82f6" : "#475569";
+  const [fr, lf] = CROP_COLORS[crop] ?? ["#ef4444", "#16a34a"];
+  const connText = connectionMode === "live" ? "实时" : connectionMode === "waiting" ? "等待" : "离线";
+  const connTextColor = connectionMode === "live" ? "#86efac"
+    : connectionMode === "waiting" ? "#93c5fd" : "#94a3b8";
+  const isTomato = crop === "\u756a\u8304";
 
-function GaugeBar({ value, min, max, normal, color }: {
-  value: number; min: number; max: number; normal: [number, number]; color: string;
-}) {
-  const pct = ((value - min) / (max - min)) * 100;
-  const isNormal = value >= normal[0] && value <= normal[1];
   return (
-    <div className="mt-2">
-      <div className="h-2 bg-gray-100 rounded-full overflow-hidden relative">
-        <div
-          className="h-full rounded-full transition-all duration-500"
-          style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: isNormal ? color : "#ef4444" }}
-        />
-      </div>
-      <div className="flex justify-between text-xs text-gray-400 mt-0.5">
-        <span>{min}</span>
-        <span className={`font-medium ${isNormal ? "text-green-600" : "text-red-500"}`}>
-          {isNormal ? "正常" : "异常"}
+    <div
+      onClick={onClick}
+      className="cursor-pointer rounded-xl overflow-hidden flex flex-col transition-all duration-200 hover:scale-[1.025] group relative"
+      style={{
+        background: "linear-gradient(160deg,#060d1a 0%,#0f1e35 100%)",
+        border: `1.5px solid ${borderColor}35`,
+        boxShadow: `0 2px 16px rgba(0,0,0,0.4)`,
+      }}
+    >
+      {/* Hover glow */}
+      <div className="absolute inset-0 rounded-xl pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+        style={{ boxShadow: `inset 0 0 0 1.5px ${borderColor}80` }} />
+
+      {/* Card header */}
+      <div className="flex items-center justify-between px-3 py-2"
+        style={{ borderBottom: `1px solid ${borderColor}20` }}>
+        <div className="flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full"
+            style={{ backgroundColor: borderColor, boxShadow: `0 0 5px ${borderColor}` }} />
+          <span className="text-xs font-bold text-gray-200">{name}</span>
+        </div>
+        <span className="text-xs px-1.5 py-0.5 rounded-full font-medium"
+          style={{ background: `${borderColor}18`, color: connTextColor, border: `1px solid ${borderColor}35` }}>
+          {connText}
         </span>
-        <span>{max}</span>
+      </div>
+
+      {/* SVG greenhouse */}
+      {isTomato ? (
+        /* ── 3-D oblique greenhouse — tomato ─────────────────────────── */
+        <svg viewBox="0 0 280 175" xmlns="http://www.w3.org/2000/svg" className="w-full" style={{ height: 140 }}>
+          <defs>
+            <filter id="mgh-glow-f">
+              <feGaussianBlur stdDeviation="2.5" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          {/* sky fill */}
+          <path d="M40,92 Q108,18 177,92 L200,78 Q131,4 63,78 Z"
+            fill={connectionMode !== "offline" ? "rgba(14,40,90,0.4)" : "rgba(8,16,35,0.35)"} />
+          {/* back arch wire */}
+          <path d="M63,78 Q131,4 200,78"
+            fill="none" stroke={borderColor} strokeWidth="1.1" opacity="0.55" />
+          <line x1="63" y1="78" x2="63" y2="148" stroke={borderColor} strokeWidth="0.8" opacity="0.35" />
+          <line x1="200" y1="78" x2="200" y2="148" stroke={borderColor} strokeWidth="0.8" opacity="0.35" />
+          <line x1="63" y1="148" x2="200" y2="148" stroke={borderColor} strokeWidth="0.8" opacity="0.25" />
+          {/* floor */}
+          <polygon points="40,162 177,162 200,148 63,148" fill="#122808" opacity="0.7" />
+          {/* soil front row */}
+          <polygon points="48,160 169,160 191,147 70,147" fill="#3a1a06" />
+          {/* soil back row */}
+          <polygon points="56,147 165,147 183,137 75,137" fill="#2e1404" />
+          {/* LED glow fill */}
+          {ledOn && <ellipse cx="118" cy="108" rx="75" ry="30" fill="rgba(253,230,138,0.10)" />}
+          {/* back-row tomato plants */}
+          {[78, 114, 150].map((px, i) => {
+            const py = 143 + i;
+            return (
+              <g key={`b${i}`}>
+                <line x1={px} y1={py} x2={px} y2={py - 28} stroke="#15803d" strokeWidth="1.1" />
+                <line x1={px} y1={py - 8}  x2={px - 8}  y2={py - 16} stroke="#15803d" strokeWidth="0.85" />
+                <line x1={px} y1={py - 8}  x2={px + 8}  y2={py - 16} stroke="#15803d" strokeWidth="0.85" />
+                <line x1={px} y1={py - 18} x2={px - 6}  y2={py - 25} stroke="#15803d" strokeWidth="0.85" />
+                <line x1={px} y1={py - 18} x2={px + 6}  y2={py - 25} stroke="#15803d" strokeWidth="0.85" />
+                <circle cx={px - 9}  cy={py - 18} r={3.8} fill="#ef4444" opacity={0.92} />
+                <circle cx={px + 9}  cy={py - 18} r={3.8} fill="#dc2626" opacity={0.92} />
+                <circle cx={px - 7}  cy={py - 10} r={3.4} fill="#ef4444" opacity={0.88} />
+                <circle cx={px + 7}  cy={py - 10} r={3.4} fill="#ef4444" opacity={0.88} />
+                <circle cx={px}      cy={py - 30} r={3.4} fill="#f87171" opacity={0.94} />
+                <ellipse cx={px - 10} cy={py - 20} rx="4" ry="2.2" fill="#166534" opacity={0.78}
+                  transform={`rotate(-34,${px - 10},${py - 20})`} />
+                <ellipse cx={px + 10} cy={py - 20} rx="4" ry="2.2" fill="#166534" opacity={0.78}
+                  transform={`rotate(34,${px + 10},${py - 20})`} />
+              </g>
+            );
+          })}
+          {/* front-row tomato plants */}
+          {[65, 108, 151].map((px, i) => {
+            const py = 157;
+            return (
+              <g key={`f${i}`}>
+                <line x1={px} y1={py} x2={px} y2={py - 35} stroke="#16a34a" strokeWidth="1.3" />
+                <line x1={px} y1={py - 10} x2={px - 11} y2={py - 20} stroke="#16a34a" strokeWidth="0.95" />
+                <line x1={px} y1={py - 10} x2={px + 11} y2={py - 20} stroke="#16a34a" strokeWidth="0.95" />
+                <line x1={px} y1={py - 22} x2={px - 9}  y2={py - 30} stroke="#16a34a" strokeWidth="0.95" />
+                <line x1={px} y1={py - 22} x2={px + 9}  y2={py - 30} stroke="#16a34a" strokeWidth="0.95" />
+                <circle cx={px - 12} cy={py - 22} r={4.8} fill="#ef4444" opacity={0.95} />
+                <circle cx={px + 12} cy={py - 22} r={4.8} fill="#dc2626" opacity={0.95} />
+                <circle cx={px - 10} cy={py - 12} r={4.3} fill="#ef4444" opacity={0.92} />
+                <circle cx={px + 10} cy={py - 12} r={4.3} fill="#ef4444" opacity={0.92} />
+                <circle cx={px}      cy={py - 37} r={4.3} fill="#f87171" opacity={0.97} />
+                <circle cx={px - 13.5} cy={py - 24.5} r={1.4} fill="rgba(255,255,255,0.38)" />
+                <circle cx={px + 11}   cy={py - 24}   r={1.4} fill="rgba(255,255,255,0.38)" />
+                <ellipse cx={px - 13} cy={py - 24} rx="4.8" ry="2.7" fill="#15803d" opacity={0.83}
+                  transform={`rotate(-35,${px - 13},${py - 24})`} />
+                <ellipse cx={px + 13} cy={py - 24} rx="4.8" ry="2.7" fill="#15803d" opacity={0.83}
+                  transform={`rotate(35,${px + 13},${py - 24})`} />
+                <ellipse cx={px} cy={py - 37} rx="3.8" ry="2.2" fill="#15803d" opacity={0.78}
+                  transform={`rotate(-8,${px},${py - 37})`} />
+              </g>
+            );
+          })}
+          {/* drip irrigation */}
+          <line x1="50" y1="157" x2="169" y2="157" stroke="#3b82f6" strokeWidth="1.1" opacity="0.45" />
+          <line x1="58" y1="145" x2="163" y2="145" stroke="#3b82f6" strokeWidth="0.9" opacity="0.38" />
+          {[65, 108, 151].map(x => <circle key={x} cx={x} cy={157} r={1.4} fill="#93c5fd" opacity={0.65} />)}
+          {[78, 114, 150].map(x => <circle key={x} cx={x} cy={145} r={1.2} fill="#93c5fd" opacity={0.55} />)}
+          {/* sensor post */}
+          <line x1="92" y1="156" x2="92" y2="118" stroke="#475569" strokeWidth="1.4" />
+          <rect x="86" y="114" width="12" height="6" rx="1.5" fill="#0f172a" stroke="#3b82f6" strokeWidth="0.8" />
+          <circle cx="92" cy="111" r="1.8"
+            fill={connectionMode !== "offline" ? "#3b82f6" : "#334155"} opacity="0.9" />
+          {/* LED bars */}
+          {ledOn ? (
+            <>
+              <line x1="58" y1="82" x2="154" y2="82"
+                stroke="#fde68a" strokeWidth="3" opacity="0.85" filter="url(#mgh-glow-f)" />
+              <line x1="64" y1="74" x2="160" y2="74"
+                stroke="#fde68a" strokeWidth="2.5" opacity="0.75" filter="url(#mgh-glow-f)" />
+              <line x1="58" y1="82" x2="154" y2="82" stroke="#fefce8" strokeWidth="1" opacity="0.95" />
+              <line x1="64" y1="74" x2="160" y2="74" stroke="#fefce8" strokeWidth="0.9" opacity="0.9" />
+            </>
+          ) : (
+            <>
+              <line x1="58" y1="82" x2="154" y2="82" stroke="#1e3a5f" strokeWidth="2.5" opacity="0.6" />
+              <line x1="64" y1="74" x2="160" y2="74" stroke="#1e3a5f" strokeWidth="2" opacity="0.55" />
+            </>
+          )}
+          {/* right side wall */}
+          <polygon points="177,92 177,162 200,148 200,78"
+            fill={connectionMode !== "offline" ? "rgba(30,70,160,0.16)" : "rgba(15,25,55,0.14)"}
+            stroke={borderColor} strokeWidth="0.75" strokeOpacity="0.3" />
+          {/* fan on right wall */}
+          <g transform="translate(188,116)">
+            <circle cx="0" cy="0" r="9.5" fill="rgba(4,9,18,0.88)" stroke={borderColor} strokeWidth="0.7" />
+            <g>
+              <animateTransform attributeName="transform" type="rotate"
+                from="0 0 0" to="360 0 0"
+                dur={motorOn ? "0.7s" : "5s"} repeatCount="indefinite" />
+              {[0, 120, 240].map((a, i) => (
+                <ellipse key={i} cx="0" cy="-4" rx="1.9" ry="3.8"
+                  fill={motorOn ? "#60a5fa" : "#1e3a5f"} opacity="0.88"
+                  transform={`rotate(${a})`} />
+              ))}
+            </g>
+            <circle cx="0" cy="0" r="1.8" fill="#64748b" />
+          </g>
+          {/* right oblique roof */}
+          <path d="M108,55 Q143,55 177,92 L200,78 Q165,41 131,41 Z"
+            fill={connectionMode !== "offline" ? "rgba(40,90,200,0.11)" : "rgba(15,25,55,0.09)"}
+            stroke={borderColor} strokeWidth="0.8" strokeOpacity="0.4" />
+          {/* front arch */}
+          <path d="M40,92 Q108,18 177,92"
+            fill="none" stroke={borderColor} strokeWidth="1.8" opacity="0.95" />
+          {[0.25, 0.5, 0.75].map((t, i) => {
+            const rx = (1 - t) * (1 - t) * 40 + 2 * t * (1 - t) * 108 + t * t * 177;
+            const ry = (1 - t) * (1 - t) * 92 + 2 * t * (1 - t) * 18 + t * t * 92;
+            return <line key={i} x1={rx} y1={ry} x2={rx} y2={162}
+              stroke={borderColor} strokeWidth="0.5" opacity="0.13" />;
+          })}
+          <line x1="40" y1="92" x2="40" y2="162" stroke={borderColor} strokeWidth="1.4" opacity="0.88" />
+          <line x1="177" y1="92" x2="177" y2="162" stroke={borderColor} strokeWidth="1.4" opacity="0.88" />
+          <line x1="40" y1="162" x2="177" y2="162" stroke={borderColor} strokeWidth="1.1" opacity="0.65" />
+          {/* HUD brackets */}
+          <line x1="40" y1="162" x2="54" y2="162" stroke={borderColor} strokeWidth="1.8" opacity="0.8" />
+          <line x1="40" y1="162" x2="40" y2="148" stroke={borderColor} strokeWidth="1.8" opacity="0.8" />
+          <line x1="177" y1="162" x2="163" y2="162" stroke={borderColor} strokeWidth="1.8" opacity="0.8" />
+          <line x1="177" y1="162" x2="177" y2="148" stroke={borderColor} strokeWidth="1.8" opacity="0.8" />
+        </svg>
+      ) : (
+        /* ── simple arch for other greenhouses ─────────────────────── */
+        <svg viewBox="0 0 240 120" xmlns="http://www.w3.org/2000/svg" className="w-full" style={{ height: 96 }}>
+          <rect x="0" y="95" width="240" height="25" fill="#4a2e10" opacity="0.7" />
+          <path d="M15,90 Q120,16 225,90 L225,95 L15,95 Z"
+            fill={connectionMode !== "offline" ? "rgba(60,120,200,0.15)" : "rgba(30,50,80,0.12)"} />
+          <path d="M15,90 Q120,16 225,90"
+            fill="none" stroke={borderColor} strokeWidth="2" opacity="0.9" />
+          <line x1="15" y1="90" x2="15" y2="95" stroke={borderColor} strokeWidth="1.5" opacity="0.8" />
+          <line x1="225" y1="90" x2="225" y2="95" stroke={borderColor} strokeWidth="1.5" opacity="0.8" />
+          <line x1="15" y1="95" x2="225" y2="95" stroke={borderColor} strokeWidth="1" opacity="0.45" />
+          {[0.3, 0.5, 0.7].map((t, i) => {
+            const px = 15 + t * 210;
+            const ay = Math.pow(1 - t, 2) * 90 + 2 * t * (1 - t) * 16 + t * t * 90;
+            return <line key={i} x1={px} y1={ay} x2={px} y2="95"
+              stroke={borderColor} strokeWidth="0.5" opacity="0.20" />;
+          })}
+          {ledOn && <ellipse cx="120" cy="62" rx="72" ry="22" fill="rgba(254,220,60,0.08)" />}
+          {[58, 120, 182].map((px, i) => (
+            <g key={i}>
+              <rect x={px - 1} y={79} width={2} height={16} fill={lf} rx={1} />
+              <circle cx={px - 7} cy={82} r={6.5} fill={fr} opacity={0.9} />
+              <circle cx={px + 7} cy={82} r={6.5} fill={fr} opacity={0.9} />
+              <circle cx={px}     cy={76} r={6}   fill={fr} opacity={0.9} />
+            </g>
+          ))}
+          <g transform="translate(210,82)">
+            <circle cx="0" cy="0" r="10" fill="rgba(8,18,30,0.9)"
+              stroke={borderColor} strokeWidth="0.8" opacity="0.7" />
+            <g>
+              <animateTransform attributeName="transform" type="rotate"
+                from="0 0 0" to="360 0 0"
+                dur={motorOn ? "0.8s" : "6s"} repeatCount="indefinite" />
+              {[0, 120, 240].map((a, i) => (
+                <ellipse key={i} cx="0" cy="-4.5" rx="2" ry="4"
+                  fill={motorOn ? "#60a5fa" : "#2a3f55"} opacity="0.85"
+                  transform={`rotate(${a})`} />
+              ))}
+            </g>
+            <circle cx="0" cy="0" r="2" fill="#7a9ab8" />
+          </g>
+          <line x1="15" y1="95" x2="27" y2="95" stroke={borderColor} strokeWidth="1.5" opacity="0.7" />
+          <line x1="15" y1="95" x2="15" y2="83" stroke={borderColor} strokeWidth="1.5" opacity="0.7" />
+          <line x1="225" y1="95" x2="213" y2="95" stroke={borderColor} strokeWidth="1.5" opacity="0.7" />
+          <line x1="225" y1="95" x2="225" y2="83" stroke={borderColor} strokeWidth="1.5" opacity="0.7" />
+        </svg>
+      )}
+
+      {/* Info row */}
+      <div className="px-3 pt-1 pb-3 flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-semibold" style={{ color: fr }}>{crop}</span>
+          <div className="flex items-center gap-1">
+            {ledOn && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-900/40 text-yellow-400 border border-yellow-700/40">
+                LED
+              </span>
+            )}
+            {motorOn && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400 border border-blue-700/40">
+                风机
+              </span>
+            )}
+          </div>
+        </div>
+        {/* 3 key sensor values */}
+        <div className="grid grid-cols-3 gap-1">
+          {([
+            { key: "temp" as SensorKey,     label: "气温",  unit: "°C",  decimals: 1, isInt: false },
+            { key: "humidity" as SensorKey,  label: "湿度",  unit: "%",   decimals: 0, isInt: false },
+            { key: "light" as SensorKey,     label: "光照",  unit: "lux", decimals: 0, isInt: true  },
+          ]).map(({ key, label, unit, decimals, isInt }) => {
+            const v = sv[key];
+            const display = v !== undefined ? (isInt ? Math.round(v).toString() : v.toFixed(decimals)) : "--";
+            return (
+              <div key={key} className="text-center rounded px-1 py-1.5" style={{ background: "rgba(0,0,0,0.25)" }}>
+                <div className="text-sm font-bold font-mono leading-none"
+                  style={{ color: v !== undefined ? "#e2e8f0" : "#475569" }}>{display}</div>
+                <div className="text-xs mt-0.5" style={{ color: "#475569" }}>{label}/{unit}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Focus hint */}
+      <div className="absolute bottom-2 right-3 text-xs opacity-0 group-hover:opacity-50 transition-opacity"
+        style={{ color: borderColor }}>
+        点击聚焦 →
       </div>
     </div>
   );
 }
 
+
 export function RealtimeMonitor() {
-  const initialGH = new URLSearchParams(window.location.search).get("gh");
-  const safeInitialGH = initialGH && greenhouses.includes(initialGH) ? initialGH : "1号大棚";
-  const [selectedGH, setSelectedGH] = useState(safeInitialGH);
-  const [selectedSensor, setSelectedSensor] = useState<SensorKey>("temp");
-  const [sensorValues, setSensorValues] = useState<Partial<Record<SensorKey, number>>>(
-    safeInitialGH === ONLINE_GREENHOUSE ? emptySensorValues : emptySensorValues,
-  );
-  const [sensorSeries, setSensorSeries] = useState<Record<SensorKey, SensorPoint[]>>(defaultSensorSeries);
-  const [connectionMode, setConnectionMode] = useState<ConnectionMode>(
-    safeInitialGH === ONLINE_GREENHOUSE ? "waiting" : "offline",
-  );
+  const [focusedGH, setFocusedGH] = useState<string | null>(null);
+  const [sensorValues, setSensorValues] = useState<Partial<Record<SensorKey, number>>>(emptySensorValues);
+  const [connectionMode, setConnectionMode] = useState<ConnectionMode>("waiting");
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
-  const [thresholdRanges, setThresholdRanges] = useState<RangeMap>({});
+  const [ledOn, setLedOn] = useState(false);
+  const [motorOn, setMotorOn] = useState(false);
 
-  // 全局轮询阈值规则（不随大棚切换重启）
-  useEffect(() => {
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const rules = await fetchThresholdRules();
-        if (!cancelled) setThresholdRanges(buildRangeMap(rules || []));
-      } catch {
-        /* 获取失败时保留原范围，不报错 */
-      }
-    };
-    tick();
-    const id = window.setInterval(tick, 15000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, []);
-
-  // 计算当前大棚的有效 normal 区间：优先用阈值规则，其次用 sensorConfigs.normal 默认值
-  const effectiveNormal = useMemo<Record<SensorKey, [number, number]>>(() => {
-    const out = {} as Record<SensorKey, [number, number]>;
-    const ghRanges = thresholdRanges[selectedGH] || {};
-    for (const sensor of sensorConfigs) {
-      const k = sensor.key as SensorKey;
-      const fromRule = ghRanges[k];
-      out[k] = fromRule ?? (sensor.normal as [number, number]);
-    }
-    return out;
-  }, [thresholdRanges, selectedGH]);
-
-  const activeSensor = useMemo(
-    () => sensorConfigs.find((s) => s.key === selectedSensor)!,
-    [selectedSensor],
-  );
-
+  // Sensor data — always fetched for ONLINE_GREENHOUSE
   useEffect(() => {
     let disposed = false;
-    const isSimulated = selectedGH !== ONLINE_GREENHOUSE;
-
     setConnectionMode("waiting");
     setSensorValues(emptySensorValues);
-    setSensorSeries((prev) => {
-      const next = { ...prev };
-      for (const key of SENSOR_KEYS) {
-        next[key] = [];
-      }
-      return next;
-    });
 
-    async function hydrateFromBackend() {
+    async function hydrate() {
       try {
-        // 始终从 1 号大棚拉真实数据，非 1 号大棚做模拟变换
-        const baseSnapshot = await fetchRealtimeSnapshot(ONLINE_GREENHOUSE);
-        if (!disposed && Object.keys(baseSnapshot).length > 0) {
-          const snapshot = isSimulated ? simulateMetrics(selectedGH, baseSnapshot) : baseSnapshot;
+        const snapshot = await fetchRealtimeSnapshot(ONLINE_GREENHOUSE);
+        if (!disposed && Object.keys(snapshot).length > 0) {
           setConnectionMode("live");
-          setSensorValues((prev) => ({ ...prev, ...snapshot }));
+          setSensorValues(prev => ({ ...prev, ...snapshot }));
           setLastUpdated(new Date());
-        } else if (!disposed) {
-          setConnectionMode("waiting");
-          setSensorValues(emptySensorValues);
         }
-
-        const historyResults = await Promise.all(
-          SENSOR_KEYS.map(async (key) => ({
-            key,
-            points: await fetchSensorHistory(ONLINE_GREENHOUSE, key),
-          })),
-        );
-        if (!disposed) {
-          const nextSeries = { ...defaultSensorSeries };
-          for (const item of historyResults) {
-            if (item.points.length > 0) {
-              nextSeries[item.key] = isSimulated
-                ? simulateHistory(selectedGH, item.key, item.points)
-                : item.points;
-            } else {
-              nextSeries[item.key] = [];
-            }
-          }
-          setSensorSeries(nextSeries);
-        }
-      } catch {
-        if (!disposed) {
-          setConnectionMode("waiting");
-          setSensorValues(emptySensorValues);
-        }
-      }
+      } catch { /* ignore */ }
     }
+    hydrate();
 
-    hydrateFromBackend();
-
-    // 始终订阅 1号大棚的实时流；如果是模拟大棚，对每帧做变换后再写入
     const stream = connectRealtimeStream(
       ONLINE_GREENHOUSE,
       (metrics) => {
-        if (disposed) {
-          return;
-        }
-        const transformed = isSimulated ? simulateMetrics(selectedGH, metrics) : metrics;
-
+        if (disposed) return;
         setConnectionMode("live");
         setLastUpdated(new Date());
-        setSensorValues((prev) => ({ ...prev, ...transformed }));
-        setSensorSeries((prev) => {
-          const next = { ...prev };
-          for (const [key, value] of Object.entries(transformed)) {
-            if (typeof value === "number" && Number.isFinite(value)) {
-              const sensorKey = key as SensorKey;
-              next[sensorKey] = rollSeries(next[sensorKey] || [], value);
-            }
-          }
-          return next;
-        });
+        setSensorValues(prev => ({ ...prev, ...metrics }));
       },
-      () => {
-        if (!disposed) {
-          setConnectionMode("waiting");
-        }
-      },
+      () => { if (!disposed) setConnectionMode("waiting"); },
     );
+    if (!stream.connected) setConnectionMode("waiting");
+    return () => { disposed = true; stream.close(); };
+  }, []);
 
-    if (!stream.connected) {
-      setConnectionMode("waiting");
+  // Device status — always for ONLINE_GREENHOUSE
+  useEffect(() => {
+    let disposed = false;
+    let deviceId: string | null = null;
+    let pollTimer: number | null = null;
+
+    async function fetchDeviceId() {
+      try {
+        const devices = await fetchAllConnectedDevices();
+        const bound = devices.find(d => d.greenhouseCode === ONLINE_GREENHOUSE);
+        deviceId = bound?.deviceId ?? null;
+      } catch { deviceId = null; }
     }
+    async function pollStatus() {
+      if (!deviceId || disposed) return;
+      try {
+        const status = await fetchRealtimeDeviceStatus(deviceId);
+        if (!disposed && status) {
+          setLedOn(status.led === "ON");
+          setMotorOn(status.motor === "ON");
+        }
+      } catch { /* ignore */ }
+    }
+    fetchDeviceId().then(() => {
+      if (!disposed) { pollStatus(); pollTimer = window.setInterval(pollStatus, 5000); }
+    });
+    return () => { disposed = true; if (pollTimer !== null) clearInterval(pollTimer); };
+  }, []);
 
-    return () => {
-      disposed = true;
-      stream.close();
-    };
-  }, [selectedGH]);
+  const connClass = connectionMode === "live"
+    ? "text-green-600 bg-green-50 border-green-200"
+    : connectionMode === "waiting"
+    ? "text-blue-700 bg-blue-50 border-blue-200"
+    : "text-gray-700 bg-gray-50 border-gray-200";
 
+  // ── Detail view ─────────────────────────────────────────────────────────
+  if (focusedGH !== null) {
+    const isOnline = focusedGH === ONLINE_GREENHOUSE;
+    const ghSV = isOnline ? sensorValues : emptySensorValues;
+    const ghConn: ConnectionMode = isOnline ? connectionMode : "offline";
+    return (
+      <div className="p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => setFocusedGH(null)}
+            className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-green-600 transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            返回全景
+          </button>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-gray-700">{focusedGH}</span>
+            <span className="text-sm font-medium text-gray-500">·</span>
+            <span className="text-sm font-semibold" style={{ color: CROP_COLORS[GREENHOUSE_CROPS[focusedGH] ?? "番茄"]?.[0] ?? "#ef4444" }}>
+              {GREENHOUSE_CROPS[focusedGH] ?? ""}
+            </span>
+            <div className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border ${connClass}`}>
+              <Wifi className={`w-3 h-3 ${connectionMode === "live" ? "animate-pulse" : ""}`} />
+              {connectionMode === "live" ? "实时" : connectionMode === "waiting" ? "等待数据" : "离线"}
+            </div>
+            {isOnline && (
+              <div className="flex items-center gap-1 text-xs text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg">
+                <Activity className="w-3 h-3" />
+                {toClockTime(lastUpdated)}
+              </div>
+            )}
+          </div>
+        </div>
+        <GreenhouseDigitalTwin
+          sensorValues={ghSV}
+          connectionMode={ghConn}
+          crop={GREENHOUSE_CROPS[focusedGH] ?? "番茄"}
+          ledOn={isOnline ? ledOn : false}
+          motorOn={isOnline ? motorOn : false}
+        />
+      </div>
+    );
+  }
+
+  // ── Overview grid ───────────────────────────────────────────────────────
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
+    <div className="p-6 space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-gray-800">全指标实时环境监测</h1>
-          
+          <h1 className="text-xl font-bold text-gray-800">智慧农场 · AR数字孪生全景</h1>
+          <p className="text-sm text-gray-400 mt-0.5">点击任意大棚进入实时数字孪生详情</p>
         </div>
         <div className="flex items-center gap-2">
-          <div
-            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border ${
-              connectionMode === "live"
-                ? "text-green-600 bg-green-50 border-green-200"
-                : connectionMode === "waiting"
-                  ? "text-blue-700 bg-blue-50 border-blue-200"
-                  : "text-gray-700 bg-gray-50 border-gray-200"
-            }`}
-          >
+          <div className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border ${connClass}`}>
             <Wifi className={`w-3.5 h-3.5 ${connectionMode === "live" ? "animate-pulse" : ""}`} />
-            {connectionMode === "live"
-              ? "实时数据已连接"
-              : connectionMode === "waiting"
-                ? "等待真实数据"
-                : "当前大棚离线"}
+            {connectionMode === "live" ? "1号大棚 实时在线" : connectionMode === "waiting" ? "等待数据" : "离线"}
           </div>
           <div className="flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-lg">
             <Activity className="w-3.5 h-3.5" />
-            最近更新：{toClockTime(lastUpdated)}
+            {toClockTime(lastUpdated)}
           </div>
         </div>
       </div>
 
-      {/* Greenhouse Selector */}
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-gray-500 mr-1">选择大棚：</span>
-        {greenhouses.map((gh) => (
-          <button
-            key={gh}
-            onClick={() => setSelectedGH(gh)}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-              selectedGH === gh
-                ? "bg-green-600 text-white shadow-sm"
-                : "bg-white border border-gray-200 text-gray-600 hover:border-green-400"
-            }`}
-          >
-            {gh}
-          </button>
-        ))}
-      </div>
-
-      {/* Sensor Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {sensorConfigs.map((sensor) => {
-          const isSelected = sensor.key === selectedSensor;
-          const rawValue = sensorValues[sensor.key as SensorKey];
-          const hasRealValue = typeof rawValue === "number" && Number.isFinite(rawValue);
-          const displayValue = hasRealValue
-            ? rawValue.toFixed(sensor.key === "light" || sensor.key === "co2" ? 0 : 1)
-            : "--";
-          const isNormal = hasRealValue && rawValue >= effectiveNormal[sensor.key as SensorKey][0] && rawValue <= effectiveNormal[sensor.key as SensorKey][1];
-
+      {/* 6-greenhouse grid */}
+      <div className="grid grid-cols-3 gap-4">
+        {GREENHOUSE_LIST.map(gh => {
+          const isOnline = gh === ONLINE_GREENHOUSE;
+          const ghConn: ConnectionMode = isOnline ? connectionMode : "offline";
           return (
-            <div
-              key={sensor.key}
-              onClick={() => setSelectedSensor(sensor.key)}
-              className={`bg-white rounded-xl border-2 p-4 cursor-pointer transition-all hover:shadow-md ${
-                isSelected
-                  ? `${sensor.borderColor} shadow-md`
-                  : "border-gray-100 hover:border-gray-200"
-              }`}
-            >
-              <div className="flex items-start justify-between mb-2">
-                <div className={`p-2 rounded-xl ${sensor.bgColor}`}>
-                  <sensor.icon className={`w-5 h-5 ${sensor.iconColor}`} />
-                </div>
-                <span
-                  className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                    !hasRealValue
-                      ? "bg-gray-100 text-gray-500"
-                      : isNormal
-                        ? "bg-green-100 text-green-600"
-                        : "bg-red-100 text-red-600"
-                  }`}
-                >
-                  {!hasRealValue ? "无数据" : isNormal ? "正常" : "⚠ 异常"}
-                </span>
-              </div>
-              <div className="mt-1">
-                <div className="text-sm text-gray-500">{sensor.label}</div>
-                <div className="flex items-baseline gap-1 mt-0.5">
-                  <span className="text-2xl font-bold text-gray-800">{displayValue}</span>
-                  <span className="text-sm text-gray-400">{sensor.unit}</span>
-                </div>
-              </div>
-              {hasRealValue ? (
-                <GaugeBar
-                  value={rawValue}
-                  min={sensor.min}
-                  max={sensor.max}
-                  normal={effectiveNormal[sensor.key as SensorKey]}
-                  color={sensor.color}
-                />
-              ) : (
-                <div className="mt-2 text-xs text-gray-400">
-                  {connectionMode === "offline" ? "当前大棚离线" : "等待真实数据上报"}
-                </div>
-              )}
-              <div className="mt-1.5 text-[10px] text-gray-400 flex items-center justify-between">
-                <span>正常区间</span>
-                <span className="font-mono">
-                  {effectiveNormal[sensor.key as SensorKey][0]} ~ {effectiveNormal[sensor.key as SensorKey][1]} {sensor.unit}
-                </span>
-                <span className={`px-1 rounded ${thresholdRanges[selectedGH]?.[sensor.key as SensorKey] ? "bg-emerald-50 text-emerald-600" : "bg-gray-100 text-gray-400"}`}>
-                  {thresholdRanges[selectedGH]?.[sensor.key as SensorKey] ? "已配规则" : "默认"}
-                </span>
-              </div>
-            </div>
+            <MiniGH
+              key={gh}
+              name={gh}
+              crop={GREENHOUSE_CROPS[gh] ?? "番茄"}
+              connectionMode={ghConn}
+              sensorValues={isOnline ? sensorValues : emptySensorValues}
+              ledOn={isOnline ? ledOn : false}
+              motorOn={isOnline ? motorOn : false}
+              onClick={() => setFocusedGH(gh)}
+            />
           );
         })}
-      </div>
-
-      {/* Detail Chart */}
-      <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-800">
-              {selectedGH} · {activeSensor.label} 今日变化趋势
-            </h3>
-            <p className="text-xs text-gray-400 mt-0.5">数据采集频率：每30秒一次</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="w-6 h-1 rounded" style={{ backgroundColor: activeSensor.color, display: "inline-block" }} />
-              {activeSensor.label}（{activeSensor.unit}）
-            </div>
-          </div>
-        </div>
-        <ResponsiveContainer width="100%" height={200}>
-          <LineChart data={sensorSeries[selectedSensor] || []}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-            <XAxis dataKey="time" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} />
-            <Tooltip
-              formatter={(val: number) => [`${val} ${activeSensor.unit}`, activeSensor.label]}
-            />
-            <Line
-              type="monotone"
-              dataKey="value"
-              stroke={activeSensor.color}
-              strokeWidth={2.5}
-              dot={false}
-              activeDot={{ r: 5 }}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Data Flow Info */}
-      <div className="bg-white rounded-xl border border-gray-100 p-4 shadow-sm">
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">数据链路状态</h3>
-        <div className="flex items-center gap-3">
-          {[
-            { step: "传感器采集", status: "ok", desc: "GH-01传感器组" },
-            {
-              step: "MQTT上传",
-              status: connectionMode === "live" ? "ok" : "pending",
-              desc: connectionMode === "live" ? "云平台网关" : connectionMode === "waiting" ? "等待设备上报" : "当前大棚离线",
-            },
-            {
-              step: "后端解析",
-              status: connectionMode === "live" ? "ok" : "pending",
-              desc: connectionMode === "live" ? "数据合法性校验" : connectionMode === "waiting" ? "等待真实数据源" : "未收到离线大棚数据",
-            },
-            { step: "缓存写入", status: "ok", desc: "Redis + InfluxDB" },
-            {
-              step: "前端展示",
-              status: "ok",
-              desc: connectionMode === "live" ? "HTTP实时拉取" : connectionMode === "waiting" ? "显示空态" : "离线空态展示",
-            },
-          ].map((s, i) => (
-            <div key={i} className="flex items-center gap-2 flex-1">
-              <div className="flex flex-col items-center flex-1">
-                <div className={`w-full text-center text-xs py-2 px-2 rounded-lg font-medium ${
-                  s.status === "ok"
-                    ? "bg-green-50 text-green-700 border border-green-200"
-                    : "bg-amber-50 text-amber-700 border border-amber-200"
-                }`}>
-                  {s.step}
-                </div>
-                <div className="text-xs text-gray-400 mt-1 text-center">{s.desc}</div>
-              </div>
-              {i < 4 && <div className="text-gray-300 text-lg flex-shrink-0">→</div>}
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   );
