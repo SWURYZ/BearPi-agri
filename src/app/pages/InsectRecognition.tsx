@@ -7,6 +7,7 @@ import {
 } from "../services/insectRecognition";
 import { streamAgriAgentChat } from "../services/agriAgent";
 import { speak, stopSpeaking, isTTSSupported } from "../lib/speech";
+import { scanBindDevice } from "../services/greenhouseMonitor";
 
 type RecogMode = "insect" | "plant";
 
@@ -40,6 +41,30 @@ export function InsectRecognition() {
       stopSpeaking();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 手机扫码进入页面时，自动把这台手机注册为「移动巡检设备」加入设备管理
+  useEffect(() => {
+    try {
+      const KEY = "yaya:mobile-device-id";
+      let deviceId = localStorage.getItem(KEY);
+      if (!deviceId) {
+        const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
+        deviceId = `MOBILE-${rand}`;
+        localStorage.setItem(KEY, deviceId);
+      }
+      // 默认绑定到 1 号大棚；后端接受 qrContent 含 deviceId，会自动新建/更新映射
+      const qrContent = JSON.stringify({
+        deviceId,
+        deviceName: "移动巡检手机",
+        deviceType: "MOBILE_SCANNER",
+      });
+      void scanBindDevice({ qrContent, greenhouseCode: "1号大棚" }).catch(() => {
+        // 后端可能未启用或字段不匹配，本地静默失败即可
+      });
+    } catch {
+      /* localStorage 不可用 */
+    }
   }, []);
 
   const handleFile = async (file: File | undefined) => {
@@ -77,10 +102,10 @@ export function InsectRecognition() {
     setAgentText("");
     let acc = "";
     const question = m === "plant"
-      ? `检测到植物可能出现「${targetName}」。请给出详细的处理建议，包括：1) 病状/害状识别要点；2) 应急处理措施（隔离、修剪、是否需要拔除）；3) 化学防治推荐药剂与用量；4) 生物/生态防治方法；5) 后期预防要点。条理清晰，不超过300字。`
+      ? `检测到大棚植株出现「${targetName}」。请给出详细的处理建议：若为健康叶片，请说明其生长状态良好并给出后期养护要点；若为病害，则包括：1）病状识别要点 2）应急处理措施（隔离、修剪、是否需要拔除） 3）化学防治推荐药剂与用量 4）生物/生态防治方法 5）后期预防要点。请条理清晰，不超过300字。`
       : `大棚里发现了「${targetName}」这种害虫，请给出针对性的防治方案，包括：1）危害症状识别 2）化学防治推荐药剂 3）生物防治措施 4）日常预防建议。请条理清晰，不超过300字。`;
     const ttsPrefix = m === "plant"
-      ? `检测到植物问题：${targetName}。`
+      ? `检测到植物状况：${targetName}。`
       : `检测到害虫：${targetName}。`;
     try {
       await streamAgriAgentChat(

@@ -21,13 +21,113 @@ import {
 import {
   SENSOR_KEYS,
   type SensorKey,
+  type SensorMetrics,
   type SensorPoint,
   connectRealtimeStream,
   fetchRealtimeSnapshot,
   fetchSensorHistory,
 } from "../services/realtime";
+import { fetchThresholdRules, type ThresholdRule } from "../services/thresholdAlert";
 
-const greenhouses = ["1号大棚", "2号大棚", "3号大棚", "5号大棚", "6号大棚"];
+const greenhouses = ["1号大棚", "2号大棚", "3号大棚", "4号大棚", "5号大棚", "6号大棚"];
+
+/**
+ * 以 1号大棚的真实数据为基线，为其余大棚生成“靠谱的”模拟数据。
+ * - 各大棚有固定偏移，体现不同阔叶面积/朝向/作物差异
+ * - 在偏移上叠加 ±5% 带种子的微抖动，避免多个大棚看起来一模一样
+ */
+const SIM_OFFSETS: Record<string, Partial<Record<SensorKey, { delta?: number; scale?: number }>>> = {
+  "2号大棚": { temp: { delta: 1.2 }, humidity: { delta: -3 }, light: { scale: 0.95 }, co2: { delta: 20 }, soilHumidity: { delta: -5 }, soilTemp: { delta: 0.8 } },
+  "3号大棚": { temp: { delta: -0.8 }, humidity: { delta: 4 }, light: { scale: 1.05 }, co2: { delta: -15 }, soilHumidity: { delta: 6 }, soilTemp: { delta: -0.5 } },
+  "4号大棚": { temp: { delta: 2.0 }, humidity: { delta: -6 }, light: { scale: 1.10 }, co2: { delta: 35 }, soilHumidity: { delta: -8 }, soilTemp: { delta: 1.5 } },
+  "5号大棚": { temp: { delta: -1.5 }, humidity: { delta: 2 }, light: { scale: 0.90 }, co2: { delta: -10 }, soilHumidity: { delta: 3 }, soilTemp: { delta: -1.0 } },
+  "6号大棚": { temp: { delta: 0.5 }, humidity: { delta: -1 }, light: { scale: 1.02 }, co2: { delta: 5 }, soilHumidity: { delta: -2 }, soilTemp: { delta: 0.3 } },
+};
+
+// 简单确定性随机（项目中不需要加密，仅需多大棚微抖动不同步）
+function seededJitter(seed: number) {
+  const x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x); // [0,1)
+}
+
+function simulateValue(gh: string, key: SensorKey, base: number, seed = Date.now()): number {
+  const cfg = SIM_OFFSETS[gh]?.[key];
+  let v = base;
+  if (cfg?.scale != null) v *= cfg.scale;
+  if (cfg?.delta != null) v += cfg.delta;
+  // ±3% 随机抖动（加入 gh 名称哈希 + seed，让不同大棚不同步）
+  const ghSeed = gh.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+  const noise = (seededJitter(ghSeed * 991 + (seed % 100000)) - 0.5) * 0.06; // ±3%
+  v *= 1 + noise;
+  return +v.toFixed(2);
+}
+
+function simulateMetrics(gh: string, base: SensorMetrics, seed = Date.now()): SensorMetrics {
+  if (gh === ONLINE_GREENHOUSE) return base;
+  const out: SensorMetrics = {};
+  for (const key of SENSOR_KEYS) {
+    const v = base[key];
+    if (typeof v === "number" && Number.isFinite(v)) {
+      out[key] = simulateValue(gh, key, v, seed);
+    }
+  }
+  return out;
+}
+
+function simulateHistory(gh: string, key: SensorKey, basePoints: SensorPoint[]): SensorPoint[] {
+  if (gh === ONLINE_GREENHOUSE) return basePoints;
+  return basePoints.map((p, i) => ({
+    ...p,
+    value: simulateValue(gh, key, p.value, i * 100 + 1),
+  }));
+}
+
+/**
+ * 从阈值告警规则提取「每个大棚 × 每个传感器」的有效 [min,max] 区间。
+ * 设备命名约定: DEV-GH{02d}-{T01|H01|L01|C01|S01|G01}
+ * 后端只支持 temp/humidity/light/co2 三个 metric，soilHumidity/soilTemp 未产生规则时返回 undefined，调用方回退默认 normal。
+ */
+const METRIC_TO_SUFFIX: Record<string, SensorKey> = {
+  T01: "temp",
+  H01: "humidity",
+  L01: "light",
+  C01: "co2",
+  S01: "soilHumidity",
+  G01: "soilTemp",
+};
+function parseDeviceId(deviceId: string): { gh: string; sensorKey: SensorKey } | null {
+  const m = /^DEV-GH(\d{1,2})-([A-Z]\d{2})$/.exec(deviceId);
+  if (!m) return null;
+  const ghNo = String(parseInt(m[1], 10));
+  const sensorKey = METRIC_TO_SUFFIX[m[2]];
+  if (!sensorKey) return null;
+  return { gh: `${ghNo}号大棚`, sensorKey };
+}
+
+type RangeMap = Record<string, Partial<Record<SensorKey, [number, number]>>>;
+function buildRangeMap(rules: ThresholdRule[]): RangeMap {
+  const map: RangeMap = {};
+  for (const r of rules) {
+    if (!r.enabled) continue;
+    const parsed = parseDeviceId(r.deviceId);
+    if (!parsed) continue;
+    // 后端 metric 与 SensorKey 应一致（temp/humidity/light/co2），以 deviceId 解析为准
+    const { gh, sensorKey } = parsed;
+    if (!map[gh]) map[gh] = {};
+    const cur = map[gh][sensorKey];
+    if (r.operator === "BELOW") {
+      // BELOW 阈值 → 低于此值报警，即这是 “正常下限”
+      const min = r.threshold;
+      const max = cur ? cur[1] : Number.POSITIVE_INFINITY;
+      map[gh][sensorKey] = [min, max];
+    } else if (r.operator === "ABOVE") {
+      const min = cur ? cur[0] : Number.NEGATIVE_INFINITY;
+      const max = r.threshold;
+      map[gh][sensorKey] = [min, max];
+    }
+  }
+  return map;
+}
 
 function generateData(base: number, variance: number, points: number) {
   return Array.from({ length: points }, (_, i) => ({
@@ -194,6 +294,38 @@ export function RealtimeMonitor() {
     safeInitialGH === ONLINE_GREENHOUSE ? "waiting" : "offline",
   );
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
+  const [thresholdRanges, setThresholdRanges] = useState<RangeMap>({});
+
+  // 全局轮询阈值规则（不随大棚切换重启）
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const rules = await fetchThresholdRules();
+        if (!cancelled) setThresholdRanges(buildRangeMap(rules || []));
+      } catch {
+        /* 获取失败时保留原范围，不报错 */
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  // 计算当前大棚的有效 normal 区间：优先用阈值规则，其次用 sensorConfigs.normal 默认值
+  const effectiveNormal = useMemo<Record<SensorKey, [number, number]>>(() => {
+    const out = {} as Record<SensorKey, [number, number]>;
+    const ghRanges = thresholdRanges[selectedGH] || {};
+    for (const sensor of sensorConfigs) {
+      const k = sensor.key as SensorKey;
+      const fromRule = ghRanges[k];
+      out[k] = fromRule ?? (sensor.normal as [number, number]);
+    }
+    return out;
+  }, [thresholdRanges, selectedGH]);
 
   const activeSensor = useMemo(
     () => sensorConfigs.find((s) => s.key === selectedSensor)!,
@@ -202,20 +334,7 @@ export function RealtimeMonitor() {
 
   useEffect(() => {
     let disposed = false;
-    const isOfflineGreenhouse = selectedGH !== ONLINE_GREENHOUSE;
-
-    if (isOfflineGreenhouse) {
-      setConnectionMode("offline");
-      setSensorValues(emptySensorValues);
-      setSensorSeries((prev) => {
-        const next = { ...prev };
-        for (const key of SENSOR_KEYS) {
-          next[key] = [];
-        }
-        return next;
-      });
-      return;
-    }
+    const isSimulated = selectedGH !== ONLINE_GREENHOUSE;
 
     setConnectionMode("waiting");
     setSensorValues(emptySensorValues);
@@ -229,8 +348,10 @@ export function RealtimeMonitor() {
 
     async function hydrateFromBackend() {
       try {
-        const snapshot = await fetchRealtimeSnapshot(selectedGH);
-        if (!disposed && Object.keys(snapshot).length > 0) {
+        // 始终从 1 号大棚拉真实数据，非 1 号大棚做模拟变换
+        const baseSnapshot = await fetchRealtimeSnapshot(ONLINE_GREENHOUSE);
+        if (!disposed && Object.keys(baseSnapshot).length > 0) {
+          const snapshot = isSimulated ? simulateMetrics(selectedGH, baseSnapshot) : baseSnapshot;
           setConnectionMode("live");
           setSensorValues((prev) => ({ ...prev, ...snapshot }));
           setLastUpdated(new Date());
@@ -242,14 +363,16 @@ export function RealtimeMonitor() {
         const historyResults = await Promise.all(
           SENSOR_KEYS.map(async (key) => ({
             key,
-            points: await fetchSensorHistory(selectedGH, key),
+            points: await fetchSensorHistory(ONLINE_GREENHOUSE, key),
           })),
         );
         if (!disposed) {
           const nextSeries = { ...defaultSensorSeries };
           for (const item of historyResults) {
             if (item.points.length > 0) {
-              nextSeries[item.key] = item.points;
+              nextSeries[item.key] = isSimulated
+                ? simulateHistory(selectedGH, item.key, item.points)
+                : item.points;
             } else {
               nextSeries[item.key] = [];
             }
@@ -266,19 +389,21 @@ export function RealtimeMonitor() {
 
     hydrateFromBackend();
 
+    // 始终订阅 1号大棚的实时流；如果是模拟大棚，对每帧做变换后再写入
     const stream = connectRealtimeStream(
-      selectedGH,
+      ONLINE_GREENHOUSE,
       (metrics) => {
         if (disposed) {
           return;
         }
+        const transformed = isSimulated ? simulateMetrics(selectedGH, metrics) : metrics;
 
         setConnectionMode("live");
         setLastUpdated(new Date());
-        setSensorValues((prev) => ({ ...prev, ...metrics }));
+        setSensorValues((prev) => ({ ...prev, ...transformed }));
         setSensorSeries((prev) => {
           const next = { ...prev };
-          for (const [key, value] of Object.entries(metrics)) {
+          for (const [key, value] of Object.entries(transformed)) {
             if (typeof value === "number" && Number.isFinite(value)) {
               const sensorKey = key as SensorKey;
               next[sensorKey] = rollSeries(next[sensorKey] || [], value);
@@ -363,7 +488,7 @@ export function RealtimeMonitor() {
           const displayValue = hasRealValue
             ? rawValue.toFixed(sensor.key === "light" || sensor.key === "co2" ? 0 : 1)
             : "--";
-          const isNormal = hasRealValue && rawValue >= sensor.normal[0] && rawValue <= sensor.normal[1];
+          const isNormal = hasRealValue && rawValue >= effectiveNormal[sensor.key as SensorKey][0] && rawValue <= effectiveNormal[sensor.key as SensorKey][1];
 
           return (
             <div
@@ -403,7 +528,7 @@ export function RealtimeMonitor() {
                   value={rawValue}
                   min={sensor.min}
                   max={sensor.max}
-                  normal={sensor.normal as [number, number]}
+                  normal={effectiveNormal[sensor.key as SensorKey]}
                   color={sensor.color}
                 />
               ) : (
@@ -411,6 +536,15 @@ export function RealtimeMonitor() {
                   {connectionMode === "offline" ? "当前大棚离线" : "等待真实数据上报"}
                 </div>
               )}
+              <div className="mt-1.5 text-[10px] text-gray-400 flex items-center justify-between">
+                <span>正常区间</span>
+                <span className="font-mono">
+                  {effectiveNormal[sensor.key as SensorKey][0]} ~ {effectiveNormal[sensor.key as SensorKey][1]} {sensor.unit}
+                </span>
+                <span className={`px-1 rounded ${thresholdRanges[selectedGH]?.[sensor.key as SensorKey] ? "bg-emerald-50 text-emerald-600" : "bg-gray-100 text-gray-400"}`}>
+                  {thresholdRanges[selectedGH]?.[sensor.key as SensorKey] ? "已配规则" : "默认"}
+                </span>
+              </div>
             </div>
           );
         })}

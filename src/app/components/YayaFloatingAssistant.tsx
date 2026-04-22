@@ -1473,6 +1473,10 @@ export function YayaFloatingAssistant() {
       if (detail.userText) push("user", detail.userText);
       push("assistant", detail.text);
       if (detail.openPanel) setOpen(true);
+      // 标记芽芽为「已唤醒」状态，使 thumbs_down/fist/OK/数字 等手势能立即生效
+      // 否则用户在芽芽自动播报病虫害时，必须先做 👍 才能再做 👎 关闭
+      yayaGestureActiveRef.current = true;
+      setYayaGestureActive(true);
       speakText(detail.text);
     };
     const onStop = () => {

@@ -78,7 +78,8 @@ export function PestRecognitionCard() {
       if (data.timestamp <= lastTimestampRef.current) return;
       lastTimestampRef.current = data.timestamp;
       setLatest(data);
-      askAgent(data.top1_name_zh || data.top1_name_en);
+      // 直接传 kind，避免读取未刷新的 latest state
+      askAgent(data.top1_name_zh || data.top1_name_en, data.kind === "plant" ? "plant" : "insect");
       clearLatestInsectResult();
     };
 
@@ -97,17 +98,17 @@ export function PestRecognitionCard() {
     };
   }, []);
 
-  const askAgent = async (pestName: string) => {
+  const askAgent = async (pestName: string, kind: "insect" | "plant" = "insect") => {
     setAgentLoading(true);
     setAgentText("");
     let acc = "";
-    const isPlant = latest?.kind === "plant";
+    const isPlant = kind === "plant";
     const question = isPlant
-      ? `检测到大棚植株出现「${pestName}」。请给出详细的处理建议，包括：1）病状识别要点 2）应急措施（隔离、修剪、是否需要拔除） 3）化学防治推荐药剂与用量 4）生物/生态防治方法 5）后期预防要点。请条理清晰，不超过300字。`
+      ? `检测到大棚植株出现「${pestName}」。请给出详细的处理建议：若为健康叶片，请说明其生长状态良好并给出后期养护要点；若为病害，则包括：1）病状识别要点 2）应急处理措施（隔离、修剪、是否需要拔除） 3）化学防治推荐药剂与用量 4）生物/生态防治方法 5）后期预防要点。请条理清晰，不超过300字。`
       : `大棚里发现了「${pestName}」这种害虫，请给出针对性的防治方案，包括：1）危害症状识别 2）化学防治推荐药剂 3）生物防治措施 4）日常预防建议。请条理清晰，不超过300字。`;
-    const prefix = isPlant ? `检测到植物问题${pestName}。` : `检测到害虫${pestName}。`;
+    const prefix = isPlant ? `检测到植物状况：${pestName}。` : `检测到害虫：${pestName}。`;
     const userText = isPlant
-      ? `帮我分析植物病害「${pestName}」的处理方案`
+      ? `帮我分析植物「${pestName}」的养护与防治建议`
       : `帮我分析害虫「${pestName}」的防治方案`;
     try {
       await streamAgriAgentChat(
