@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Activity, Wifi, ChevronLeft } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Activity, Wifi, ChevronLeft, Lightbulb, Fan, Loader2 } from "lucide-react";
 import {
   SENSOR_KEYS,
   type SensorKey,
@@ -7,8 +7,9 @@ import {
   fetchRealtimeSnapshot,
 } from "../services/realtime";
 import { fetchAllConnectedDevices } from "../services/greenhouseMonitor";
-import { fetchRealtimeDeviceStatus } from "../services/deviceControl";
-import { GreenhouseDigitalTwin } from "../components/GreenhouseDigitalTwin";
+import { fetchRealtimeDeviceStatus, sendManualControl } from "../services/deviceControl";
+import { GreenhouseDigitalTwin } from "../components/GreenhouseDigitalTwin3D";
+import { FarmDigitalTwin3D, type FarmGreenhouse } from "../components/FarmDigitalTwin3D";
 
 const GREENHOUSE_LIST = ["1号大棚", "2号大棚", "3号大棚", "4号大棚", "5号大棚", "6号大棚"];
 
@@ -326,6 +327,9 @@ export function RealtimeMonitor() {
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [ledOn, setLedOn] = useState(false);
   const [motorOn, setMotorOn] = useState(false);
+  const [ledLoading, setLedLoading] = useState(false);
+  const [motorLoading, setMotorLoading] = useState(false);
+  const deviceIdRef = useRef<string | null>(null);
 
   // Sensor data — always fetched for ONLINE_GREENHOUSE
   useEffect(() => {
@@ -362,31 +366,62 @@ export function RealtimeMonitor() {
   // Device status — always for ONLINE_GREENHOUSE
   useEffect(() => {
     let disposed = false;
-    let deviceId: string | null = null;
     let pollTimer: number | null = null;
 
     async function fetchDeviceId() {
       try {
         const devices = await fetchAllConnectedDevices();
         const bound = devices.find(d => d.greenhouseCode === ONLINE_GREENHOUSE);
-        deviceId = bound?.deviceId ?? null;
-      } catch { deviceId = null; }
+        deviceIdRef.current = bound?.deviceId ?? null;
+      } catch { deviceIdRef.current = null; }
     }
     async function pollStatus() {
+      const deviceId = deviceIdRef.current;
       if (!deviceId || disposed) return;
       try {
         const status = await fetchRealtimeDeviceStatus(deviceId);
         if (!disposed && status) {
-          setLedOn(status.led === "ON");
-          setMotorOn(status.motor === "ON");
+          if (!ledLoading) setLedOn(status.led === "ON");
+          if (!motorLoading) setMotorOn(status.motor === "ON");
         }
       } catch { /* ignore */ }
     }
     fetchDeviceId().then(() => {
-      if (!disposed) { pollStatus(); pollTimer = window.setInterval(pollStatus, 5000); }
+      if (!disposed) { pollStatus(); pollTimer = window.setInterval(pollStatus, 2000); }
     });
     return () => { disposed = true; if (pollTimer !== null) clearInterval(pollTimer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 控制 LED / 风扇
+  async function toggleLed() {
+    const deviceId = deviceIdRef.current;
+    if (!deviceId || ledLoading) return;
+    const target = !ledOn;
+    setLedLoading(true);
+    setLedOn(target); // 乐观更新
+    try {
+      await sendManualControl({ deviceId, commandType: "LIGHT_CONTROL", action: target ? "ON" : "OFF" });
+    } catch {
+      setLedOn(!target); // 回滚
+    } finally {
+      window.setTimeout(() => setLedLoading(false), 800);
+    }
+  }
+  async function toggleMotor() {
+    const deviceId = deviceIdRef.current;
+    if (!deviceId || motorLoading) return;
+    const target = !motorOn;
+    setMotorLoading(true);
+    setMotorOn(target);
+    try {
+      await sendManualControl({ deviceId, commandType: "MOTOR_CONTROL", action: target ? "ON" : "OFF" });
+    } catch {
+      setMotorOn(!target);
+    } finally {
+      window.setTimeout(() => setMotorLoading(false), 800);
+    }
+  }
 
   const connClass = connectionMode === "live"
     ? "text-green-600 bg-green-50 border-green-200"
@@ -425,6 +460,36 @@ export function RealtimeMonitor() {
                 {toClockTime(lastUpdated)}
               </div>
             )}
+            {isOnline && (
+              <>
+                <button
+                  onClick={toggleLed}
+                  disabled={ledLoading || !deviceIdRef.current}
+                  className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-all ${
+                    ledOn
+                      ? "bg-amber-50 border-amber-300 text-amber-700 shadow-[0_0_8px_rgba(251,191,36,0.4)]"
+                      : "bg-gray-50 border-gray-200 text-gray-500 hover:border-amber-200"
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                  title={!deviceIdRef.current ? "未绑定设备" : ledOn ? "点击关闭补光灯" : "点击开启补光灯"}
+                >
+                  {ledLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Lightbulb className="w-3 h-3" />}
+                  补光灯 {ledOn ? "ON" : "OFF"}
+                </button>
+                <button
+                  onClick={toggleMotor}
+                  disabled={motorLoading || !deviceIdRef.current}
+                  className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-all ${
+                    motorOn
+                      ? "bg-blue-50 border-blue-300 text-blue-700 shadow-[0_0_8px_rgba(59,130,246,0.4)]"
+                      : "bg-gray-50 border-gray-200 text-gray-500 hover:border-blue-200"
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                  title={!deviceIdRef.current ? "未绑定设备" : motorOn ? "点击关闭风扇" : "点击开启风扇"}
+                >
+                  {motorLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Fan className={`w-3 h-3 ${motorOn ? "animate-spin" : ""}`} />}
+                  风扇 {motorOn ? "ON" : "OFF"}
+                </button>
+              </>
+            )}
           </div>
         </div>
         <GreenhouseDigitalTwin
@@ -447,7 +512,7 @@ export function RealtimeMonitor() {
           <h1 className="text-xl font-bold text-gray-800">智慧农场 · AR数字孪生全景</h1>
           <p className="text-sm text-gray-400 mt-0.5">点击任意大棚进入实时数字孪生详情</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <div className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border ${connClass}`}>
             <Wifi className={`w-3.5 h-3.5 ${connectionMode === "live" ? "animate-pulse" : ""}`} />
             {connectionMode === "live" ? "1号大棚 实时在线" : connectionMode === "waiting" ? "等待数据" : "离线"}
@@ -456,28 +521,53 @@ export function RealtimeMonitor() {
             <Activity className="w-3.5 h-3.5" />
             {toClockTime(lastUpdated)}
           </div>
+          {/* 1 号大棚快捷控制 */}
+          <button
+            onClick={toggleLed}
+            disabled={ledLoading || !deviceIdRef.current}
+            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-all ${
+              ledOn
+                ? "bg-amber-50 border-amber-300 text-amber-700 shadow-[0_0_10px_rgba(251,191,36,0.5)]"
+                : "bg-white border-gray-200 text-gray-500 hover:border-amber-200"
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
+            title="控制 1 号大棚补光灯"
+          >
+            {ledLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lightbulb className="w-3.5 h-3.5" />}
+            <span className="font-semibold">补光灯</span>
+            <span className={ledOn ? "text-amber-600" : "text-gray-400"}>{ledOn ? "ON" : "OFF"}</span>
+          </button>
+          <button
+            onClick={toggleMotor}
+            disabled={motorLoading || !deviceIdRef.current}
+            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-all ${
+              motorOn
+                ? "bg-blue-50 border-blue-300 text-blue-700 shadow-[0_0_10px_rgba(59,130,246,0.5)]"
+                : "bg-white border-gray-200 text-gray-500 hover:border-blue-200"
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
+            title="控制 1 号大棚风扇"
+          >
+            {motorLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Fan className={`w-3.5 h-3.5 ${motorOn ? "animate-spin" : ""}`} />}
+            <span className="font-semibold">风扇</span>
+            <span className={motorOn ? "text-blue-600" : "text-gray-400"}>{motorOn ? "ON" : "OFF"}</span>
+          </button>
         </div>
       </div>
 
-      {/* 6-greenhouse grid */}
-      <div className="grid grid-cols-3 gap-4">
-        {GREENHOUSE_LIST.map(gh => {
+      {/* 全农场 3D 大屏（1 张卡片包含 6 个大棚） */}
+      <FarmDigitalTwin3D
+        greenhouses={GREENHOUSE_LIST.map<FarmGreenhouse>((gh) => {
           const isOnline = gh === ONLINE_GREENHOUSE;
-          const ghConn: ConnectionMode = isOnline ? connectionMode : "offline";
-          return (
-            <MiniGH
-              key={gh}
-              name={gh}
-              crop={GREENHOUSE_CROPS[gh] ?? "番茄"}
-              connectionMode={ghConn}
-              sensorValues={isOnline ? sensorValues : emptySensorValues}
-              ledOn={isOnline ? ledOn : false}
-              motorOn={isOnline ? motorOn : false}
-              onClick={() => setFocusedGH(gh)}
-            />
-          );
+          return {
+            name: gh,
+            crop: GREENHOUSE_CROPS[gh] ?? "番茄",
+            ledOn: isOnline ? ledOn : false,
+            motorOn: isOnline ? motorOn : false,
+            connectionMode: isOnline ? connectionMode : "offline",
+            hasAlert: false,
+          };
         })}
-      </div>
+        onSelect={(name) => setFocusedGH(name)}
+      />
     </div>
   );
 }
