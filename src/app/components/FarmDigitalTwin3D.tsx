@@ -278,8 +278,8 @@ function MiniGreenhouse({
         />
       </mesh>
 
-      {/* 玻璃拱顶 (半圆柱体) - 使用 -PI/2 让拱顶在上方 */}
-      <mesh position={[0, R + 0.08, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      {/* 玻璃拱顶 (半圆柱体) - 平边下沉贴合地基顶部 */}
+      <mesh position={[0, 0.08, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <cylinderGeometry args={[R, R, W, 24, 1, true, 0, Math.PI]} />
         <meshPhysicalMaterial
           color={glassColor}
@@ -296,7 +296,7 @@ function MiniGreenhouse({
 
       {/* 前后山墙 */}
       {[-W / 2, W / 2].map((z) => (
-        <mesh key={z} position={[0, R + 0.08, z]}>
+        <mesh key={z} position={[0, 0.08, z]}>
           <circleGeometry args={[R, 24, 0, Math.PI]} />
           <meshPhysicalMaterial
             color={glassColor}
@@ -312,7 +312,7 @@ function MiniGreenhouse({
 
       {/* 拱筋（前后两道） */}
       {[-W / 2 + 0.02, W / 2 - 0.02].map((z) => (
-        <mesh key={z} position={[0, R + 0.08, z]} rotation={[0, 0, 0]}>
+        <mesh key={z} position={[0, 0.08, z]} rotation={[0, 0, 0]}>
           <torusGeometry args={[R, 0.012, 6, 24, Math.PI]} />
           <meshStandardMaterial color="#94a3b8" metalness={0.7} roughness={0.4} />
         </mesh>
@@ -334,7 +334,7 @@ function MiniGreenhouse({
       )}
 
       {/* 补光灯：屋顶下方一颗发光球 + 头顶光晕 */}
-      <mesh position={[0, R - 0.05, 0]}>
+      <mesh position={[0, R - 0.02, 0]}>
         <sphereGeometry args={[0.07, 12, 12]} />
         <meshStandardMaterial
           color={data.ledOn ? "#fef9c3" : "#1f2937"}
@@ -630,19 +630,19 @@ function FarmGround() {
 
   return (
     <group>
-      {/* 草地边框（最外层） */}
+      {/* 草地边框（最外层 — 扩大到足以填满视口下方） */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
-        <planeGeometry args={[20, 14]} />
+        <planeGeometry args={[60, 50]} />
         <meshStandardMaterial color="#4d7c0f" roughness={0.95} />
       </mesh>
       {/* 农田土地（中层） */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.005, 0]} receiveShadow>
-        <planeGeometry args={[14, 9.5]} />
+        <planeGeometry args={[18, 13]} />
         <meshStandardMaterial color="#78716c" roughness={0.9} />
       </mesh>
       {/* 主耕作区 */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
-        <planeGeometry args={[12, 8]} />
+        <planeGeometry args={[14, 10]} />
         <meshStandardMaterial color="#5a4023" roughness={0.9} />
       </mesh>
       {/* 中央十字小路（硕石色） */}
@@ -748,14 +748,15 @@ function FarmScene({
   setHoveredName: (n: string | null) => void;
   onSelect: (name: string) => void;
 }) {
-  // 2×3 layout: cols(z): -2.0, 2.0 ; rows(x): -3.5, 0, 3.5
+  // 2×3 layout: cols(z): -1.45, 2.55 ; rows(x): -3.5, 0, 3.5
+  // 整体向前(+z) 平移 R≈0.55,让大棚在画面中下移
   const layout: [number, number][] = [
-    [-3.5, -2.0],
-    [0, -2.0],
-    [3.5, -2.0],
-    [-3.5, 2.0],
-    [0, 2.0],
-    [3.5, 2.0],
+    [-3.5, -1.45],
+    [0, -1.45],
+    [3.5, -1.45],
+    [-3.5, 2.55],
+    [0, 2.55],
+    [3.5, 2.55],
   ];
 
   return (
@@ -840,7 +841,7 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
       <Canvas
         shadows
         dpr={[1, 2]}
-        camera={{ position: [9, 7, 9], fov: 45 }}
+        camera={{ position: [9, 8, 11], fov: 45 }}
         style={{ background: "transparent" }}
       >
         <Suspense fallback={<Html center><span style={{ color: "#22c55e" }}>加载 3D 场景中…</span></Html>}>
@@ -855,7 +856,7 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
             minDistance={6}
             maxDistance={20}
             maxPolarAngle={Math.PI / 2.05}
-            target={[0, 0.5, 0]}
+            target={[0, 2.2, 0]}
           />
         </Suspense>
       </Canvas>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, Wifi, ChevronLeft, Lightbulb, Fan, Loader2 } from "lucide-react";
+import { Activity, Wifi, ChevronLeft, Lightbulb, Fan, Loader2, Droplets, Clock, SlidersHorizontal, AlertTriangle } from "lucide-react";
 import {
   SENSOR_KEYS,
   type SensorKey,
@@ -9,6 +9,7 @@ import {
 import { fetchAllConnectedDevices } from "../services/greenhouseMonitor";
 import { fetchRealtimeDeviceStatus, sendManualControl } from "../services/deviceControl";
 import { GreenhouseDigitalTwin } from "../components/GreenhouseDigitalTwin3D";
+import { ScheduleRulesModal, ThresholdRulesModal, AlertRecordsModal } from "../components/GreenhousePanels";
 import { FarmDigitalTwin3D, type FarmGreenhouse } from "../components/FarmDigitalTwin3D";
 
 const GREENHOUSE_LIST = ["1号大棚", "2号大棚", "3号大棚", "4号大棚", "5号大棚", "6号大棚"];
@@ -33,6 +34,40 @@ const emptySensorValues: Partial<Record<SensorKey, number>> = SENSOR_KEYS.reduce
   (acc, k) => { acc[k] = undefined; return acc; },
   {} as Partial<Record<SensorKey, number>>,
 );
+
+// 其他大棚的传感器模拟值以 1号大棚的实时数据为基础,
+// 加上根据大棚名称稳定偏移 (同名同 key 偏移不变、不随机跳动)
+// 1号大棚没有数据时使用合理默认值。
+const FALLBACK_BASE: Record<SensorKey, number> = {
+  temp: 24, humidity: 60, light: 8000, co2: 600, soilHumidity: 45, soilTemp: 22,
+};
+function hashStr(s: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h;
+}
+function simulateSensorValues(
+  base: Partial<Record<SensorKey, number>>,
+  ghName: string,
+): Partial<Record<SensorKey, number>> {
+  const out: Partial<Record<SensorKey, number>> = {};
+  for (const key of SENSOR_KEYS) {
+    const baseVal = (base[key] ?? FALLBACK_BASE[key]) as number;
+    // 偏移因子: 根据大棚名 + key 哈希出 [-0.15, +0.15]
+    const h = hashStr(ghName + "|" + key);
+    const factor = 1 + ((h % 1000) / 1000 - 0.5) * 0.3; // ±15%
+    let v = baseVal * factor;
+    // 合理范围限制
+    if (key === "humidity" || key === "soilHumidity") v = Math.max(0, Math.min(100, v));
+    if (key === "co2") v = Math.max(350, v);
+    if (key === "light") v = Math.max(0, v);
+    out[key] = Math.round(v * 10) / 10;
+  }
+  return out;
+}
 
 function toClockTime(input: Date) {
   return input.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -329,7 +364,34 @@ export function RealtimeMonitor() {
   const [motorOn, setMotorOn] = useState(false);
   const [ledLoading, setLedLoading] = useState(false);
   const [motorLoading, setMotorLoading] = useState(false);
-  const deviceIdRef = useRef<string | null>(null);
+  const [waterLoading, setWaterLoading] = useState(false);
+  const [deviceId, setDeviceId] = useState<string>("");
+  const [controlMessage, setControlMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  // 待确认目标值 — 用户点击后立即写入,轮询只接受与目标值一致的状态
+  // 这样可以避免设备执行慢时,旧的 "ON" 状态把刚切换的 "OFF" 覆盖回去
+  const ledPendingTargetRef = useRef<boolean | null>(null);
+  const motorPendingTargetRef = useRef<boolean | null>(null);
+  // 1 号大棚浇水(虚拟)
+  const [waterOn, setWaterOn] = useState(false);
+  // 其他大棚的虚拟设备状态 (key = "2号大棚" 等)
+  type VirtualSwitch = { led: boolean; motor: boolean; water: boolean };
+  const [virtualSwitches, setVirtualSwitches] = useState<Record<string, VirtualSwitch>>(() =>
+    GREENHOUSE_LIST.reduce((acc, gh) => {
+      acc[gh] = { led: false, motor: false, water: false };
+      return acc;
+    }, {} as Record<string, VirtualSwitch>),
+  );
+  function toggleVirtual(gh: string, key: keyof VirtualSwitch) {
+    setVirtualSwitches((prev) => ({
+      ...prev,
+      [gh]: { ...prev[gh], [key]: !prev[gh][key] },
+    }));
+  }
+
+  // 弹窗开关:定时规则 / 阈值规则 / 告警记录
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [thresholdOpen, setThresholdOpen] = useState(false);
+  const [alertRecOpen, setAlertRecOpen] = useState(false);
 
   // Sensor data — always fetched for ONLINE_GREENHOUSE
   useEffect(() => {
@@ -363,63 +425,208 @@ export function RealtimeMonitor() {
     return () => { disposed = true; stream.close(); };
   }, []);
 
-  // Device status — always for ONLINE_GREENHOUSE
+  // Device status — fetch device binding & poll status
   useEffect(() => {
     let disposed = false;
     let pollTimer: number | null = null;
 
-    async function fetchDeviceId() {
+    async function init() {
       try {
         const devices = await fetchAllConnectedDevices();
-        const bound = devices.find(d => d.greenhouseCode === ONLINE_GREENHOUSE);
-        deviceIdRef.current = bound?.deviceId ?? null;
-      } catch { deviceIdRef.current = null; }
+        if (disposed) return;
+        if (devices.length === 0) {
+          setDeviceId("");
+          return;
+        }
+        // 优先匹配 1号大棚, 否则使用第一个绑定设备 (与 DeviceControl 行为一致)
+        const bound = devices.find(d => d.greenhouseCode === ONLINE_GREENHOUSE) ?? devices[0];
+        setDeviceId(bound.deviceId);
+      } catch {
+        if (!disposed) setDeviceId("");
+      }
     }
-    async function pollStatus() {
-      const deviceId = deviceIdRef.current;
-      if (!deviceId || disposed) return;
+
+    async function pollStatus(id: string) {
+      if (!id || disposed) return;
       try {
-        const status = await fetchRealtimeDeviceStatus(deviceId);
+        const status = await fetchRealtimeDeviceStatus(id);
         if (!disposed && status) {
-          if (!ledLoading) setLedOn(status.led === "ON");
-          if (!motorLoading) setMotorOn(status.motor === "ON");
+          if (status.led) {
+            const real = status.led === "ON";
+            // 有待确认目标:只在状态匹配目标时才接受并清除 pending
+            // 否则保持本地乐观值不变,避免覆盖用户刚刚的操作
+            if (ledPendingTargetRef.current === null) {
+              setLedOn(real);
+            } else if (ledPendingTargetRef.current === real) {
+              setLedOn(real);
+              ledPendingTargetRef.current = null;
+              setLedLoading(false);
+            }
+          }
+          if (status.motor) {
+            const real = status.motor === "ON";
+            if (motorPendingTargetRef.current === null) {
+              setMotorOn(real);
+              if (!real) setWaterOn(false); // 硬件电机关闭时, 水泵场景也强制停止
+            } else if (motorPendingTargetRef.current === real) {
+              setMotorOn(real);
+              if (!real) setWaterOn(false);
+              motorPendingTargetRef.current = null;
+              setMotorLoading(false);
+            }
+          }
         }
       } catch { /* ignore */ }
     }
-    fetchDeviceId().then(() => {
-      if (!disposed) { pollStatus(); pollTimer = window.setInterval(pollStatus, 2000); }
-    });
-    return () => { disposed = true; if (pollTimer !== null) clearInterval(pollTimer); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
-  // 控制 LED / 风扇
+    init();
+    pollTimer = window.setInterval(() => {
+      if (deviceId) pollStatus(deviceId);
+    }, 2000);
+    return () => { disposed = true; if (pollTimer !== null) clearInterval(pollTimer); };
+  }, [deviceId]);
+
+  // 自动清除提示
+  useEffect(() => {
+    if (!controlMessage) return;
+    const t = window.setTimeout(() => setControlMessage(null), 2500);
+    return () => clearTimeout(t);
+  }, [controlMessage]);
+
+  // 控制 LED / 风扇 (与 DeviceControl 逻辑一致)
+  // - loading 只锁 API 调用期间，响应后立刻释放
+  // - pendingTarget 负责挡住轮询覆盖 (状态不一致时 5s 内保护乐观值)
   async function toggleLed() {
-    const deviceId = deviceIdRef.current;
-    if (!deviceId || ledLoading) return;
+    if (!deviceId || ledLoading) {
+      if (!deviceId) setControlMessage({ type: "error", text: "未绑定设备,请先在【设备管理】扫码绑定" });
+      return;
+    }
     const target = !ledOn;
     setLedLoading(true);
+    ledPendingTargetRef.current = target;
     setLedOn(target); // 乐观更新
     try {
-      await sendManualControl({ deviceId, commandType: "LIGHT_CONTROL", action: target ? "ON" : "OFF" });
+      const resp = await sendManualControl({ deviceId, commandType: "LIGHT_CONTROL", action: target ? "ON" : "OFF" });
+      const ok = resp.status === "SENT" || resp.status === "DELIVERED";
+      if (!ok) {
+        setLedOn(!target);
+        ledPendingTargetRef.current = null;
+        setControlMessage({ type: "error", text: resp.message || "指令下发失败" });
+      } else {
+        setControlMessage({ type: "success", text: `补光灯指令已下发: ${target ? "ON" : "OFF"}` });
+        // 1.2s 后主动同步一次 (仅在设备已报告达目标时接受,避免覆盖乐观值)
+        window.setTimeout(async () => {
+          try {
+            const realtime = await fetchRealtimeDeviceStatus(deviceId);
+            if (realtime?.led) {
+              const real = realtime.led === "ON";
+              if (real === target) {
+                setLedOn(real);
+                ledPendingTargetRef.current = null;
+              }
+            }
+          } catch { /* ignore */ }
+        }, 1200);
+        // 5s 后强制释放 pending,恢复轮询同步
+        window.setTimeout(() => {
+          if (ledPendingTargetRef.current === target) ledPendingTargetRef.current = null;
+        }, 5000);
+      }
     } catch {
-      setLedOn(!target); // 回滚
+      setLedOn(!target);
+      ledPendingTargetRef.current = null;
+      setControlMessage({ type: "error", text: "网络错误,请检查后端服务是否启动" });
     } finally {
-      window.setTimeout(() => setLedLoading(false), 800);
+      setLedLoading(false); // 按钮立即可再点
     }
   }
   async function toggleMotor() {
-    const deviceId = deviceIdRef.current;
-    if (!deviceId || motorLoading) return;
+    if (!deviceId || motorLoading) {
+      if (!deviceId) setControlMessage({ type: "error", text: "未绑定设备,请先在【设备管理】扫码绑定" });
+      return;
+    }
     const target = !motorOn;
     setMotorLoading(true);
+    motorPendingTargetRef.current = target;
     setMotorOn(target);
     try {
-      await sendManualControl({ deviceId, commandType: "MOTOR_CONTROL", action: target ? "ON" : "OFF" });
+      const resp = await sendManualControl({ deviceId, commandType: "MOTOR_CONTROL", action: target ? "ON" : "OFF" });
+      const ok = resp.status === "SENT" || resp.status === "DELIVERED";
+      if (!ok) {
+        setMotorOn(!target);
+        motorPendingTargetRef.current = null;
+        setControlMessage({ type: "error", text: resp.message || "指令下发失败" });
+      } else {
+        setControlMessage({ type: "success", text: `风扇指令已下发: ${target ? "ON" : "OFF"}` });
+        window.setTimeout(async () => {
+          try {
+            const realtime = await fetchRealtimeDeviceStatus(deviceId);
+            if (realtime?.motor) {
+              const real = realtime.motor === "ON";
+              if (real === target) {
+                setMotorOn(real);
+                motorPendingTargetRef.current = null;
+              }
+            }
+          } catch { /* ignore */ }
+        }, 1200);
+        window.setTimeout(() => {
+          if (motorPendingTargetRef.current === target) motorPendingTargetRef.current = null;
+        }, 5000);
+      }
     } catch {
       setMotorOn(!target);
+      motorPendingTargetRef.current = null;
+      setControlMessage({ type: "error", text: "网络错误,请检查后端服务是否启动" });
     } finally {
-      window.setTimeout(() => setMotorLoading(false), 800);
+      setMotorLoading(false);
+    }
+  }
+
+  // 浇水控制
+  // · 1号大棚: 与风扇共用 MOTOR_CONTROL 硬件 — 下发真实指令
+  // · 虚拟场景中 waterOn 与 motorOn 独立显示 (分别控制水泵动画与风扇动画)
+  async function toggleWater() {
+    if (!deviceId) {
+      setControlMessage({ type: "error", text: "未绑定设备,请先在【设备管理】扫码绑定" });
+      return;
+    }
+    if (motorLoading) return;
+    const target = !waterOn;
+    setWaterLoading(true);
+    motorPendingTargetRef.current = target;
+    setWaterOn(target); // 只设置水泵状态, 风扇保持独立
+    try {
+      const resp = await sendManualControl({ deviceId, commandType: "MOTOR_CONTROL", action: target ? "ON" : "OFF" });
+      const ok = resp.status === "SENT" || resp.status === "DELIVERED";
+      if (!ok) {
+        setWaterOn(!target);
+        motorPendingTargetRef.current = null;
+        setControlMessage({ type: "error", text: resp.message || "指令下发失败" });
+      } else {
+        setControlMessage({ type: "success", text: `浇水指令已下发: ${target ? "ON" : "OFF"}` });
+        window.setTimeout(async () => {
+          try {
+            const realtime = await fetchRealtimeDeviceStatus(deviceId);
+            if (realtime?.motor) {
+              const real = realtime.motor === "ON";
+              if (real === target) {
+                setWaterOn(real);
+                motorPendingTargetRef.current = null;
+              }
+            }
+          } catch { /* ignore */ }
+        }, 1200);
+        window.setTimeout(() => {
+          if (motorPendingTargetRef.current === target) motorPendingTargetRef.current = null;
+        }, 5000);
+      }
+    } catch {
+      setWaterOn(!target);
+      motorPendingTargetRef.current = null;
+      setControlMessage({ type: "error", text: "网络错误,请检查后端服务是否启动" });
+    } finally {
+      setWaterLoading(false);
     }
   }
 
@@ -432,11 +639,18 @@ export function RealtimeMonitor() {
   // ── Detail view ─────────────────────────────────────────────────────────
   if (focusedGH !== null) {
     const isOnline = focusedGH === ONLINE_GREENHOUSE;
-    const ghSV = isOnline ? sensorValues : emptySensorValues;
+    const ghSV = isOnline ? sensorValues : simulateSensorValues(sensorValues, focusedGH);
     const ghConn: ConnectionMode = isOnline ? connectionMode : "offline";
+    const vs = virtualSwitches[focusedGH] ?? { led: false, motor: false, water: false };
+    // 1号大棚:补光灯/风扇用真实设备状态;浇水用虚拟
+    // 其他大棚:三个开关全部虚拟
+    const ghLedOn = isOnline ? ledOn : vs.led;
+    const ghMotorOn = isOnline ? motorOn : vs.motor;
+    const ghWaterOn = isOnline ? waterOn : vs.water;
+
     return (
       <div className="p-6 space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <button
             onClick={() => setFocusedGH(null)}
             className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-green-600 transition-colors"
@@ -444,7 +658,7 @@ export function RealtimeMonitor() {
             <ChevronLeft className="w-4 h-4" />
             返回全景
           </button>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold text-gray-700">{focusedGH}</span>
             <span className="text-sm font-medium text-gray-500">·</span>
             <span className="text-sm font-semibold" style={{ color: CROP_COLORS[GREENHOUSE_CROPS[focusedGH] ?? "番茄"]?.[0] ?? "#ef4444" }}>
@@ -452,7 +666,7 @@ export function RealtimeMonitor() {
             </span>
             <div className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border ${connClass}`}>
               <Wifi className={`w-3 h-3 ${connectionMode === "live" ? "animate-pulse" : ""}`} />
-              {connectionMode === "live" ? "实时" : connectionMode === "waiting" ? "等待数据" : "离线"}
+              {isOnline ? (connectionMode === "live" ? "实时" : connectionMode === "waiting" ? "等待数据" : "离线") : "虚拟模拟"}
             </div>
             {isOnline && (
               <div className="flex items-center gap-1 text-xs text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg">
@@ -460,44 +674,138 @@ export function RealtimeMonitor() {
                 {toClockTime(lastUpdated)}
               </div>
             )}
-            {isOnline && (
-              <>
-                <button
-                  onClick={toggleLed}
-                  disabled={ledLoading || !deviceIdRef.current}
-                  className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-all ${
-                    ledOn
-                      ? "bg-amber-50 border-amber-300 text-amber-700 shadow-[0_0_8px_rgba(251,191,36,0.4)]"
-                      : "bg-gray-50 border-gray-200 text-gray-500 hover:border-amber-200"
-                  } disabled:opacity-50 disabled:cursor-not-allowed`}
-                  title={!deviceIdRef.current ? "未绑定设备" : ledOn ? "点击关闭补光灯" : "点击开启补光灯"}
-                >
-                  {ledLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Lightbulb className="w-3 h-3" />}
-                  补光灯 {ledOn ? "ON" : "OFF"}
-                </button>
-                <button
-                  onClick={toggleMotor}
-                  disabled={motorLoading || !deviceIdRef.current}
-                  className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-all ${
-                    motorOn
-                      ? "bg-blue-50 border-blue-300 text-blue-700 shadow-[0_0_8px_rgba(59,130,246,0.4)]"
-                      : "bg-gray-50 border-gray-200 text-gray-500 hover:border-blue-200"
-                  } disabled:opacity-50 disabled:cursor-not-allowed`}
-                  title={!deviceIdRef.current ? "未绑定设备" : motorOn ? "点击关闭风扇" : "点击开启风扇"}
-                >
-                  {motorLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Fan className={`w-3 h-3 ${motorOn ? "animate-spin" : ""}`} />}
-                  风扇 {motorOn ? "ON" : "OFF"}
-                </button>
-              </>
-            )}
+
+            {/* === 控制按钮:补光灯 / 风扇 / 浇水 === */}
+            <button
+              onClick={isOnline ? toggleLed : () => toggleVirtual(focusedGH, "led")}
+              disabled={isOnline && (ledLoading || !deviceId)}
+              className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-all ${
+                ghLedOn
+                  ? "bg-amber-50 border-amber-300 text-amber-700 shadow-[0_0_8px_rgba(251,191,36,0.4)]"
+                  : "bg-gray-50 border-gray-200 text-gray-500 hover:border-amber-200"
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+              title={isOnline ? (!deviceId ? "未绑定设备" : ghLedOn ? "点击关闭补光灯" : "点击开启补光灯") : "虚拟模拟开关"}
+            >
+              {isOnline && ledLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Lightbulb className="w-3 h-3" />}
+              补光灯 {ghLedOn ? "ON" : "OFF"}
+              {!isOnline && <span className="text-[10px] text-purple-500 font-bold">·虚</span>}
+            </button>
+
+            <button
+              onClick={isOnline ? toggleMotor : () => toggleVirtual(focusedGH, "motor")}
+              disabled={isOnline && (motorLoading || !deviceId)}
+              className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-all ${
+                ghMotorOn
+                  ? "bg-blue-50 border-blue-300 text-blue-700 shadow-[0_0_8px_rgba(59,130,246,0.4)]"
+                  : "bg-gray-50 border-gray-200 text-gray-500 hover:border-blue-200"
+              } disabled:cursor-wait`}
+              title={isOnline ? (!deviceId ? "未绑定设备" : ghMotorOn ? "点击关闭风扇" : "点击开启风扇") : "虚拟模拟开关"}
+            >
+              {isOnline && motorLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Fan className={`w-3 h-3 ${ghMotorOn ? "animate-spin" : ""}`} />}
+              风扇 {ghMotorOn ? "ON" : "OFF"}
+              {!isOnline && <span className="text-[10px] text-purple-500 font-bold">·虚</span>}
+            </button>
+
+            <button
+              onClick={isOnline ? toggleWater : () => toggleVirtual(focusedGH, "water")}
+              disabled={isOnline && (waterLoading || !deviceId)}
+              className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-all ${
+                ghWaterOn
+                  ? "bg-cyan-50 border-cyan-300 text-cyan-700 shadow-[0_0_8px_rgba(34,211,238,0.4)]"
+                  : "bg-gray-50 border-gray-200 text-gray-500 hover:border-cyan-200"
+              } disabled:cursor-wait`}
+              title={isOnline ? (!deviceId ? "未绑定设备" : "浇水与电机为同一硬件 (MOTOR_CONTROL)") : "虚拟浇水开关(场景模拟)"}
+            >
+              {isOnline && waterLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Droplets className={`w-3 h-3 ${ghWaterOn ? "animate-pulse" : ""}`} />}
+              浇水 {ghWaterOn ? "ON" : "OFF"}
+              {!isOnline && <span className="text-[10px] text-purple-500 font-bold">·虚</span>}
+            </button>
           </div>
         </div>
         <GreenhouseDigitalTwin
           sensorValues={ghSV}
           connectionMode={ghConn}
           crop={GREENHOUSE_CROPS[focusedGH] ?? "番茄"}
-          ledOn={isOnline ? ledOn : false}
-          motorOn={isOnline ? motorOn : false}
+          ledOn={ghLedOn}
+          motorOn={ghMotorOn}
+          waterOn={ghWaterOn}
+        />
+
+        {/* 测量数据下方 — 定时规则 / 阈值规则 / 告警记录 入口按钮 */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800">设备规则与告警</h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {isOnline
+                  ? `针对当前大棚设备 ${deviceId || "未绑定"} 的定时控制、阈值告警与记录查看。`
+                  : "当前为虚拟大棚,接入真实设备后可使用。"}
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <button
+              onClick={() => setScheduleOpen(true)}
+              disabled={!isOnline || !deviceId}
+              className="group flex items-center gap-3 p-3 rounded-xl border border-gray-200 bg-gradient-to-br from-yellow-50 to-orange-50 hover:from-yellow-100 hover:to-orange-100 hover:border-yellow-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:from-gray-50 disabled:to-gray-50"
+            >
+              <div className="p-2.5 bg-white rounded-xl shadow-sm">
+                <Clock className="w-5 h-5 text-yellow-600" />
+              </div>
+              <div className="text-left flex-1 min-w-0">
+                <div className="text-sm font-semibold text-gray-800">定时规则</div>
+                <div className="text-xs text-gray-500 truncate">补光灯 / 灬溉自动定时</div>
+              </div>
+            </button>
+
+            <button
+              onClick={() => setThresholdOpen(true)}
+              disabled={!isOnline || !deviceId}
+              className="group flex items-center gap-3 p-3 rounded-xl border border-gray-200 bg-gradient-to-br from-emerald-50 to-teal-50 hover:from-emerald-100 hover:to-teal-100 hover:border-emerald-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:from-gray-50 disabled:to-gray-50"
+            >
+              <div className="p-2.5 bg-white rounded-xl shadow-sm">
+                <SlidersHorizontal className="w-5 h-5 text-emerald-600" />
+              </div>
+              <div className="text-left flex-1 min-w-0">
+                <div className="text-sm font-semibold text-gray-800">阈值规则</div>
+                <div className="text-xs text-gray-500 truncate">温度 / 湿度 / 光照 / CO2 超限告警</div>
+              </div>
+            </button>
+
+            <button
+              onClick={() => setAlertRecOpen(true)}
+              disabled={!isOnline || !deviceId}
+              className="group flex items-center gap-3 p-3 rounded-xl border border-gray-200 bg-gradient-to-br from-rose-50 to-pink-50 hover:from-rose-100 hover:to-pink-100 hover:border-rose-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:from-gray-50 disabled:to-gray-50"
+            >
+              <div className="p-2.5 bg-white rounded-xl shadow-sm">
+                <AlertTriangle className="w-5 h-5 text-rose-600" />
+              </div>
+              <div className="text-left flex-1 min-w-0">
+                <div className="text-sm font-semibold text-gray-800">告警记录</div>
+                <div className="text-xs text-gray-500 truncate">查看历史阈值超限记录</div>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        {/* 弹窗 */}
+        <ScheduleRulesModal
+          open={scheduleOpen}
+          deviceId={isOnline ? deviceId : ""}
+          greenhouseLabel={focusedGH}
+          onClose={() => setScheduleOpen(false)}
+        />
+        <ThresholdRulesModal
+          open={thresholdOpen}
+          deviceId={isOnline ? deviceId : ""}
+          greenhouseLabel={focusedGH}
+          onClose={() => setThresholdOpen(false)}
+        />
+        <AlertRecordsModal
+          open={alertRecOpen}
+          deviceId={isOnline ? deviceId : ""}
+          greenhouseLabel={focusedGH}
+          onClose={() => setAlertRecOpen(false)}
         />
       </div>
     );
@@ -505,7 +813,19 @@ export function RealtimeMonitor() {
 
   // ── Overview grid ───────────────────────────────────────────────────────
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-6 space-y-5 relative">
+      {/* 控制反馈 Toast */}
+      {controlMessage && (
+        <div
+          className={`fixed top-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg shadow-lg text-sm font-medium flex items-center gap-2 transition-all ${
+            controlMessage.type === "success"
+              ? "bg-green-50 border border-green-300 text-green-700"
+              : "bg-red-50 border border-red-300 text-red-700"
+          }`}
+        >
+          {controlMessage.type === "success" ? "✓" : "✕"} {controlMessage.text}
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -524,7 +844,7 @@ export function RealtimeMonitor() {
           {/* 1 号大棚快捷控制 */}
           <button
             onClick={toggleLed}
-            disabled={ledLoading || !deviceIdRef.current}
+            disabled={ledLoading || !deviceId}
             className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-all ${
               ledOn
                 ? "bg-amber-50 border-amber-300 text-amber-700 shadow-[0_0_10px_rgba(251,191,36,0.5)]"
@@ -538,12 +858,12 @@ export function RealtimeMonitor() {
           </button>
           <button
             onClick={toggleMotor}
-            disabled={motorLoading || !deviceIdRef.current}
+            disabled={motorLoading || !deviceId}
             className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-all ${
               motorOn
                 ? "bg-blue-50 border-blue-300 text-blue-700 shadow-[0_0_10px_rgba(59,130,246,0.5)]"
                 : "bg-white border-gray-200 text-gray-500 hover:border-blue-200"
-            } disabled:opacity-50 disabled:cursor-not-allowed`}
+            } disabled:cursor-wait`}
             title="控制 1 号大棚风扇"
           >
             {motorLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Fan className={`w-3.5 h-3.5 ${motorOn ? "animate-spin" : ""}`} />}
@@ -557,11 +877,12 @@ export function RealtimeMonitor() {
       <FarmDigitalTwin3D
         greenhouses={GREENHOUSE_LIST.map<FarmGreenhouse>((gh) => {
           const isOnline = gh === ONLINE_GREENHOUSE;
+          const vs = virtualSwitches[gh] ?? { led: false, motor: false, water: false };
           return {
             name: gh,
             crop: GREENHOUSE_CROPS[gh] ?? "番茄",
-            ledOn: isOnline ? ledOn : false,
-            motorOn: isOnline ? motorOn : false,
+            ledOn: isOnline ? ledOn : vs.led,
+            motorOn: isOnline ? motorOn : vs.motor,
             connectionMode: isOnline ? connectionMode : "offline",
             hasAlert: false,
           };

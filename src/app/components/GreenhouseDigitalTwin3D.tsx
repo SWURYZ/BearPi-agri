@@ -22,6 +22,7 @@ interface Props {
   crop: string;
   ledOn: boolean;
   motorOn: boolean;
+  waterOn?: boolean;
 }
 
 // ============================================================
@@ -216,45 +217,299 @@ function Fan({ position, on }: { position: [number, number, number]; on: boolean
 }
 
 // ============================================================
+// 水泵电机 — 浇水或风扇启动时都会转动(MOTOR_CONTROL 公用硬件)
+// 表现形式:外壳 + 顶部转轴 + 转子 + 工作指示灯
+// ============================================================
+function WaterPump({ position, on }: { position: [number, number, number]; on: boolean }) {
+  const rotorRef = useRef<THREE.Mesh>(null);
+  const speedRef = useRef(0);
+  useFrame((_, delta) => {
+    const target = on ? 16 : 0;
+    speedRef.current += (target - speedRef.current) * Math.min(1, delta * 5);
+    if (rotorRef.current) rotorRef.current.rotation.y += speedRef.current * delta;
+  });
+  return (
+    <group position={position}>
+      {/* 底座 */}
+      <mesh position={[0, 0.05, 0]} castShadow>
+        <boxGeometry args={[0.6, 0.1, 0.5]} />
+        <meshStandardMaterial color="#1f2937" metalness={0.6} roughness={0.5} />
+      </mesh>
+      {/* 主体外壳(圆筒电机) */}
+      <mesh position={[0, 0.3, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+        <cylinderGeometry args={[0.18, 0.18, 0.5, 24]} />
+        <meshStandardMaterial color={on ? "#0ea5e9" : "#475569"} metalness={0.7} roughness={0.35} emissive={on ? "#0284c7" : "#000000"} emissiveIntensity={on ? 0.25 : 0} />
+      </mesh>
+      {/* 散热片 */}
+      {[-0.18, -0.06, 0.06, 0.18].map((dx) => (
+        <mesh key={dx} position={[dx, 0.3, 0]} rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.19, 0.19, 0.02, 24]} />
+          <meshStandardMaterial color="#0f172a" metalness={0.5} />
+        </mesh>
+      ))}
+      {/* 转轴 + 转子 (露在端面) */}
+      <mesh position={[-0.3, 0.3, 0]} rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.04, 0.04, 0.08, 12]} />
+        <meshStandardMaterial color="#9ca3af" metalness={0.9} />
+      </mesh>
+      <mesh ref={rotorRef} position={[-0.36, 0.3, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.1, 0.025, 8, 24]} />
+        <meshStandardMaterial color={on ? "#22c55e" : "#374151"} metalness={0.7} emissive={on ? "#16a34a" : "#000000"} emissiveIntensity={on ? 0.6 : 0} />
+      </mesh>
+      {/* 接水管 (向上接到喷淋系统) */}
+      <mesh position={[0.05, 0.6, 0]}>
+        <cylinderGeometry args={[0.04, 0.04, 0.55, 10]} />
+        <meshStandardMaterial color="#1f2937" metalness={0.5} />
+      </mesh>
+      {/* 工作指示灯 */}
+      <mesh position={[0.18, 0.45, 0.21]}>
+        <sphereGeometry args={[0.028, 8, 8]} />
+        <meshStandardMaterial color={on ? "#22c55e" : "#7f1d1d"} emissive={on ? "#22c55e" : "#7f1d1d"} emissiveIntensity={on ? 1.5 : 0.2} />
+      </mesh>
+      {/* 标签 "MOTOR" 用 Html 替代太重,直接用一个浅色小标签矩形 */}
+      <mesh position={[0, 0.3, 0.181]}>
+        <planeGeometry args={[0.18, 0.06]} />
+        <meshBasicMaterial color="#f8fafc" />
+      </mesh>
+    </group>
+  );
+}
+// ============================================================
+function Sprinkler({ position, on }: { position: [number, number, number]; on: boolean }) {
+  // 24 个粒子,从喷头辐射展开向下喷洒(放大版水柱)
+  const particlesRef = useRef<THREE.Group>(null);
+  useFrame((_, delta) => {
+    if (!particlesRef.current) return;
+    particlesRef.current.children.forEach((child, i) => {
+      if (!on) {
+        child.position.y = 0;
+        child.scale.setScalar(0);
+        return;
+      }
+      child.scale.setScalar(1);
+      child.position.y -= delta * 2.2;
+      // 周期重置
+      const cycleOffset = (i * 0.13) % 1.0;
+      if (child.position.y < -1.6) {
+        child.position.y = 0 - cycleOffset * 0.08;
+      }
+    });
+  });
+
+  return (
+    <group position={position}>
+      {/* 喷头主体 */}
+      <mesh castShadow>
+        <cylinderGeometry args={[0.08, 0.11, 0.16, 12]} />
+        <meshStandardMaterial
+          color={on ? "#0ea5e9" : "#475569"}
+          metalness={0.6}
+          roughness={0.4}
+          emissive={on ? "#0ea5e9" : "#000000"}
+          emissiveIntensity={on ? 0.5 : 0}
+        />
+      </mesh>
+      {/* 喷头底盘 */}
+      <mesh position={[0, 0.1, 0]}>
+        <cylinderGeometry args={[0.13, 0.08, 0.05, 12]} />
+        <meshStandardMaterial color="#1f2937" metalness={0.7} />
+      </mesh>
+      {/* 喷水粒子(放大版蓝色水滴) */}
+      <group ref={particlesRef}>
+        {Array.from({ length: 24 }).map((_, i) => {
+          const a = (i / 24) * Math.PI * 2;
+          // 三层环形分布,半径更大
+          const layer = i % 3;
+          const r = 0.08 + layer * 0.12;
+          return (
+            <mesh
+              key={i}
+              position={[Math.cos(a) * r, -i * 0.04, Math.sin(a) * r]}
+              scale={on ? 1 : 0}
+            >
+              <sphereGeometry args={[0.045, 8, 8]} />
+              <meshStandardMaterial
+                color="#60a5fa"
+                transparent
+                opacity={0.9}
+                emissive="#3b82f6"
+                emissiveIntensity={0.6}
+              />
+            </mesh>
+          );
+        })}
+      </group>
+      {/* 工作指示灯 */}
+      {on && (
+        <mesh position={[0, 0.2, 0]}>
+          <sphereGeometry args={[0.03, 8, 8]} />
+          <meshStandardMaterial color="#22c55e" emissive="#22c55e" emissiveIntensity={1.8} />
+        </mesh>
+      )}
+      {/* 地面湿润光晕(更大) */}
+      {on && (
+        <mesh position={[0, -1.45, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[1.3, 32]} />
+          <meshBasicMaterial color="#3b82f6" transparent opacity={0.3} toneMapped={false} />
+        </mesh>
+      )}
+      {/* 内圈深色湿土 */}
+      {on && (
+        <mesh position={[0, -1.44, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[0.7, 24]} />
+          <meshBasicMaterial color="#1e40af" transparent opacity={0.4} toneMapped={false} />
+        </mesh>
+      )}
+    </group>
+  );
+}
+
+// ============================================================
+// 落雨效果 — 浇水时整个大棚内随机下落雨滴 + 地面涟漪
+// ============================================================
+function RainField({ on }: { on: boolean }) {
+  const groupRef = useRef<THREE.Group>(null);
+  // 80 颗雨滴,均匀撒在大棚内体积上空,每颗有自己的下落速度与初始 y
+  const drops = useMemo(() => {
+    return Array.from({ length: 80 }).map(() => ({
+      x: (Math.random() - 0.5) * 4.6,        // 棚宽 5
+      z: (Math.random() - 0.5) * 5.0,        // 棚长 5.4
+      y: Math.random() * 2.4 + 0.2,          // 起始 0.2 ~ 2.6
+      speed: 3.5 + Math.random() * 2.5,      // 下落速度 3.5 ~ 6
+    }));
+  }, []);
+  useFrame((_, delta) => {
+    if (!groupRef.current) return;
+    groupRef.current.children.forEach((child, i) => {
+      if (!on) {
+        child.scale.setScalar(0);
+        return;
+      }
+      child.scale.setScalar(1);
+      const d = drops[i];
+      child.position.y -= delta * d.speed;
+      // 触地后回到棚顶,稍微随机化 x/z 防止周期感
+      if (child.position.y < -1.45) {
+        child.position.x = (Math.random() - 0.5) * 4.6;
+        child.position.z = (Math.random() - 0.5) * 5.0;
+        child.position.y = 2.4 + Math.random() * 0.4;
+      }
+    });
+  });
+  // 涟漪环 — 6 个固定位置周期性放大淡出
+  const ripplesRef = useRef<THREE.Group>(null);
+  useFrame((state) => {
+    if (!ripplesRef.current) return;
+    const t = state.clock.elapsedTime;
+    ripplesRef.current.children.forEach((c, i) => {
+      if (!on) {
+        c.scale.setScalar(0);
+        return;
+      }
+      const phase = (t * 1.4 + i * 0.35) % 1.5;
+      const s = 0.1 + phase * 0.9;
+      c.scale.set(s, s, s);
+      const mat = (c as THREE.Mesh).material as THREE.MeshBasicMaterial;
+      mat.opacity = Math.max(0, 0.55 - phase * 0.4);
+    });
+  });
+  if (!on) {
+    return (
+      <>
+        <group ref={groupRef}>
+          {drops.map((_, i) => (
+            <mesh key={i} scale={0}><sphereGeometry args={[0.02, 4, 4]} /><meshBasicMaterial color="#bae6fd" /></mesh>
+          ))}
+        </group>
+        <group ref={ripplesRef}>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <mesh key={i} scale={0}><ringGeometry args={[0.18, 0.22, 16]} /><meshBasicMaterial color="#60a5fa" transparent opacity={0} /></mesh>
+          ))}
+        </group>
+      </>
+    );
+  }
+  return (
+    <>
+      {/* 雨滴 — 细长拉伸的水柱 */}
+      <group ref={groupRef}>
+        {drops.map((d, i) => (
+          <mesh key={i} position={[d.x, d.y, d.z]} scale={[1, 4, 1]}>
+            <sphereGeometry args={[0.025, 4, 4]} />
+            <meshStandardMaterial
+              color="#bae6fd"
+              transparent
+              opacity={0.7}
+              emissive="#60a5fa"
+              emissiveIntensity={0.5}
+              toneMapped={false}
+            />
+          </mesh>
+        ))}
+      </group>
+      {/* 地面涟漪 */}
+      <group ref={ripplesRef}>
+        {[
+          [-1.6, -1.44, -1.5], [1.6, -1.44, -1.0], [0, -1.44, 1.2],
+          [-1.6, -1.44, 1.5], [1.6, -1.44, 1.6], [0, -1.44, -1.8],
+        ].map((p, i) => (
+          <mesh key={i} position={p as [number, number, number]} rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[0.5, 0.6, 24]} />
+            <meshBasicMaterial color="#60a5fa" transparent opacity={0.5} side={THREE.DoubleSide} toneMapped={false} />
+          </mesh>
+        ))}
+      </group>
+      {/* 棚内蓝色雾感(整体偏冷) */}
+      <mesh position={[0, 1, 0]}>
+        <boxGeometry args={[5, 3.5, 5.4]} />
+        <meshBasicMaterial color="#60a5fa" transparent opacity={0.04} depthWrite={false} toneMapped={false} />
+      </mesh>
+    </>
+  );
+}
+
+// ============================================================
 // 大棚结构（地面 + 植床 + 玻璃罩）
 // ============================================================
 function GreenhouseShell({ alert }: { alert: boolean }) {
   const glassColor = alert ? "#7f1d1d" : "#3b82f6";
+  const R = 2.7;
+  const W = 5.4;
   return (
     <group>
       {/* 地面 */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.001, 0]} receiveShadow>
-        <planeGeometry args={[10, 6]} />
+        <planeGeometry args={[14, 9]} />
         <meshStandardMaterial color="#3f2a1a" roughness={0.9} />
       </mesh>
       {/* 植床（3 列） */}
       {[-1.6, 0, 1.6].map((x) => (
         <mesh key={x} position={[x, 0.05, 0]} castShadow receiveShadow>
-          <boxGeometry args={[0.8, 0.1, 4]} />
+          <boxGeometry args={[0.75, 0.1, W - 0.4]} />
           <meshStandardMaterial color="#5a2f17" roughness={0.85} />
         </mesh>
       ))}
-      {/* 玻璃外罩 - 拱形顶（半圆柱体）使用 -PI/2 让拱顶在上方 */}
-      <mesh position={[0, 1.4, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[1.6, 1.6, 4.2, 32, 1, true, 0, Math.PI]} />
+      {/* 玻璃外罩 - 拱形顶（半圆柱体）平边贴地,弧顶在上 */}
+      <mesh position={[0, 0, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[R, R, W, 32, 1, true, 0, Math.PI]} />
         <meshPhysicalMaterial
           color={glassColor}
           transparent
-          opacity={0.22}
+          opacity={0.18}
           roughness={0.05}
-          transmission={0.7}
+          transmission={0.75}
           thickness={0.1}
           side={THREE.DoubleSide}
         />
       </mesh>
       {/* 前后山墙 */}
-      {[-2.1, 2.1].map((z) => (
-        <mesh key={z} position={[0, 1.4, z]}>
-          <circleGeometry args={[1.6, 32, 0, Math.PI]} />
+      {[-W / 2, W / 2].map((z) => (
+        <mesh key={z} position={[0, 0, z]}>
+          <circleGeometry args={[R, 32, 0, Math.PI]} />
           <meshPhysicalMaterial
             color={glassColor}
             transparent
-            opacity={0.25}
+            opacity={0.22}
             roughness={0.05}
             transmission={0.85}
             thickness={0.1}
@@ -263,22 +518,22 @@ function GreenhouseShell({ alert }: { alert: boolean }) {
         </mesh>
       ))}
       {/* 框架钢梁 - 拱筋 */}
-      {[-2, -1, 0, 1, 2].map((z) => (
+      {[-W / 2, -W / 4, 0, W / 4, W / 2].map((z) => (
         <group key={z} position={[0, 0, z]}>
           {Array.from({ length: 16 }).map((_, i) => {
             const a1 = (i / 16) * Math.PI;
             const a2 = ((i + 1) / 16) * Math.PI;
-            const x1 = Math.cos(a1) * 1.6;
-            const y1 = Math.sin(a1) * 1.6;
-            const x2 = Math.cos(a2) * 1.6;
-            const y2 = Math.sin(a2) * 1.6;
+            const x1 = Math.cos(a1) * R;
+            const y1 = Math.sin(a1) * R;
+            const x2 = Math.cos(a2) * R;
+            const y2 = Math.sin(a2) * R;
             const mx = (x1 + x2) / 2;
-            const my = (y1 + y2) / 2 + 1.4;
+            const my = (y1 + y2) / 2;
             const len = Math.hypot(x2 - x1, y2 - y1);
             const angle = Math.atan2(y2 - y1, x2 - x1);
             return (
-              <mesh key={i} position={[mx, my - 1.4 + 1.4, 0]} rotation={[0, 0, angle]}>
-                <boxGeometry args={[len, 0.04, 0.04]} />
+              <mesh key={i} position={[mx, my, 0]} rotation={[0, 0, angle]}>
+                <boxGeometry args={[len, 0.05, 0.05]} />
                 <meshStandardMaterial color="#94a3b8" metalness={0.7} roughness={0.4} />
               </mesh>
             );
@@ -286,9 +541,9 @@ function GreenhouseShell({ alert }: { alert: boolean }) {
         </group>
       ))}
       {/* 地基底框 */}
-      {[-2.1, 2.1].map((z) => (
+      {[-W / 2, W / 2].map((z) => (
         <mesh key={z} position={[0, 0, z]}>
-          <boxGeometry args={[3.4, 0.08, 0.08]} />
+          <boxGeometry args={[2 * R - 0.2, 0.1, 0.1]} />
           <meshStandardMaterial color="#475569" metalness={0.5} />
         </mesh>
       ))}
@@ -304,7 +559,7 @@ function CropField({ crop, ledOn }: { crop: string; ledOn: boolean }) {
   const positions = useMemo<[number, number, number][]>(() => {
     const arr: [number, number, number][] = [];
     [-1.6, 0, 1.6].forEach((x) => {
-      for (let z = -1.7; z <= 1.7; z += 0.55) {
+      for (let z = -2.2; z <= 2.2; z += 0.55) {
         arr.push([x, 0.1, z]);
       }
     });
@@ -322,22 +577,31 @@ function CropField({ crop, ledOn }: { crop: string; ledOn: boolean }) {
 // ============================================================
 // 主场景（在 Canvas 内）
 // ============================================================
-function Scene({ crop, ledOn, motorOn, alert }: { crop: string; ledOn: boolean; motorOn: boolean; alert: boolean }) {
+function Scene({
+  crop, ledOn, motorOn, waterOn, alert,
+}: {
+  crop: string;
+  ledOn: boolean;
+  motorOn: boolean;
+  waterOn: boolean;
+  alert: boolean;
+}) {
   return (
     <>
-      {/* 环境光 */}
-      <ambientLight intensity={ledOn ? 1.2 : 0.95} />
+      {/* 环境光 — 整体增亮 */}
+      <ambientLight intensity={ledOn ? 1.6 : 1.3} />
       {/* 主方向光（模拟阳光） */}
       <directionalLight
-        position={[5, 8, 5]}
-        intensity={1.4}
+        position={[5, 10, 6]}
+        intensity={2.0}
         castShadow
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}
       />
-      <directionalLight position={[-5, 6, -3]} intensity={0.5} color="#bee3f8" />
+      <directionalLight position={[-6, 8, -3]} intensity={0.9} color="#bee3f8" />
+      <directionalLight position={[0, 6, -6]} intensity={0.6} color="#fef3c7" />
       {/* 半球光让暗部不至于死黑 */}
-      <hemisphereLight args={["#dbeafe", "#65a30d", 0.7]} />
+      <hemisphereLight args={["#dbeafe", "#65a30d", 1.0]} />
 
       {/* 大棚结构 */}
       <GreenhouseShell alert={alert} />
@@ -346,16 +610,28 @@ function Scene({ crop, ledOn, motorOn, alert }: { crop: string; ledOn: boolean; 
       <CropField crop={crop} ledOn={ledOn} />
 
       {/* 3 排补光灯 */}
-      <GrowLight position={[-1.6, 2.4, 0]} on={ledOn} />
-      <GrowLight position={[0, 2.4, 0]} on={ledOn} />
-      <GrowLight position={[1.6, 2.4, 0]} on={ledOn} />
+      <GrowLight position={[-1.6, 1.8, 0]} on={ledOn} />
+      <GrowLight position={[0, 2.3, 0]} on={ledOn} />
+      <GrowLight position={[1.6, 1.8, 0]} on={ledOn} />
 
-      {/* 后墙风扇（z = -2 端面） */}
-      <Fan position={[-1, 1.2, -2.05]} on={motorOn} />
-      <Fan position={[1, 1.2, -2.05]} on={motorOn} />
+      {/* 后墙风扇（z = -W/2 端面） — 仅响应风扇电机指令(motorOn) */}
+      <Fan position={[-1.2, 1.1, -2.75]} on={motorOn} />
+      <Fan position={[1.2, 1.1, -2.75]} on={motorOn} />
+
+      {/* 水泵电机(位于棚一侧地面) — 仅响应浇水指令(waterOn),与风扇视觉独立 */}
+      {/* 注: 真实硬件中水泵与风扇共用同一个电机, 这里在虚拟场景中分别显示为两个独立设备 */}
+      <WaterPump position={[2.0, -1.35, 2.3]} on={waterOn} />
+
+      {/* 喷淋装置（顶部 3 个,均匀分布在棚长方向） */}
+      <Sprinkler position={[0, 1.95, -1.6]} on={waterOn} />
+      <Sprinkler position={[0, 1.95, 0]} on={waterOn} />
+      <Sprinkler position={[0, 1.95, 1.6]} on={waterOn} />
+
+      {/* 棚内落雨效果 */}
+      <RainField on={waterOn} />
 
       {/* 阴影增强真实感 */}
-      <ContactShadows position={[0, 0.01, 0]} opacity={0.4} scale={10} blur={2.5} far={4} />
+      <ContactShadows position={[0, 0.01, 0]} opacity={0.4} scale={12} blur={2.5} far={4} />
     </>
   );
 }
@@ -364,12 +640,13 @@ function Scene({ crop, ledOn, motorOn, alert }: { crop: string; ledOn: boolean; 
 // 头部状态条
 // ============================================================
 function HeaderBar({
-  crop, connectionMode, ledOn, motorOn, hasAlert,
+  crop, connectionMode, ledOn, motorOn, waterOn, hasAlert,
 }: {
   crop: string;
   connectionMode: "live" | "waiting" | "offline";
   ledOn: boolean;
   motorOn: boolean;
+  waterOn: boolean;
   hasAlert: boolean;
 }) {
   const connLabel = connectionMode === "live" ? "实时" : connectionMode === "waiting" ? "等待" : "离线";
@@ -418,6 +695,16 @@ function HeaderBar({
         >
           <span className={`w-1.5 h-1.5 rounded-full ${motorOn ? "bg-blue-400" : "bg-gray-600"}`} />
           风扇 {motorOn ? "ON" : "OFF"}
+        </span>
+        <span
+          className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${
+            waterOn
+              ? "bg-cyan-900/50 border-cyan-600 text-cyan-300"
+              : "bg-gray-800/80 border-gray-600 text-gray-500"
+          }`}
+        >
+          <span className={`w-1.5 h-1.5 rounded-full ${waterOn ? "bg-cyan-400" : "bg-gray-600"}`} />
+          浇水 {waterOn ? "ON" : "OFF"}
         </span>
         {hasAlert && (
           <span className="bg-red-900/70 border border-red-500 text-red-300 text-xs px-3 py-0.5 rounded-full animate-pulse">
@@ -472,7 +759,7 @@ function DataPanel({ sv }: { sv: Partial<Record<SensorKey, number>> }) {
 // ============================================================
 // 导出主组件
 // ============================================================
-export function GreenhouseDigitalTwin3D({ sensorValues, connectionMode, crop, ledOn, motorOn }: Props) {
+export function GreenhouseDigitalTwin3D({ sensorValues, connectionMode, crop, ledOn, motorOn, waterOn = false }: Props) {
   const [, setTick] = useState(0);
   useEffect(() => {
     // 强制定期 re-render 以让 HeaderBar 中 ON/OFF 文字与勾选效果同步
@@ -489,7 +776,7 @@ export function GreenhouseDigitalTwin3D({ sensorValues, connectionMode, crop, le
       className="relative w-full overflow-hidden rounded-2xl"
       style={{
         height: 560,
-        background: "linear-gradient(160deg,#1e3a5f 0%,#3b6ea5 55%,#1e3a5f 100%)",
+        background: "linear-gradient(160deg,#3b6ea5 0%,#60a5fa 55%,#3b6ea5 100%)",
       }}
     >
       <HeaderBar
@@ -497,23 +784,24 @@ export function GreenhouseDigitalTwin3D({ sensorValues, connectionMode, crop, le
         connectionMode={connectionMode}
         ledOn={ledOn}
         motorOn={motorOn}
+        waterOn={waterOn}
         hasAlert={hasAlert}
       />
 
       <Canvas
         shadows
         dpr={[1, 2]}
-        camera={{ position: [4.5, 3.6, 5.5], fov: 45 }}
+        camera={{ position: [7, 5.5, 8.5], fov: 45 }}
         style={{ background: "transparent" }}
       >
         <Suspense fallback={<Html center><span style={{ color: "#22c55e" }}>加载 3D 场景中…</span></Html>}>
-          <Scene crop={crop} ledOn={ledOn} motorOn={motorOn} alert={hasAlert} />
+          <Scene crop={crop} ledOn={ledOn} motorOn={motorOn} waterOn={waterOn} alert={hasAlert} />
           <OrbitControls
             enablePan={false}
-            minDistance={3.5}
-            maxDistance={12}
+            minDistance={4}
+            maxDistance={14}
             maxPolarAngle={Math.PI / 2.05}
-            target={[0, 0.8, 0]}
+            target={[0, 1.4, 0]}
           />
         </Suspense>
       </Canvas>
