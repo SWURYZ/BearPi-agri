@@ -15,7 +15,6 @@
 
     <modules>
         <module>iot-access-service</module>
-        <module>tech-stack-smoke-service</module>
         <module>device-control-service</module>
         <module>light-schedule-service</module>
         <module>threshold-alert-service</module>

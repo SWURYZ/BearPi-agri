@@ -39,3 +39,5 @@ backend/models/
 # Pest recognition runtime artifacts
 backend/pest-recognition-service/latest.json
 backend/pest-recognition-service/uploads/
+
+backend/build*.log

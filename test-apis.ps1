@@ -27,11 +27,6 @@ Write-Host "  Smart Agri API Test Suite"
 Write-Host "============================================"
 Write-Host ""
 
-# 1. Tech-Stack Smoke Service (8081)
-Write-Host "=== 1. tech-stack-smoke-service (8081) ===" -ForegroundColor Cyan
-$r1 = Test-Api "GET /api/v1/smoke/check" "GET" "http://localhost:8081/api/v1/smoke/check"
-$r2 = Test-Api "GET /actuator/health" "GET" "http://localhost:8081/actuator/health"
-
 # 2. IoT Access Service (8082)
 Write-Host "`n=== 2. iot-access-service (8082) ===" -ForegroundColor Cyan
 $r3 = Test-Api "GET /api/v1/iot/devices/{id}/latest" "GET" "http://localhost:8082/api/v1/iot/devices/$deviceId/latest"

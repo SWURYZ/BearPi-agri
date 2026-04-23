@@ -1,8 +1,7 @@
 # Smart Agri Backend
 
-本目录按照《智慧农业项目实施与团队协作手册》搭建了一个 Maven 父工程，并包含以下两个可直接扩展的服务：
+本目录按照《智慧农业项目实施与团队协作手册》搭建了一个 Maven 父工程，包含以 IoT 接入为核心的多个微服务。
 
-- `tech-stack-smoke-service`：用于验证基础技术栈能否正常装配和连通。
 - `iot-access-service`：从旧项目 `bearpi-cv` 收敛而来，负责华为 IoTDA 设备接入、AMQP 上报消费、命令下发和设备状态查询。
 
 ## 目录结构
@@ -14,8 +13,7 @@ backend/
 ├─ agri-common/
 ├─ agri-api/
 └─ agri-services/
-   ├─ iot-access-service/
-   └─ tech-stack-smoke-service/
+   └─ iot-access-service/
 ```
 
 ## 已包含技术栈
@@ -36,15 +34,6 @@ backend/
 ```bash
 mvn clean package
 ```
-
-## 启动验证服务
-
-```bash
-cd agri-services/tech-stack-smoke-service
-mvn spring-boot:run
-```
-
-默认端口为 `8081`。
 
 ## 启动 IoT 接入服务
 

@@ -8,10 +8,7 @@ $root = $PSScriptRoot
 $backend = Join-Path $root "backend\agri-services"
 
 # 服务列表: [名称, 目标端口, JAR目录名]
-# 注: tech-stack-smoke-service(8081) 是基础设施连通性自检服务,业务无依赖,默认不启动以节省约 350MB 内存。
-#     如需排障,取消下一行注释手动启动即可。
 $services = @(
-    # @{ Name="tech-stack-smoke-service";       Port=8081; Dir="tech-stack-smoke-service" }
     @{ Name="iot-access-service";             Port=8082; Dir="iot-access-service" }
     @{ Name="device-control-service";         Port=8083; Dir="device-control-service" }
     @{ Name="light-schedule-service";         Port=8084; Dir="light-schedule-service" }
