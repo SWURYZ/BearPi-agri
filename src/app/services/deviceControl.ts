@@ -1,6 +1,7 @@
-const DEVICE_CONTROL_BASE = "http://localhost:8083/api/v1/device-control";
-const LIGHT_SCHEDULE_BASE = "http://localhost:8084/api/v1/light-schedule";
-const IOT_ACCESS_BASE = "http://localhost:8082/api/v1/iot";
+// 使用相对路径 + Vite 代理,避免手机访问时 localhost 指向手机本地导致失败
+const DEVICE_CONTROL_BASE = "/api/v1/device-control";
+const LIGHT_SCHEDULE_BASE = "/api/v1/light-schedule";
+const IOT_ACCESS_BASE = "/api/v1/iot";
 
 /* ==================== 业务三：设备远程手动控制 ==================== */
 

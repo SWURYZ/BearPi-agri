@@ -1,4 +1,4 @@
-const GREENHOUSE_MONITOR_BASE = "http://localhost:8086/api/v1/greenhouse-monitor";
+const GREENHOUSE_MONITOR_BASE = "/api/v1/greenhouse-monitor";
 
 interface ApiResponse<T> {
   code: number;

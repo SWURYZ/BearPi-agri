@@ -360,7 +360,21 @@ export function RealtimeMonitor() {
   );
   const [manageOpen, setManageOpen] = useState(false);
 
-  const [focusedGH, setFocusedGH] = useState<string | null>(null);
+  // ── 本地持久化 key (切换页面/刷新后保留状态) ──
+  const LS_FOCUSED = "bearpi:monitor:focusedGH";
+  const LS_VIRTUAL = "bearpi:monitor:virtualSwitches";
+  const LS_WATER = "bearpi:monitor:waterOn";
+  type VirtualSwitch = { led: boolean; motor: boolean; water: boolean };
+  const loadLS = <T,>(key: string, fallback: T): T => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? (JSON.parse(raw) as T) : fallback;
+    } catch {
+      return fallback;
+    }
+  };
+
+  const [focusedGH, setFocusedGH] = useState<string | null>(() => loadLS<string | null>(LS_FOCUSED, null));
   const [sensorValues, setSensorValues] = useState<Partial<Record<SensorKey, number>>>(emptySensorValues);
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>("waiting");
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
@@ -375,12 +389,28 @@ export function RealtimeMonitor() {
   // 这样可以避免设备执行慢时,旧的 "ON" 状态把刚切换的 "OFF" 覆盖回去
   const ledPendingTargetRef = useRef<boolean | null>(null);
   const motorPendingTargetRef = useRef<boolean | null>(null);
-  // 1 号大棚浇水(虚拟)
-  const [waterOn, setWaterOn] = useState(false);
-  // 其他大棚的虚拟设备状态 (key = "2号大棚" 等)
-  type VirtualSwitch = { led: boolean; motor: boolean; water: boolean };
-  const [virtualSwitches, setVirtualSwitches] = useState<Record<string, VirtualSwitch>>({});
-  // 按照当前大棚清单补齐缺失的 key (新增大棚用默认值)
+  // 1 号大棚浇水(虚拟) — 持久化
+  const [waterOn, setWaterOn] = useState(() => loadLS<boolean>(LS_WATER, false));
+  // 其他大棚的虚拟设备状态 (key = "2号大棚" 等) — 持久化
+  const [virtualSwitches, setVirtualSwitches] = useState<Record<string, VirtualSwitch>>(
+    () => loadLS<Record<string, VirtualSwitch>>(LS_VIRTUAL, {}),
+  );
+
+  // 切换/刷新后保留状态:focusedGH / waterOn / virtualSwitches 持久化
+  useEffect(() => {
+    try {
+      if (focusedGH) localStorage.setItem(LS_FOCUSED, JSON.stringify(focusedGH));
+      else localStorage.removeItem(LS_FOCUSED);
+    } catch { /* ignore quota */ }
+  }, [focusedGH]);
+  useEffect(() => {
+    try { localStorage.setItem(LS_WATER, JSON.stringify(waterOn)); } catch { /* ignore */ }
+  }, [waterOn]);
+  useEffect(() => {
+    try { localStorage.setItem(LS_VIRTUAL, JSON.stringify(virtualSwitches)); } catch { /* ignore */ }
+  }, [virtualSwitches]);
+
+  // 按照当前大棚清单补齐缺失的 key (新增大棚用默认值;删除的大棚清理掉)
   useEffect(() => {
     setVirtualSwitches((prev) => {
       const next: Record<string, VirtualSwitch> = {};
@@ -731,7 +761,6 @@ export function RealtimeMonitor() {
             >
               {isOnline && ledLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Lightbulb className="w-3 h-3" />}
               补光灯 {ghLedOn ? "ON" : "OFF"}
-              {!isOnline && <span className="text-[10px] text-purple-500 font-bold">·虚</span>}
             </button>
 
             <button
@@ -746,7 +775,6 @@ export function RealtimeMonitor() {
             >
               {isOnline && motorLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Fan className={`w-3 h-3 ${ghMotorOn ? "animate-spin" : ""}`} />}
               风扇 {ghMotorOn ? "ON" : "OFF"}
-              {!isOnline && <span className="text-[10px] text-purple-500 font-bold">·虚</span>}
             </button>
 
             <button
@@ -761,7 +789,6 @@ export function RealtimeMonitor() {
             >
               {isOnline && waterLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Droplets className={`w-3 h-3 ${ghWaterOn ? "animate-pulse" : ""}`} />}
               浇水 {ghWaterOn ? "ON" : "OFF"}
-              {!isOnline && <span className="text-[10px] text-purple-500 font-bold">·虚</span>}
             </button>
           </div>
         </div>
@@ -876,43 +903,6 @@ export function RealtimeMonitor() {
           <p className="text-sm text-gray-400 mt-0.5">点击任意大棚进入实时数字孪生详情</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border ${connClass}`}>
-            <Wifi className={`w-3.5 h-3.5 ${connectionMode === "live" ? "animate-pulse" : ""}`} />
-            {connectionMode === "live" ? "1号大棚 实时在线" : connectionMode === "waiting" ? "等待数据" : "离线"}
-          </div>
-          <div className="flex items-center gap-1.5 text-xs text-blue-600 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-lg">
-            <Activity className="w-3.5 h-3.5" />
-            {toClockTime(lastUpdated)}
-          </div>
-          {/* 1 号大棚快捷控制 */}
-          <button
-            onClick={toggleLed}
-            disabled={ledLoading || !deviceId}
-            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-all ${
-              ledOn
-                ? "bg-amber-50 border-amber-300 text-amber-700 shadow-[0_0_10px_rgba(251,191,36,0.5)]"
-                : "bg-white border-gray-200 text-gray-500 hover:border-amber-200"
-            } disabled:opacity-50 disabled:cursor-not-allowed`}
-            title="控制 1 号大棚补光灯"
-          >
-            {ledLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lightbulb className="w-3.5 h-3.5" />}
-            <span className="font-semibold">补光灯</span>
-            <span className={ledOn ? "text-amber-600" : "text-gray-400"}>{ledOn ? "ON" : "OFF"}</span>
-          </button>
-          <button
-            onClick={toggleMotor}
-            disabled={motorLoading || !deviceId}
-            className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-all ${
-              motorOn
-                ? "bg-blue-50 border-blue-300 text-blue-700 shadow-[0_0_10px_rgba(59,130,246,0.5)]"
-                : "bg-white border-gray-200 text-gray-500 hover:border-blue-200"
-            } disabled:cursor-wait`}
-            title="控制 1 号大棚风扇"
-          >
-            {motorLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Fan className={`w-3.5 h-3.5 ${motorOn ? "animate-spin" : ""}`} />}
-            <span className="font-semibold">风扇</span>
-            <span className={motorOn ? "text-blue-600" : "text-gray-400"}>{motorOn ? "ON" : "OFF"}</span>
-          </button>
           <button
             onClick={() => setManageOpen(true)}
             className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border bg-white border-gray-200 text-gray-600 hover:border-green-300 hover:text-green-700 transition-all"

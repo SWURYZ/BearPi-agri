@@ -1,4 +1,4 @@
-const THRESHOLD_ALERT_BASE = "http://localhost:8091/api/v1/threshold-alert";
+const THRESHOLD_ALERT_BASE = "/api/v1/threshold-alert";
 
 interface ApiResponse<T> {
   code: number;

@@ -24,6 +24,12 @@ export default defineConfig(({ mode }) => {
   const historicalProxyTarget = env.VITE_HISTORICAL_PROXY_TARGET || 'http://localhost:8087'
   const smartDecisionProxyTarget = env.VITE_SMART_DECISION_PROXY_TARGET || 'http://localhost:8089'
   const pestRecognitionProxyTarget = env.VITE_PEST_RECOGNITION_PROXY_TARGET || 'http://localhost:5000'
+  // 新增:按端口分发的后端服务代理,确保手机访问 :5173 时前端能通过代理到达各微服务
+  const deviceControlProxyTarget = env.VITE_DEVICE_CONTROL_PROXY_TARGET || 'http://localhost:8083'
+  const lightScheduleProxyTarget = env.VITE_LIGHT_SCHEDULE_PROXY_TARGET || 'http://localhost:8084'
+  const greenhouseMonitorProxyTarget = env.VITE_GREENHOUSE_MONITOR_PROXY_TARGET || 'http://localhost:8086'
+  const compositeProxyTarget = env.VITE_COMPOSITE_PROXY_TARGET || 'http://localhost:8088'
+  const thresholdAlertProxyTarget = env.VITE_THRESHOLD_ALERT_PROXY_TARGET || 'http://localhost:8091'
 
   return {
     plugins: [
@@ -75,6 +81,28 @@ export default defineConfig(({ mode }) => {
             target: historicalProxyTarget,
             changeOrigin: true,
             ws: true,
+          },
+          // ── 按端口精准分发的后端服务代理 ──(必须放在通配 '/api' 之前)
+          '/api/v1/device-control': {
+            target: deviceControlProxyTarget,
+            changeOrigin: true,
+          },
+          '/api/v1/light-schedule': {
+            target: lightScheduleProxyTarget,
+            changeOrigin: true,
+          },
+          '/api/v1/greenhouse-monitor': {
+            target: greenhouseMonitorProxyTarget,
+            changeOrigin: true,
+            ws: true,
+          },
+          '/api/v1/composite-condition': {
+            target: compositeProxyTarget,
+            changeOrigin: true,
+          },
+          '/api/v1/threshold-alert': {
+            target: thresholdAlertProxyTarget,
+            changeOrigin: true,
           },
           '/api': {
             target: apiProxyTarget,
