@@ -51,7 +51,7 @@ export function Login() {
   useEffect(() => {
     auth.isFirstUser().then(setIsFirst);
     auth.getCurrentUser().then((u) => {
-      if (u) navigate("/", { replace: true });
+      if (u) navigate("/monitor", { replace: true });
     });
   }, [navigate]);
 
@@ -235,7 +235,11 @@ export function Login() {
         <WelcomeOverlay
           displayName={welcomeUser}
           faceCanvas={welcomeCanvas}
-          onDone={() => navigate("/", { replace: true })}
+          onDone={() => {
+            // 登录完成：清掉芽芽的简报冷却，让 /monitor 一到就重新播报
+            try { sessionStorage.removeItem("bearpi-agri:yaya-briefed-at"); } catch { /* ignore */ }
+            navigate("/monitor", { replace: true });
+          }}
         />
       )}
       {/* 背景装饰 */}

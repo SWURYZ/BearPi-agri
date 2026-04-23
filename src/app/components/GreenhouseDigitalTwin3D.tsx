@@ -59,58 +59,273 @@ const CROP_PAL: Record<string, [string, string]> = {
 // ============================================================
 // 单株作物（叶 + 果实）
 // ============================================================
-function CropPlant({ position, fruitColor, leafColor, ledOn }: {
+function CropPlant({ position, fruitColor, leafColor, ledOn, crop }: {
   position: [number, number, number];
   fruitColor: string;
   leafColor: string;
   ledOn: boolean;
+  crop: string;
 }) {
   const groupRef = useRef<THREE.Group>(null);
   // 让作物在补光时轻微"呼吸"
   useFrame((state) => {
     if (groupRef.current && ledOn) {
       const t = state.clock.elapsedTime;
-      groupRef.current.scale.y = 1 + Math.sin(t * 1.5 + position[0]) * 0.03;
+      groupRef.current.scale.y = SCALE * (1 + Math.sin(t * 1.5 + position[0]) * 0.03);
     } else if (groupRef.current) {
-      groupRef.current.scale.y = 1;
+      groupRef.current.scale.y = SCALE;
     }
   });
-  return (
-    <group ref={groupRef} position={position}>
-      {/* 茎 */}
-      <mesh position={[0, 0.15, 0]} castShadow>
-        <cylinderGeometry args={[0.025, 0.04, 0.3, 8]} />
-        <meshStandardMaterial color="#65a30d" />
-      </mesh>
-      {/* 叶丛（多个圆锥模拟） */}
-      {[0, 1, 2].map((i) => {
-        const angle = (i / 3) * Math.PI * 2;
+
+  // 与总览 FarmDigitalTwin3D.CropMini 保持一致的几何，这里以 SCALE 放大到聚焦视图尺寸
+  const SCALE = 2.6;
+  const fruit = fruitColor;
+  const leaf = leafColor;
+
+  const body = (() => {
+    switch (crop) {
+      // ── 番茄 ──
+      case "番茄":
         return (
-          <mesh
-            key={i}
-            position={[Math.cos(angle) * 0.12, 0.3, Math.sin(angle) * 0.12]}
-            rotation={[0, angle, Math.PI / 6]}
-            castShadow
-          >
-            <coneGeometry args={[0.1, 0.25, 6]} />
-            <meshStandardMaterial color={leafColor} />
+          <>
+            <mesh position={[0, 0.11, 0]} castShadow>
+              <cylinderGeometry args={[0.009, 0.014, 0.22, 6]} />
+              <meshStandardMaterial color="#65a30d" roughness={0.9} />
+            </mesh>
+            {[0, 1, 2, 3, 4, 5].map((i) => {
+              const a = (i / 6) * Math.PI * 2 + i * 0.3;
+              const y = 0.06 + (i % 3) * 0.06;
+              const r = 0.08 + (i % 2) * 0.015;
+              return (
+                <mesh key={`l${i}`} position={[Math.cos(a) * 0.05, y, Math.sin(a) * 0.05]} rotation={[Math.PI / 2 - 0.4, a, 0]} castShadow>
+                  <coneGeometry args={[r * 0.55, r * 1.6, 5]} />
+                  <meshStandardMaterial color={leaf} roughness={0.85} />
+                </mesh>
+              );
+            })}
+            {[
+              [0.065, 0.14, 0.03, 0.036],
+              [-0.055, 0.11, -0.045, 0.032],
+              [0.02, 0.07, 0.06, 0.028],
+            ].map(([fx, fy, fz, fr], i) => (
+              <group key={`f${i}`} position={[fx, fy, fz]}>
+                <mesh castShadow scale={[1, 0.88, 1]}>
+                  <sphereGeometry args={[fr, 12, 10]} />
+                  <meshStandardMaterial color={fruit} roughness={0.4} />
+                </mesh>
+                {[0, 1, 2, 3, 4].map((k) => {
+                  const ang = (k / 5) * Math.PI * 2;
+                  return (
+                    <mesh key={k} position={[Math.cos(ang) * fr * 0.6, fr * 0.72, Math.sin(ang) * fr * 0.6]} rotation={[Math.PI / 2 - 0.7, ang, 0]}>
+                      <coneGeometry args={[fr * 0.22, fr * 0.55, 4]} />
+                      <meshStandardMaterial color="#15803d" />
+                    </mesh>
+                  );
+                })}
+              </group>
+            ))}
+          </>
+        );
+
+      // ── 黄瓜 ──
+      case "黄瓜":
+        return (
+          <>
+            <mesh position={[0, 0.15, 0]} castShadow>
+              <cylinderGeometry args={[0.006, 0.008, 0.3, 6]} />
+              <meshStandardMaterial color="#92400e" />
+            </mesh>
+            {[0, 1, 2, 3, 4].map((i) => {
+              const a = (i / 5) * Math.PI * 2 + i * 0.5;
+              const y = 0.09 + i * 0.05;
+              return (
+                <mesh key={`l${i}`} position={[Math.cos(a) * 0.02, y, Math.sin(a) * 0.02]} rotation={[-Math.PI / 6, a, 0]} castShadow scale={[1.4, 0.1, 1.4]}>
+                  <sphereGeometry args={[0.065, 10, 6]} />
+                  <meshStandardMaterial color={leaf} roughness={0.85} side={THREE.DoubleSide} />
+                </mesh>
+              );
+            })}
+            {[
+              [0.05, 0.12, 0, Math.PI / 2.2, 0.022, 2.8],
+              [-0.04, 0.09, 0.035, -Math.PI / 2.6, 0.019, 2.5],
+            ].map(([cx, cy, cz, rz, rr, len], i) => (
+              <mesh key={`c${i}`} position={[cx, cy, cz]} rotation={[0, 0, rz]} castShadow scale={[1, len, 1]}>
+                <capsuleGeometry args={[rr, rr * 0.8, 4, 10]} />
+                <meshStandardMaterial color={fruit} roughness={0.75} />
+              </mesh>
+            ))}
+            <mesh position={[0.02, 0.18, -0.05]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+              <coneGeometry args={[0.018, 0.025, 6]} />
+              <meshStandardMaterial color="#fde047" emissive="#facc15" emissiveIntensity={0.15} />
+            </mesh>
+          </>
+        );
+
+      // ── 草莓 ──
+      case "草莓":
+        return (
+          <>
+            {[0, 1, 2, 3, 4, 5].map((i) => {
+              const a = (i / 6) * Math.PI * 2;
+              const cx = Math.cos(a) * 0.055;
+              const cz = Math.sin(a) * 0.055;
+              return (
+                <group key={`rosette${i}`} position={[cx, 0.035, cz]} rotation={[0, a, 0]}>
+                  {[-0.3, 0, 0.3].map((offset, k) => (
+                    <mesh key={k} position={[0, 0.01, 0.02 + Math.abs(offset) * 0.01]} rotation={[Math.PI / 2.6, offset, 0]} castShadow scale={[0.9, 0.12, 1]}>
+                      <sphereGeometry args={[0.028, 8, 6]} />
+                      <meshStandardMaterial color={leaf} roughness={0.85} side={THREE.DoubleSide} />
+                    </mesh>
+                  ))}
+                </group>
+              );
+            })}
+            {[
+              [0.045, 0.04, 0, 0.028],
+              [-0.035, 0.04, 0.045, 0.024],
+            ].map(([fx, fy, fz, fr], i) => (
+              <group key={`berry${i}`} position={[fx, fy, fz]}>
+                <mesh rotation={[Math.PI, 0, 0]} castShadow>
+                  <coneGeometry args={[fr, fr * 2.0, 10]} />
+                  <meshStandardMaterial color={fruit} emissive={fruit} emissiveIntensity={0.1} roughness={0.45} />
+                </mesh>
+                {[0, 1, 2, 3, 4].map((k) => {
+                  const ang = (k / 5) * Math.PI * 2;
+                  return (
+                    <mesh key={k} position={[Math.cos(ang) * fr * 0.7, fr * 1.0, Math.sin(ang) * fr * 0.7]} rotation={[Math.PI / 2 - 0.5, ang, 0]}>
+                      <coneGeometry args={[fr * 0.25, fr * 0.6, 4]} />
+                      <meshStandardMaterial color="#15803d" />
+                    </mesh>
+                  );
+                })}
+              </group>
+            ))}
+            <mesh position={[0.02, 0.07, -0.04]} rotation={[Math.PI / 2, 0, 0]}>
+              <sphereGeometry args={[0.014, 8, 6]} />
+              <meshStandardMaterial color="#fef2f2" emissive="#fecaca" emissiveIntensity={0.2} />
+            </mesh>
+          </>
+        );
+
+      // ── 辣椒 ──
+      case "辣椒":
+        return (
+          <>
+            <mesh position={[0, 0.09, 0]} castShadow>
+              <cylinderGeometry args={[0.010, 0.013, 0.18, 6]} />
+              <meshStandardMaterial color="#65a30d" roughness={0.9} />
+            </mesh>
+            {[0, 1, 2, 3, 4, 5, 6].map((i) => {
+              const a = (i / 7) * Math.PI * 2 + i * 0.2;
+              const y = 0.07 + (i % 3) * 0.04;
+              return (
+                <mesh key={`l${i}`} position={[Math.cos(a) * 0.045, y, Math.sin(a) * 0.045]} rotation={[Math.PI / 2.5, a, 0]} castShadow scale={[0.7, 0.15, 1.3]}>
+                  <sphereGeometry args={[0.04, 8, 6]} />
+                  <meshStandardMaterial color={leaf} roughness={0.85} />
+                </mesh>
+              );
+            })}
+            {[
+              [0.045, 0.13, 0.01, Math.PI - 0.15, 0.017, 3.2],
+              [-0.04, 0.12, 0.03, Math.PI + 0.2, 0.015, 3.0],
+              [0.015, 0.11, -0.05, Math.PI, 0.014, 2.8],
+            ].map(([cx, cy, cz, rx, rr, len], i) => (
+              <group key={`p${i}`} position={[cx, cy, cz]}>
+                <mesh rotation={[rx, 0, (i - 1) * 0.1]} castShadow scale={[1, len, 1]}>
+                  <coneGeometry args={[rr, rr * 2.5, 8]} />
+                  <meshStandardMaterial color={fruit} emissive={fruit} emissiveIntensity={0.15} roughness={0.35} />
+                </mesh>
+                <mesh position={[0, 0.005, 0]}>
+                  <cylinderGeometry args={[rr * 0.7, rr * 0.9, rr * 0.8, 6]} />
+                  <meshStandardMaterial color="#15803d" />
+                </mesh>
+              </group>
+            ))}
+          </>
+        );
+
+      // ── 生菜 ──
+      case "生菜":
+        return (
+          <>
+            {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => {
+              const a = (i / 8) * Math.PI * 2;
+              return (
+                <mesh key={`o${i}`} position={[Math.cos(a) * 0.055, 0.04, Math.sin(a) * 0.055]} rotation={[Math.PI / 2.2, a, 0.2]} castShadow scale={[1.2, 0.18, 1.35]}>
+                  <sphereGeometry args={[0.055, 10, 6]} />
+                  <meshStandardMaterial color={leaf} roughness={0.85} side={THREE.DoubleSide} />
+                </mesh>
+              );
+            })}
+            {[0, 1, 2, 3, 4, 5].map((i) => {
+              const a = (i / 6) * Math.PI * 2 + 0.3;
+              return (
+                <mesh key={`i${i}`} position={[Math.cos(a) * 0.03, 0.07, Math.sin(a) * 0.03]} rotation={[Math.PI / 3, a, 0]} castShadow scale={[0.9, 0.16, 1.1]}>
+                  <sphereGeometry args={[0.038, 10, 6]} />
+                  <meshStandardMaterial color={fruit} roughness={0.8} side={THREE.DoubleSide} />
+                </mesh>
+              );
+            })}
+            <mesh position={[0, 0.08, 0]} castShadow>
+              <sphereGeometry args={[0.028, 10, 8]} />
+              <meshStandardMaterial color={fruit} roughness={0.9} />
+            </mesh>
+          </>
+        );
+
+      // ── 茄子 ──
+      case "茄子":
+        return (
+          <>
+            <mesh position={[0, 0.10, 0]} castShadow>
+              <cylinderGeometry args={[0.013, 0.017, 0.2, 6]} />
+              <meshStandardMaterial color="#4d7c0f" roughness={0.9} />
+            </mesh>
+            {[0, 1, 2, 3, 4].map((i) => {
+              const a = (i / 5) * Math.PI * 2;
+              const y = 0.11 + (i % 2) * 0.04;
+              return (
+                <mesh key={`l${i}`} position={[Math.cos(a) * 0.05, y, Math.sin(a) * 0.05]} rotation={[Math.PI / 2.8, a, 0]} castShadow scale={[1.25, 0.12, 1.4]}>
+                  <sphereGeometry args={[0.055, 10, 6]} />
+                  <meshStandardMaterial color="#166534" roughness={0.85} side={THREE.DoubleSide} />
+                </mesh>
+              );
+            })}
+            {[
+              [0.06, 0.10, 0.01, Math.PI / 8, 0.026, 2.3],
+              [-0.05, 0.09, 0.04, -Math.PI / 9, 0.024, 2.1],
+            ].map(([cx, cy, cz, rz, rr, len], i) => (
+              <group key={`e${i}`} position={[cx, cy, cz]} rotation={[0, 0, rz]}>
+                <mesh castShadow scale={[1, len, 1]}>
+                  <capsuleGeometry args={[rr, rr * 1.5, 4, 12]} />
+                  <meshStandardMaterial color={fruit} roughness={0.3} metalness={0.1} emissive="#4c1d95" emissiveIntensity={0.1} />
+                </mesh>
+                <mesh position={[0, rr * len * 0.75, 0]} castShadow>
+                  <coneGeometry args={[rr * 1.15, rr * 0.9, 6]} />
+                  <meshStandardMaterial color="#166534" roughness={0.8} />
+                </mesh>
+                <mesh position={[0, rr * len * 1.05, 0]}>
+                  <cylinderGeometry args={[rr * 0.2, rr * 0.3, rr * 0.6, 6]} />
+                  <meshStandardMaterial color="#4d7c0f" />
+                </mesh>
+              </group>
+            ))}
+          </>
+        );
+
+      default:
+        return (
+          <mesh castShadow>
+            <sphereGeometry args={[0.07, 8, 8]} />
+            <meshStandardMaterial color={leaf} />
           </mesh>
         );
-      })}
-      {/* 顶部主叶 */}
-      <mesh position={[0, 0.42, 0]} castShadow>
-        <sphereGeometry args={[0.13, 12, 10]} />
-        <meshStandardMaterial color={leafColor} />
-      </mesh>
-      {/* 果实 */}
-      <mesh position={[0.08, 0.3, 0.04]} castShadow>
-        <sphereGeometry args={[0.05, 10, 10]} />
-        <meshStandardMaterial color={fruitColor} emissive={fruitColor} emissiveIntensity={0.15} />
-      </mesh>
-      <mesh position={[-0.07, 0.27, -0.05]} castShadow>
-        <sphereGeometry args={[0.045, 10, 10]} />
-        <meshStandardMaterial color={fruitColor} emissive={fruitColor} emissiveIntensity={0.15} />
-      </mesh>
+    }
+  })();
+
+  return (
+    <group ref={groupRef} position={position} scale={SCALE}>
+      {body}
     </group>
   );
 }
@@ -568,7 +783,7 @@ function CropField({ crop, ledOn }: { crop: string; ledOn: boolean }) {
   return (
     <>
       {positions.map((p, i) => (
-        <CropPlant key={i} position={p} fruitColor={fruit} leafColor={leaf} ledOn={ledOn} />
+        <CropPlant key={i} position={p} fruitColor={fruit} leafColor={leaf} ledOn={ledOn} crop={crop} />
       ))}
     </>
   );

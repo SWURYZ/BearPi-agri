@@ -1008,89 +1008,88 @@ function WeatherSkyPanel() {
   }, []);
 
   return (
-    <Html
-      position={[0, 6, -10]}
-      center
-      distanceFactor={10}
-      zIndexRange={[20, 0]}
-      style={{ pointerEvents: "none" }}
+    <div
+      style={{
+        position: "absolute",
+        top: 48,
+        left: "50%",
+        transform: "translateX(-50%)",
+        zIndex: 5,
+        background: "rgba(15, 23, 42, 0.6)",
+        backdropFilter: "blur(10px)",
+        border: "1px solid rgba(148, 197, 255, 0.4)",
+        borderRadius: 12,
+        padding: "8px 12px",
+        color: "#f8fafc",
+        fontFamily:
+          'ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
+        boxShadow: "0 8px 22px rgba(0,0,0,0.4)",
+        width: 580,
+        maxWidth: "80%",
+        pointerEvents: "none",
+      }}
     >
       <div
         style={{
-          background: "rgba(15, 23, 42, 0.55)",
-          backdropFilter: "blur(8px)",
-          border: "1px solid rgba(148, 197, 255, 0.35)",
-          borderRadius: 14,
-          padding: "10px 14px",
-          color: "#f8fafc",
-          fontFamily:
-            'ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
-          boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
-          minWidth: 560,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 6,
         }}
       >
+        <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1 }}>
+          🌤️ 重庆 · 未来 7 天天气
+        </span>
+        <span style={{ fontSize: 10, color: "#cbd5e1" }}>QWeather</span>
+      </div>
+      {error && !daily && (
+        <div style={{ fontSize: 11, color: "#fca5a5" }}>加载失败：{error}</div>
+      )}
+      {!error && !daily && (
+        <div style={{ fontSize: 11, color: "#cbd5e1" }}>加载中…</div>
+      )}
+      {daily && (
         <div
           style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 6,
+            display: "grid",
+            gridTemplateColumns: "repeat(7, 1fr)",
+            gap: 6,
           }}
         >
-          <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: 1 }}>
-            🌤️ 重庆 · 未来 7 天天气
-          </span>
-          <span style={{ fontSize: 11, color: "#cbd5e1" }}>QWeather</span>
-        </div>
-        {error && !daily && (
-          <div style={{ fontSize: 12, color: "#fca5a5" }}>加载失败：{error}</div>
-        )}
-        {!error && !daily && (
-          <div style={{ fontSize: 12, color: "#cbd5e1" }}>加载中…</div>
-        )}
-        {daily && (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(7, 1fr)",
-              gap: 6,
-            }}
-          >
-            {daily.slice(0, 7).map((d) => {
-              const date = new Date(d.fxDate);
-              const md = `${date.getMonth() + 1}/${date.getDate()}`;
-              const wd = ["日", "一", "二", "三", "四", "五", "六"][date.getDay()];
-              return (
-                <div
-                  key={d.fxDate}
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    background: "rgba(255,255,255,0.06)",
-                    borderRadius: 8,
-                    padding: "6px 4px",
-                    fontSize: 11,
-                    lineHeight: 1.4,
-                  }}
-                >
-                  <div style={{ color: "#94a3b8", fontSize: 10 }}>
-                    {md} 周{wd}
-                  </div>
-                  <div style={{ fontSize: 22, margin: "2px 0" }}>
-                    {weatherEmoji(d.textDay)}
-                  </div>
-                  <div style={{ color: "#e2e8f0" }}>{d.textDay}</div>
-                  <div style={{ color: "#fde68a", fontWeight: 600 }}>
-                    {d.tempMin}° ~ {d.tempMax}°
-                  </div>
+          {daily.slice(0, 7).map((d) => {
+            const date = new Date(d.fxDate);
+            const md = `${date.getMonth() + 1}/${date.getDate()}`;
+            const wd = ["日", "一", "二", "三", "四", "五", "六"][date.getDay()];
+            return (
+              <div
+                key={d.fxDate}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  background: "rgba(255,255,255,0.07)",
+                  borderRadius: 7,
+                  padding: "5px 3px",
+                  fontSize: 11,
+                  lineHeight: 1.4,
+                }}
+              >
+                <div style={{ color: "#94a3b8", fontSize: 10 }}>
+                  {md} 周{wd}
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </Html>
+                <div style={{ fontSize: 20, margin: "2px 0" }}>
+                  {weatherEmoji(d.textDay)}
+                </div>
+                <div style={{ color: "#e2e8f0", fontSize: 11 }}>{d.textDay}</div>
+                <div style={{ color: "#fde68a", fontWeight: 600, fontSize: 11 }}>
+                  {d.tempMin}° ~ {d.tempMax}°
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1215,7 +1214,6 @@ function FarmScene({
       </mesh>
 
       <SkyAndDistance />
-      <WeatherSkyPanel />
       <PerimeterDecor />
       <FarmGround />
 
@@ -1244,8 +1242,8 @@ function FarmScene({
 // ============================================================
 export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
   const [hoveredName, setHoveredName] = useState<string | null>(null);
-  // 进入此组件即自动开启手势控制
-  const [gestureMode, setGestureMode] = useState(true);
+  // 默认关闭手势控制，由用户手动开启
+  const [gestureMode, setGestureMode] = useState(false);
   const [handStatus, setHandStatus] = useState<"idle" | "tracking" | "lost">("idle");
   const orbitRef = useRef<OrbitControlsImpl | null>(null);
   const initialCamPos = useRef<[number, number, number]>([14, 10, 14]);
@@ -1449,7 +1447,8 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
     <div
       className="relative w-full overflow-hidden rounded-2xl"
       style={{
-        height: 620,
+        height: "calc(100vh - 96px)",
+        minHeight: 680,
         background: "linear-gradient(180deg,#87ceeb 0%,#bfdbfe 70%,#dcfce7 100%)",
       }}
     >
@@ -1531,6 +1530,9 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
         </div>
       )}
 
+      {/* 天气大屏：固定 DOM 覆盖层，不随 3D 视角变化 */}
+      <WeatherSkyPanel />
+
       {/* 手势模式提示面板 */}
       {gestureMode && (
         <div className="absolute left-3 top-12 z-10 pointer-events-none bg-black/70 border border-green-700 text-green-200 rounded p-2 text-[11px] leading-relaxed shadow-lg">
@@ -1543,8 +1545,6 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
           </div>
           <div>✊ 握拳并移动 → 拖动旋转视角</div>
           <div>🖐️ 张开手 → 释放（停止旋转）</div>
-          <div>🤏 拇指食指<b>持续捏合</b>（越捏越近）→ 缩小</div>
-          <div>👌 拇指食指<b>持续张开</b>（越张越远）→ 放大</div>
           <div className="mt-1 pt-1 border-t border-green-800 text-[10px]">
             状态: <span className={
               handStatus === "tracking" ? "text-green-300" :

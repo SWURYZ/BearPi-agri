@@ -12,6 +12,7 @@ import { GreenhouseDigitalTwin } from "../components/GreenhouseDigitalTwin3D";
 import { ScheduleRulesModal, ThresholdRulesModal, AlertRecordsModal } from "../components/GreenhousePanels";
 import { FarmDigitalTwin3D, type FarmGreenhouse } from "../components/FarmDigitalTwin3D";
 import { useGreenhouses, CROP_OPTIONS, LOCKED_NAME, MAX_GREENHOUSES } from "../lib/greenhouseStore";
+import { useVirtualSwitches, type VirtualSwitch } from "../lib/virtualSwitchStore";
 
 // Crop colors [fruit, leaf] for mini card plants
 const CROP_COLORS: Record<string, [string, string]> = {
@@ -391,12 +392,17 @@ export function RealtimeMonitor() {
   const motorPendingTargetRef = useRef<boolean | null>(null);
   // 1 号大棚浇水(虚拟) — 持久化
   const [waterOn, setWaterOn] = useState(() => loadLS<boolean>(LS_WATER, false));
-  // 其他大棚的虚拟设备状态 (key = "2号大棚" 等) — 持久化
-  const [virtualSwitches, setVirtualSwitches] = useState<Record<string, VirtualSwitch>>(
-    () => loadLS<Record<string, VirtualSwitch>>(LS_VIRTUAL, {}),
-  );
+  // 其他大棚的虚拟设备状态 — 通过共享 store (跨组件, 包含芽芽自动播报写入, 内部已持久化)
+  const [virtualSwitchMap, updateVirtualSwitch] = useVirtualSwitches();
+  const virtualSwitches = useMemo<Record<string, VirtualSwitch>>(() => {
+    const next: Record<string, VirtualSwitch> = {};
+    for (const gh of GREENHOUSE_LIST) {
+      next[gh] = virtualSwitchMap[gh] ?? { led: false, motor: false, water: false };
+    }
+    return next;
+  }, [GREENHOUSE_LIST, virtualSwitchMap]);
 
-  // 切换/刷新后保留状态:focusedGH / waterOn / virtualSwitches 持久化
+  // 切换/刷新后保留状态:focusedGH / waterOn 持久化
   useEffect(() => {
     try {
       if (focusedGH) localStorage.setItem(LS_FOCUSED, JSON.stringify(focusedGH));
@@ -406,25 +412,9 @@ export function RealtimeMonitor() {
   useEffect(() => {
     try { localStorage.setItem(LS_WATER, JSON.stringify(waterOn)); } catch { /* ignore */ }
   }, [waterOn]);
-  useEffect(() => {
-    try { localStorage.setItem(LS_VIRTUAL, JSON.stringify(virtualSwitches)); } catch { /* ignore */ }
-  }, [virtualSwitches]);
-
-  // 按照当前大棚清单补齐缺失的 key (新增大棚用默认值;删除的大棚清理掉)
-  useEffect(() => {
-    setVirtualSwitches((prev) => {
-      const next: Record<string, VirtualSwitch> = {};
-      for (const gh of GREENHOUSE_LIST) {
-        next[gh] = prev[gh] ?? { led: false, motor: false, water: false };
-      }
-      return next;
-    });
-  }, [GREENHOUSE_LIST]);
   function toggleVirtual(gh: string, key: keyof VirtualSwitch) {
-    setVirtualSwitches((prev) => ({
-      ...prev,
-      [gh]: { ...prev[gh], [key]: !prev[gh][key] },
-    }));
+    const cur = virtualSwitches[gh] ?? { led: false, motor: false, water: false };
+    updateVirtualSwitch(gh, { [key]: !cur[key] });
   }
 
   // 弹窗开关:定时规则 / 阈值规则 / 告警记录

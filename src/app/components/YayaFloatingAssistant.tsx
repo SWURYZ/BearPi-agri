@@ -7,6 +7,9 @@ import { createCompositeRule } from "../services/compositeCondition";
 import { createThresholdRule, runThresholdCheckNow } from "../services/thresholdAlert";
 import { executeDecision, type SensorSnapshot } from "../services/smartDecision";
 import { streamAgriAgentChat } from "../services/agriAgent";
+import { fetchChongqing3d, buildBriefingText, computeDecisions, decisionsToSwitchMap } from "../services/weatherBriefing";
+import { useGreenhouses, LOCKED_NAME } from "../lib/greenhouseStore";
+import { setSwitches } from "../lib/virtualSwitchStore";
 
 type Msg = { role: "user" | "assistant"; text: string };
 type VoiceState = "idle" | "listening" | "thinking" | "speaking";
@@ -923,6 +926,10 @@ export function YayaFloatingAssistant() {
     setMessages((prev) => [...prev.slice(-13), { role, text }]);
   }, []);
 
+  const { list: greenhousesList } = useGreenhouses();
+  const greenhousesListRef = useRef(greenhousesList);
+  greenhousesListRef.current = greenhousesList;
+
   const endDrag = useCallback(() => {
     const drag = dragRef.current;
     dragRef.current = null;
@@ -1079,6 +1086,76 @@ export function YayaFloatingAssistant() {
       }, 300);
     }
   }, [pickYayaVoice]);
+
+  // 登录/刷新后自动天气+大棚简报
+  // StrictMode 下 useEffect 双调用：用 ref + 5 秒去重避免重播；
+  // 不用长冷却，每次刷新都会播
+  const briefedRef = useRef(false);
+  useEffect(() => {
+    if (briefedRef.current) return;
+    const GUARD_KEY = "bearpi-agri:yaya-briefed-at";
+    const lastAt = Number(sessionStorage.getItem(GUARD_KEY) ?? "0");
+    if (lastAt && Date.now() - lastAt < 5_000) {
+      console.info("[yaya] briefing skipped: recent (StrictMode)");
+      return;
+    }
+    briefedRef.current = true;
+    const timer = window.setTimeout(async () => {
+      console.info("[yaya] briefing start…");
+      try {
+        const ghs = greenhousesListRef.current;
+        console.info("[yaya] greenhouses:", ghs.length);
+        if (!ghs.length) return;
+        const daily = await fetchChongqing3d();
+        console.info("[yaya] weather fetched, days:", daily.length);
+        const briefing = buildBriefingText(ghs, daily);
+        if (!briefing) return;
+
+        // 真正执行决策：把 LED/风机/灌溉状态写入共享 store，RealtimeMonitor 即时可见
+        const { decisions } = computeDecisions(ghs, daily);
+        const switchMap = decisionsToSwitchMap(decisions);
+        setSwitches(switchMap);
+
+        // 1 号大棚是真实硬件：也把 LED/风机命令发给后端（灌溉是虚拟）
+        const real = switchMap[LOCKED_NAME];
+        if (real) {
+          const DEVICE_ID = "69d75b1d7f2e6c302f654fea_20031104";
+          Promise.allSettled([
+            sendManualControl({ deviceId: DEVICE_ID, commandType: "LED", action: real.led ? "ON" : "OFF" }),
+            sendManualControl({ deviceId: DEVICE_ID, commandType: "MOTOR", action: real.motor ? "ON" : "OFF" }),
+          ]).catch(() => { /* ignore */ });
+        }
+
+        sessionStorage.setItem(GUARD_KEY, String(Date.now()));
+        push("assistant", briefing);
+        console.info("[yaya] briefing:", briefing);
+        // 浏览器自动播放策略可能要求用户手势；若直接播无声，则在首次交互时补播
+        try {
+          speakText(briefing);
+        } catch { /* ignore */ }
+        // 500ms 后检查 speaking 是否启动；没启动则挂一次性手势监听
+        window.setTimeout(() => {
+          const synth = window.speechSynthesis;
+          if (synth && !synth.speaking && !synth.pending) {
+            console.info("[yaya] autoplay blocked, waiting for user gesture to speak");
+            const replay = () => {
+              window.removeEventListener("pointerdown", replay);
+              window.removeEventListener("keydown", replay);
+              speakText(briefing);
+            };
+            window.addEventListener("pointerdown", replay, { once: true });
+            window.addEventListener("keydown", replay, { once: true });
+          }
+        }, 500);
+      } catch (err) {
+        // 天气接口挂掉就静默跳过，不影响主流程
+        console.warn("[yaya] briefing skipped:", err);
+      }
+    }, 1500);
+    return () => window.clearTimeout(timer);
+    // 只在挂载时跑一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const executeUnified = useCallback(async (rawText: string) => {
     const text = normalizeSpeechText(stripOptionalWakeWord(rawText)).trim();
