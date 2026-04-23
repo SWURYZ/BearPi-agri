@@ -75,13 +75,105 @@ public class CozeAgentService {
             payload.put("conversation_id", request.conversationId());
         }
 
-        payload.put("additional_messages", List.of(
-                Map.of(
-                        "role", "user",
-                        "content", request.question(),
-                        "content_type", "text")));
+        if (StringUtils.hasText(request.fileId())) {
+            // 多模态消息：content_type=object_string，content 是 JSON 字符串，
+            // 同时携带文字和图片（file_id 由 /v1/files/upload 返回）。
+            // 参考：https://www.coze.cn/open/docs/developer_guides/chat_v3
+            List<Map<String, String>> parts = List.of(
+                    Map.of("type", "text", "text", request.question()),
+                    Map.of("type", "image", "file_id", request.fileId()));
+            String contentJson;
+            try {
+                contentJson = objectMapper.writeValueAsString(parts);
+            } catch (Exception e) {
+                throw new IllegalStateException("序列化多模态消息失败", e);
+            }
+            payload.put("additional_messages", List.of(
+                    Map.of(
+                            "role", "user",
+                            "content", contentJson,
+                            "content_type", "object_string")));
+        } else {
+            payload.put("additional_messages", List.of(
+                    Map.of(
+                            "role", "user",
+                            "content", request.question(),
+                            "content_type", "text")));
+        }
 
         return payload;
+    }
+
+    /**
+     * 上传图片到 Coze，返回 file_id。
+     * <p>调用 {@code POST /v1/files/upload}，multipart 字段名为 {@code file}。
+     * 响应结构：{@code {"data":{"id":"...","file_name":"...","bytes":...}}}。
+     */
+    public String uploadFile(org.springframework.web.multipart.MultipartFile file) {
+        validateConfig();
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("上传文件不能为空");
+        }
+
+        WebClient webClient = WebClient.builder()
+                .baseUrl(properties.getBaseUrl())
+                .codecs(cfg -> cfg.defaultCodecs().maxInMemorySize(20 * 1024 * 1024))
+                .defaultHeaders(headers -> headers.setBearerAuth(properties.getPat()))
+                .build();
+
+        org.springframework.http.client.MultipartBodyBuilder builder = new org.springframework.http.client.MultipartBodyBuilder();
+        org.springframework.core.io.ByteArrayResource resource = new org.springframework.core.io.ByteArrayResource(readAllBytes(file)) {
+            @Override
+            public String getFilename() {
+                String name = file.getOriginalFilename();
+                return StringUtils.hasText(name) ? name : "upload.bin";
+            }
+        };
+        org.springframework.http.MediaType mediaType = file.getContentType() != null
+                ? org.springframework.http.MediaType.parseMediaType(file.getContentType())
+                : org.springframework.http.MediaType.APPLICATION_OCTET_STREAM;
+        builder.part("file", resource).contentType(mediaType);
+        org.springframework.util.MultiValueMap<String, org.springframework.http.HttpEntity<?>> body = builder.build();
+
+        String response = webClient.post()
+                .uri("/v1/files/upload")
+                .contentType(org.springframework.http.MediaType.MULTIPART_FORM_DATA)
+                .bodyValue(body)
+                .retrieve()
+                .bodyToMono(String.class)
+                .timeout(Duration.ofSeconds(Math.max(properties.getTimeoutSeconds(), 30)))
+                .block();
+
+        if (!StringUtils.hasText(response)) {
+            throw new IllegalStateException("Coze 文件上传响应为空");
+        }
+
+        try {
+            JsonNode root = objectMapper.readTree(response);
+            // {"code":0,"data":{"id":"..."}} 成功；失败时 code != 0
+            int code = root.path("code").asInt(-1);
+            if (code != 0) {
+                String msg = root.path("msg").asText("文件上传失败");
+                throw new IllegalStateException("Coze 文件上传失败: " + msg);
+            }
+            String fileId = root.path("data").path("id").asText(null);
+            if (!StringUtils.hasText(fileId)) {
+                throw new IllegalStateException("Coze 文件上传未返回 file_id: " + response);
+            }
+            return fileId;
+        } catch (IllegalStateException ise) {
+            throw ise;
+        } catch (Exception e) {
+            throw new IllegalStateException("解析 Coze 文件上传响应失败: " + response, e);
+        }
+    }
+
+    private static byte[] readAllBytes(org.springframework.web.multipart.MultipartFile file) {
+        try {
+            return file.getBytes();
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("读取上传文件失败", e);
+        }
     }
 
     private Flux<AgentChunk> parseSseEvent(ServerSentEvent<String> event) {

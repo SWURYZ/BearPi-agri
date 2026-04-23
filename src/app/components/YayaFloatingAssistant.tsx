@@ -1100,7 +1100,11 @@ export function YayaFloatingAssistant() {
       return;
     }
     briefedRef.current = true;
-    const timer = window.setTimeout(async () => {
+    // 等待欢迎语（WelcomeOverlay 的"XX，欢迎…"TTS）播放完毕后再开始简报。
+    // WelcomeOverlay 自身在 3200ms 开始退出 / 3750ms 触发 onDone，
+    // 但 TTS 文本较长时仍可能在说话，因此：先等 1500ms 让欢迎语启动，
+    // 再轮询 speechSynthesis.speaking/pending 直到安静，最多等 15 秒。
+    const startBriefing = async () => {
       console.info("[yaya] briefing start…");
       try {
         const ghs = greenhousesListRef.current;
@@ -1151,8 +1155,28 @@ export function YayaFloatingAssistant() {
         // 天气接口挂掉就静默跳过，不影响主流程
         console.warn("[yaya] briefing skipped:", err);
       }
+    };
+
+    // 等欢迎语说完再开始：先 1500ms 让欢迎 TTS 进入 speaking，再轮询到安静
+    let cancelled = false;
+    const waitTimer = window.setTimeout(() => {
+      const synth = window.speechSynthesis;
+      const deadline = Date.now() + 15_000;
+      const poll = () => {
+        if (cancelled) return;
+        if (!synth || (!synth.speaking && !synth.pending) || Date.now() >= deadline) {
+          // 欢迎语已停 + 额外留 400ms 缓冲
+          window.setTimeout(() => { if (!cancelled) startBriefing(); }, 400);
+          return;
+        }
+        window.setTimeout(poll, 250);
+      };
+      poll();
     }, 1500);
-    return () => window.clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(waitTimer);
+    };
     // 只在挂载时跑一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1721,9 +1745,15 @@ export function YayaFloatingAssistant() {
         setOpen(true);
         triggerGestureAnim("summoning", 1100);
         setGestureFeedback({ icon: "👍", text: "芽芽来啦！说话就行", color: "#4ade80" });
-        gestureSpeak("嗨～我是芽芽，请说话");
-        // 立即开启监听，状态栏同步更新；ignoreInputUntilRef 已锁住播报期间的语音输入
-        if (speechSupported) startAlwaysListening();
+        // 先标记需要持续监听 + 乐观设置状态栏（避免 "待机/持续监听" 闪烁），
+        // 再用 speakText 走统一 TTS 流程（会正确暂停识别，TTS 结束后自动启动持续监听）。
+        shouldListenRef.current = true;
+        setAlwaysListening(true);
+        if (speechSupported) {
+          speakText("嗨～我是芽芽，请说话");
+        } else {
+          gestureSpeak("嗨～我是芽芽，请说话");
+        }
         break;
 
       case "thumbs_down":

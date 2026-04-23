@@ -10,11 +10,15 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.Disposable;
 
 import java.io.IOException;
+import java.util.Map;
 
 @RestController
 @RequiredArgsConstructor
@@ -31,6 +35,38 @@ public class AgriAgentController {
 
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter stream(@Valid @RequestBody AgriAgentChatRequest request) {
+        return streamInternal(request);
+    }
+
+    /**
+     * 上传图片 + 文本提问（多模态）。<br>
+     * 表单字段：{@code image}（图片文件）、{@code question}（文本，默认"描述这张图片"）、
+     * {@code userId}、{@code conversationId}（均可选）。
+     */
+    @PostMapping(
+            value = "/chat/stream/with-image",
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE,
+            produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter streamWithImage(
+            @RequestPart("image") MultipartFile image,
+            @RequestParam(value = "question", required = false, defaultValue = "请分析这张图片的内容") String question,
+            @RequestParam(value = "userId", required = false) String userId,
+            @RequestParam(value = "conversationId", required = false) String conversationId) {
+        String fileId = cozeAgentService.uploadFile(image);
+        AgriAgentChatRequest request = new AgriAgentChatRequest(question, userId, conversationId, fileId);
+        return streamInternal(request);
+    }
+
+    /**
+     * 仅上传图片到 Coze，返回 file_id（方便前端分两步调用）。
+     */
+    @PostMapping(value = "/files/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<Map<String, String>> uploadFile(@RequestPart("file") MultipartFile file) {
+        String fileId = cozeAgentService.uploadFile(file);
+        return ApiResponse.success(Map.of("fileId", fileId));
+    }
+
+    private SseEmitter streamInternal(AgriAgentChatRequest request) {
         SseEmitter emitter = new SseEmitter(0L);
 
         Disposable disposable = cozeAgentService.streamChat(request)

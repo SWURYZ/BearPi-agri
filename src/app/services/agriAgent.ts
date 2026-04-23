@@ -4,6 +4,8 @@ export interface AgriAgentChatRequest {
   question: string;
   userId?: string;
   conversationId?: string;
+  /** 可选：Coze 文件上传后返回的 file_id，用于多模态（图片）提问 */
+  fileId?: string;
 }
 
 interface StreamEvent {
@@ -62,6 +64,39 @@ export async function streamAgriAgentChat(
     signal,
   });
 
+  await consumeSseStream(res, callbacks);
+}
+
+/**
+ * 带图片的多模态提问：前端直接 multipart 上传，后端完成"上传到 Coze → 取 file_id → 发起 chat"。
+ */
+export async function streamAgriAgentChatWithImage(
+  params: {
+    image: File;
+    question: string;
+    userId?: string;
+    conversationId?: string;
+  },
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal,
+) {
+  const form = new FormData();
+  form.append("image", params.image);
+  form.append("question", params.question);
+  if (params.userId) form.append("userId", params.userId);
+  if (params.conversationId) form.append("conversationId", params.conversationId);
+
+  const res = await fetch(withApiBase("/api/v1/agri-agent/chat/stream/with-image"), {
+    method: "POST",
+    headers: { Accept: "text/event-stream" },
+    body: form,
+    signal,
+  });
+
+  await consumeSseStream(res, callbacks);
+}
+
+async function consumeSseStream(res: Response, callbacks: StreamCallbacks) {
   if (!res.ok) {
     const text = await res.text();
     throw new Error(text || `agri-agent stream request failed: ${res.status}`);

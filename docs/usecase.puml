@@ -1,0 +1,70 @@
+@startuml usecase
+' =============== 样式 ===============
+skinparam shadowing false
+skinparam backgroundColor #FFFFFF
+skinparam DefaultFontName "Microsoft YaHei"
+skinparam ArrowColor #555
+skinparam ArrowThickness 1
+skinparam UsecaseBorderColor #2E7D32
+skinparam UsecaseBackgroundColor #E8F5E9
+skinparam ActorBorderColor #1565C0
+skinparam ActorBackgroundColor #E3F2FD
+skinparam packageBorderColor #AAAAAA
+left to right direction
+
+' =============== 参与者 ===============
+' 主参与者（人类角色，放左侧）
+actor "种植用户"   as User
+actor "运维人员"   as Ops
+
+' 次要参与者（外部系统，放右侧）
+actor "人脸识别服务"  as FaceSvc
+actor "天气预报服务"  as WeatherSvc
+actor "大棚 IoT 平台" as IoTSvc
+actor "虫害识别服务"  as PestSvc
+
+' =============== 系统边界 ===============
+rectangle "智慧农业大棚系统" {
+
+  ' ── 主用例（动宾短语，均通过"老板测试 / 咖啡测试"）──
+  usecase "登录系统"         as UC_Login
+  usecase "查看大棚监测"     as UC_Monitor
+  usecase "查看天气预报"     as UC_Weather
+  usecase "控制大棚设备"     as UC_Control
+  usecase "处理阈值告警"     as UC_Alert
+  usecase "咨询农事问题"     as UC_QA
+  usecase "识别作物虫害"     as UC_Pest
+
+  ' ── 可选/条件分支用例（extend 源）─────────────
+  usecase "自动执行作物决策" as UC_AutoDecision
+
+  ' ── 公共子步骤用例（include 目标）────────────
+  usecase "验证人脸身份"     as UC_VerifyFace
+}
+
+' =============== 关联（参与者—用例，实线） ===============
+User --> UC_Login
+User --> UC_Monitor
+User --> UC_Weather
+User --> UC_Control
+User --> UC_QA
+User --> UC_Pest
+Ops  --> UC_Alert
+
+' =============== 次要参与者（系统→外部服务） ===============
+UC_VerifyFace   --> FaceSvc
+UC_Weather      --> WeatherSvc
+UC_Monitor      --> IoTSvc
+UC_Control      --> IoTSvc
+UC_Pest         --> PestSvc
+UC_AutoDecision --> WeatherSvc
+
+' =============== include（基础用例 → 被包含用例，必选） ===============
+UC_Login        ..> UC_VerifyFace : <<include>>
+UC_AutoDecision ..> UC_Control    : <<include>>
+UC_Alert        ..> UC_Control    : <<include>>
+
+' =============== extend（扩展用例 → 基础用例，可选/条件） ===============
+UC_AutoDecision ..> UC_Login : <<extend>>
+
+@enduml

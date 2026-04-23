@@ -4,6 +4,10 @@ server:
 spring:
   application:
     name: agri-agent-service
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
 
 springdoc:
   swagger-ui:
