@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { Activity, Wifi, ChevronLeft, Lightbulb, Fan, Loader2, Droplets, Clock, SlidersHorizontal, AlertTriangle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Activity, Wifi, ChevronLeft, Lightbulb, Fan, Loader2, Droplets, Clock, SlidersHorizontal, AlertTriangle, Plus, Trash2, X } from "lucide-react";
 import {
   SENSOR_KEYS,
   type SensorKey,
@@ -11,13 +11,7 @@ import { fetchRealtimeDeviceStatus, sendManualControl } from "../services/device
 import { GreenhouseDigitalTwin } from "../components/GreenhouseDigitalTwin3D";
 import { ScheduleRulesModal, ThresholdRulesModal, AlertRecordsModal } from "../components/GreenhousePanels";
 import { FarmDigitalTwin3D, type FarmGreenhouse } from "../components/FarmDigitalTwin3D";
-
-const GREENHOUSE_LIST = ["1号大棚", "2号大棚", "3号大棚", "4号大棚", "5号大棚", "6号大棚"];
-
-const GREENHOUSE_CROPS: Record<string, string> = {
-  "1号大棚": "番茄", "2号大棚": "黄瓜", "3号大棚": "草莓",
-  "4号大棚": "辣椒", "5号大棚": "生菜", "6号大棚": "茄子",
-};
+import { useGreenhouses, CROP_OPTIONS, LOCKED_NAME, MAX_GREENHOUSES } from "../lib/greenhouseStore";
 
 // Crop colors [fruit, leaf] for mini card plants
 const CROP_COLORS: Record<string, [string, string]> = {
@@ -28,7 +22,8 @@ const CROP_COLORS: Record<string, [string, string]> = {
 
 type ConnectionMode = "live" | "waiting" | "offline";
 
-const ONLINE_GREENHOUSE = "1号大棚";
+// 绑定真实硬件的大棚 (固定名称、不可删除)
+const ONLINE_GREENHOUSE = LOCKED_NAME;
 
 const emptySensorValues: Partial<Record<SensorKey, number>> = SENSOR_KEYS.reduce(
   (acc, k) => { acc[k] = undefined; return acc; },
@@ -356,6 +351,15 @@ function MiniGH({ name, crop, connectionMode, sensorValues: sv, ledOn, motorOn, 
 
 
 export function RealtimeMonitor() {
+  // 大棚清单 (localStorage 持久化, 支持增删改作物)
+  const { list: ghList, addGreenhouse, removeGreenhouse, updateCrop, canAdd } = useGreenhouses();
+  const GREENHOUSE_LIST = useMemo(() => ghList.map((g) => g.name), [ghList]);
+  const GREENHOUSE_CROPS = useMemo<Record<string, string>>(
+    () => Object.fromEntries(ghList.map((g) => [g.name, g.crop])),
+    [ghList],
+  );
+  const [manageOpen, setManageOpen] = useState(false);
+
   const [focusedGH, setFocusedGH] = useState<string | null>(null);
   const [sensorValues, setSensorValues] = useState<Partial<Record<SensorKey, number>>>(emptySensorValues);
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>("waiting");
@@ -375,12 +379,17 @@ export function RealtimeMonitor() {
   const [waterOn, setWaterOn] = useState(false);
   // 其他大棚的虚拟设备状态 (key = "2号大棚" 等)
   type VirtualSwitch = { led: boolean; motor: boolean; water: boolean };
-  const [virtualSwitches, setVirtualSwitches] = useState<Record<string, VirtualSwitch>>(() =>
-    GREENHOUSE_LIST.reduce((acc, gh) => {
-      acc[gh] = { led: false, motor: false, water: false };
-      return acc;
-    }, {} as Record<string, VirtualSwitch>),
-  );
+  const [virtualSwitches, setVirtualSwitches] = useState<Record<string, VirtualSwitch>>({});
+  // 按照当前大棚清单补齐缺失的 key (新增大棚用默认值)
+  useEffect(() => {
+    setVirtualSwitches((prev) => {
+      const next: Record<string, VirtualSwitch> = {};
+      for (const gh of GREENHOUSE_LIST) {
+        next[gh] = prev[gh] ?? { led: false, motor: false, water: false };
+      }
+      return next;
+    });
+  }, [GREENHOUSE_LIST]);
   function toggleVirtual(gh: string, key: keyof VirtualSwitch) {
     setVirtualSwitches((prev) => ({
       ...prev,
@@ -392,6 +401,13 @@ export function RealtimeMonitor() {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [thresholdOpen, setThresholdOpen] = useState(false);
   const [alertRecOpen, setAlertRecOpen] = useState(false);
+
+  // 如果当前聚焦大棚被删除, 自动返回全景
+  useEffect(() => {
+    if (focusedGH && !GREENHOUSE_LIST.includes(focusedGH)) {
+      setFocusedGH(null);
+    }
+  }, [focusedGH, GREENHOUSE_LIST]);
 
   // 监听芽芽语音指令："聚焦/查看 N 号大棚" → 切到详情视图
   useEffect(() => {
@@ -456,8 +472,17 @@ export function RealtimeMonitor() {
           setDeviceId("");
           return;
         }
-        // 优先匹配 1号大棚, 否则使用第一个绑定设备 (与 DeviceControl 行为一致)
-        const bound = devices.find(d => d.greenhouseCode === ONLINE_GREENHOUSE) ?? devices[0];
+        // 排除手机扫码绑定设备 (MOBILE_SCANNER), 它们无法执行 LIGHT/MOTOR 控制指令.
+        // 真实硬件 greenhouseCode 形如 "GH-01", 手机设备 greenhouseCode 为 "1号大棚" —
+        // 命名不一致, 旧逻辑 find("1号大棚") 会命中手机而不是硬件, 导致"点开关硬件不变".
+        const isHardware = (d: { deviceType: string | null }) =>
+          !d.deviceType || d.deviceType.toUpperCase() !== "MOBILE_SCANNER";
+        const hardwareDevices = devices.filter(isHardware);
+        const pool = hardwareDevices.length > 0 ? hardwareDevices : devices;
+
+        // 1号大棚对应的 greenhouseCode 兼容两种写法: "1号大棚" 或 "GH-01"
+        const ghAliases = [ONLINE_GREENHOUSE, "GH-01"];
+        const bound = pool.find(d => ghAliases.includes(d.greenhouseCode)) ?? pool[0];
         setDeviceId(bound.deviceId);
       } catch {
         if (!disposed) setDeviceId("");
@@ -513,7 +538,8 @@ export function RealtimeMonitor() {
 
   // 控制 LED / 风扇 (与 DeviceControl 逻辑一致)
   // - loading 只锁 API 调用期间，响应后立刻释放
-  // - pendingTarget 负责挡住轮询覆盖 (状态不一致时 5s 内保护乐观值)
+  // - pendingTarget 保护乐观值:只在"硬件真实达到目标"或"用户下次点击"时清除,
+  //   避免硬件离线/云端异常时,旧 telemetry 把 UI 拉回旧状态.
   async function toggleLed() {
     if (!deviceId || ledLoading) {
       if (!deviceId) setControlMessage({ type: "error", text: "未绑定设备,请先在【设备管理】扫码绑定" });
@@ -526,11 +552,7 @@ export function RealtimeMonitor() {
     try {
       const resp = await sendManualControl({ deviceId, commandType: "LIGHT_CONTROL", action: target ? "ON" : "OFF" });
       const ok = resp.status === "SENT" || resp.status === "DELIVERED";
-      if (!ok) {
-        setLedOn(!target);
-        ledPendingTargetRef.current = null;
-        setControlMessage({ type: "error", text: resp.message || "指令下发失败" });
-      } else {
+      if (ok) {
         setControlMessage({ type: "success", text: `补光灯指令已下发: ${target ? "ON" : "OFF"}` });
         // 1.2s 后主动同步一次 (仅在设备已报告达目标时接受,避免覆盖乐观值)
         window.setTimeout(async () => {
@@ -545,15 +567,20 @@ export function RealtimeMonitor() {
             }
           } catch { /* ignore */ }
         }, 1200);
-        // 5s 后强制释放 pending,恢复轮询同步
-        window.setTimeout(() => {
-          if (ledPendingTargetRef.current === target) ledPendingTargetRef.current = null;
-        }, 5000);
+      } else {
+        // SKIPPED(云平台未配置) / FAILED(云平台异常/设备离线): 保留 UI 为用户期望值,
+        // pendingTarget 继续保护,防止轮询回写旧状态.仅以提示告知用户.
+        const simulated = resp.status === "SKIPPED";
+        setControlMessage({
+          type: simulated ? "success" : "error",
+          text: simulated
+            ? "本地模拟: 云平台未启用,指令未真正下发"
+            : (resp.message || "云端下发失败,已保留本地显示"),
+        });
       }
     } catch {
-      setLedOn(!target);
-      ledPendingTargetRef.current = null;
-      setControlMessage({ type: "error", text: "网络错误,请检查后端服务是否启动" });
+      // 网络错误: 保留 UI 为用户期望值,继续让 pendingTarget 保护
+      setControlMessage({ type: "error", text: "网络错误,已保留本地显示" });
     } finally {
       setLedLoading(false); // 按钮立即可再点
     }
@@ -570,11 +597,7 @@ export function RealtimeMonitor() {
     try {
       const resp = await sendManualControl({ deviceId, commandType: "MOTOR_CONTROL", action: target ? "ON" : "OFF" });
       const ok = resp.status === "SENT" || resp.status === "DELIVERED";
-      if (!ok) {
-        setMotorOn(!target);
-        motorPendingTargetRef.current = null;
-        setControlMessage({ type: "error", text: resp.message || "指令下发失败" });
-      } else {
+      if (ok) {
         setControlMessage({ type: "success", text: `风扇指令已下发: ${target ? "ON" : "OFF"}` });
         window.setTimeout(async () => {
           try {
@@ -588,14 +611,17 @@ export function RealtimeMonitor() {
             }
           } catch { /* ignore */ }
         }, 1200);
-        window.setTimeout(() => {
-          if (motorPendingTargetRef.current === target) motorPendingTargetRef.current = null;
-        }, 5000);
+      } else {
+        const simulated = resp.status === "SKIPPED";
+        setControlMessage({
+          type: simulated ? "success" : "error",
+          text: simulated
+            ? "本地模拟: 云平台未启用,指令未真正下发"
+            : (resp.message || "云端下发失败,已保留本地显示"),
+        });
       }
     } catch {
-      setMotorOn(!target);
-      motorPendingTargetRef.current = null;
-      setControlMessage({ type: "error", text: "网络错误,请检查后端服务是否启动" });
+      setControlMessage({ type: "error", text: "网络错误,已保留本地显示" });
     } finally {
       setMotorLoading(false);
     }
@@ -617,11 +643,7 @@ export function RealtimeMonitor() {
     try {
       const resp = await sendManualControl({ deviceId, commandType: "MOTOR_CONTROL", action: target ? "ON" : "OFF" });
       const ok = resp.status === "SENT" || resp.status === "DELIVERED";
-      if (!ok) {
-        setWaterOn(!target);
-        motorPendingTargetRef.current = null;
-        setControlMessage({ type: "error", text: resp.message || "指令下发失败" });
-      } else {
+      if (ok) {
         setControlMessage({ type: "success", text: `浇水指令已下发: ${target ? "ON" : "OFF"}` });
         window.setTimeout(async () => {
           try {
@@ -635,14 +657,17 @@ export function RealtimeMonitor() {
             }
           } catch { /* ignore */ }
         }, 1200);
-        window.setTimeout(() => {
-          if (motorPendingTargetRef.current === target) motorPendingTargetRef.current = null;
-        }, 5000);
+      } else {
+        const simulated = resp.status === "SKIPPED";
+        setControlMessage({
+          type: simulated ? "success" : "error",
+          text: simulated
+            ? "本地模拟: 云平台未启用,指令未真正下发"
+            : (resp.message || "云端下发失败,已保留本地显示"),
+        });
       }
     } catch {
-      setWaterOn(!target);
-      motorPendingTargetRef.current = null;
-      setControlMessage({ type: "error", text: "网络错误,请检查后端服务是否启动" });
+      setControlMessage({ type: "error", text: "网络错误,已保留本地显示" });
     } finally {
       setWaterLoading(false);
     }
@@ -888,6 +913,15 @@ export function RealtimeMonitor() {
             <span className="font-semibold">风扇</span>
             <span className={motorOn ? "text-blue-600" : "text-gray-400"}>{motorOn ? "ON" : "OFF"}</span>
           </button>
+          <button
+            onClick={() => setManageOpen(true)}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border bg-white border-gray-200 text-gray-600 hover:border-green-300 hover:text-green-700 transition-all"
+            title="新增或删除大棚"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span className="font-semibold">管理大棚</span>
+            <span className="text-gray-400">({ghList.length}/{MAX_GREENHOUSES})</span>
+          </button>
         </div>
       </div>
 
@@ -901,12 +935,197 @@ export function RealtimeMonitor() {
             crop: GREENHOUSE_CROPS[gh] ?? "番茄",
             ledOn: isOnline ? ledOn : vs.led,
             motorOn: isOnline ? motorOn : vs.motor,
+            waterOn: isOnline ? waterOn : vs.water,
             connectionMode: isOnline ? connectionMode : "offline",
             hasAlert: false,
           };
         })}
         onSelect={(name) => setFocusedGH(name)}
       />
+
+      {/* 管理大棚对话框 */}
+      {manageOpen && (
+        <ManageGreenhousesModal
+          list={ghList}
+          canAdd={canAdd}
+          onClose={() => setManageOpen(false)}
+          onAdd={addGreenhouse}
+          onRemove={removeGreenhouse}
+          onUpdateCrop={updateCrop}
+        />
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// 管理大棚对话框 — 新增/删除/改作物
+// ============================================================
+interface ManageModalProps {
+  list: { name: string; crop: string; locked: boolean }[];
+  canAdd: boolean;
+  onClose: () => void;
+  onAdd: (name: string, crop: string) => { ok: boolean; error?: string };
+  onRemove: (name: string) => { ok: boolean; error?: string };
+  onUpdateCrop: (name: string, crop: string) => { ok: boolean; error?: string };
+}
+
+function ManageGreenhousesModal({ list, canAdd, onClose, onAdd, onRemove, onUpdateCrop }: ManageModalProps) {
+  const [newName, setNewName] = useState("");
+  const [newCrop, setNewCrop] = useState<string>(CROP_OPTIONS[0]);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // 推测下一个可用编号, 方便用户快速填写
+  useEffect(() => {
+    const used = new Set(
+      list
+        .map((g) => {
+          const m = /^(\d+)号大棚$/.exec(g.name);
+          return m ? parseInt(m[1], 10) : null;
+        })
+        .filter((n): n is number => n != null),
+    );
+    let next = 1;
+    while (used.has(next)) next++;
+    setNewName(`${next}号大棚`);
+  }, [list.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!message) return;
+    const t = window.setTimeout(() => setMessage(null), 2500);
+    return () => clearTimeout(t);
+  }, [message]);
+
+  const handleAdd = () => {
+    const r = onAdd(newName, newCrop);
+    if (r.ok) {
+      setMessage({ type: "success", text: `已新增: ${newName.trim()}` });
+    } else {
+      setMessage({ type: "error", text: r.error ?? "新增失败" });
+    }
+  };
+
+  const handleRemove = (name: string) => {
+    if (!window.confirm(`确定删除 "${name}" 吗? 此操作不可恢复.`)) return;
+    const r = onRemove(name);
+    if (r.ok) setMessage({ type: "success", text: `已删除: ${name}` });
+    else setMessage({ type: "error", text: r.error ?? "删除失败" });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-xl max-h-[85vh] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-5 py-3 border-b border-gray-200 flex items-center justify-between">
+          <div>
+            <h3 className="text-base font-bold text-gray-800">管理大棚</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              共 {list.length} / {MAX_GREENHOUSES} 个 · 1 号大棚绑定真实硬件不可删除
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Message */}
+        {message && (
+          <div
+            className={`mx-5 mt-3 px-3 py-2 rounded-lg text-xs ${
+              message.type === "success"
+                ? "bg-green-50 border border-green-300 text-green-700"
+                : "bg-red-50 border border-red-300 text-red-700"
+            }`}
+          >
+            {message.type === "success" ? "✓" : "✕"} {message.text}
+          </div>
+        )}
+
+        {/* Add form */}
+        <div className="px-5 py-3 bg-gray-50/60 border-b border-gray-200">
+          <div className="text-xs font-semibold text-gray-600 mb-2">新增大棚</div>
+          <div className="flex gap-2 flex-wrap">
+            <input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="大棚名称 (如: 7号大棚)"
+              maxLength={16}
+              className="flex-1 min-w-[160px] px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-green-400"
+            />
+            <select
+              value={newCrop}
+              onChange={(e) => setNewCrop(e.target.value)}
+              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-green-400 bg-white"
+            >
+              {CROP_OPTIONS.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={handleAdd}
+              disabled={!canAdd}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+            >
+              <Plus className="w-4 h-4" />
+              新增
+            </button>
+          </div>
+          {!canAdd && (
+            <p className="text-xs text-red-500 mt-2">已达上限 ({MAX_GREENHOUSES})，请先删除部分大棚</p>
+          )}
+        </div>
+
+        {/* List */}
+        <div className="flex-1 overflow-auto px-5 py-3">
+          <div className="text-xs font-semibold text-gray-600 mb-2">现有大棚</div>
+          <div className="space-y-2">
+            {list.map((g) => (
+              <div
+                key={g.name}
+                className="flex items-center gap-3 px-3 py-2 bg-white border border-gray-200 rounded-lg"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-gray-800">{g.name}</span>
+                    {g.locked && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 border border-blue-200">
+                        真实硬件
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <select
+                  value={g.crop}
+                  onChange={(e) => onUpdateCrop(g.name, e.target.value)}
+                  className="px-2 py-1 text-xs border border-gray-300 rounded-lg bg-white focus:outline-none focus:border-green-400"
+                >
+                  {CROP_OPTIONS.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => handleRemove(g.name)}
+                  disabled={g.locked}
+                  className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 disabled:text-gray-300 disabled:hover:bg-transparent disabled:cursor-not-allowed"
+                  title={g.locked ? "绑定真实硬件,不可删除" : "删除"}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

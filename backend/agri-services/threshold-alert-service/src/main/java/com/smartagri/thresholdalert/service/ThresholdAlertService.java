@@ -49,13 +49,14 @@ public class ThresholdAlertService {
 
     @PostConstruct
     public void initDefaultRules() {
-        // Keep one sample rule so the page has immediate behavior after startup.
+        // 默认规则保持禁用：避免启动后自动抢占 LED (会与用户手动/定时控制冲突,
+        // 造成"实时检测中灯光被自动关闭"的现象). 如需启用,由用户在前端打开.
         createRule(new ThresholdRuleRequest(
                 "69d75b1d7f2e6c302f654fea_20031104",
                 "temp",
                 "ABOVE",
                 30.0,
-                true
+                false
         ));
     }
 
@@ -126,7 +127,8 @@ public class ThresholdAlertService {
         if (removed == null) {
             throw new IllegalArgumentException("规则不存在: " + id);
         }
-        stopBlinkingForDeviceIfNoActiveRule(removed.deviceId());
+        // 规则删除时不再强制下发 LED OFF,避免覆盖用户当前开关状态.
+        blinkingLedState.remove(removed.deviceId());
     }
 
     public List<AlertRecordDto> listRecords() {
@@ -166,7 +168,10 @@ public class ThresholdAlertService {
             appendRecord(rule, currentValue);
         }
 
-        blinkLedsForBreachedDevices(breachedDevices);
+        // 注意: 不再通过下发 LIGHT_CONTROL 指令闪烁 LED.
+        // 该副作用会覆盖用户手动操作与定时规则,造成"设备自动关闭"的体感问题.
+        // 阈值告警仅以记录 + 前端高亮形式呈现.
+        // blinkLedsForBreachedDevices(breachedDevices);
     }
 
     private void validateRequest(ThresholdRuleRequest request) {

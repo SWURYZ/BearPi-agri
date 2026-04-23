@@ -18,6 +18,12 @@ interface Props {
   crop: string;
   ledOn: boolean;
   motorOn: boolean;
+  /**
+   * 虚拟浇水开关状态。真实硬件仅有一个 MOTOR_CONTROL,
+   * 但 3D 虚拟场景里风扇与水泵展示为两个独立的电机.
+   * 未传入时与 motorOn 保持一致（向后兼容）.
+   */
+  waterOn?: boolean;
 }
 
 // ============================================================
@@ -278,7 +284,8 @@ function DataPanel({ sv, frameColor }: { sv: Partial<Record<SensorKey, number>>;
 // ============================================================
 // Main component
 // ============================================================
-export function GreenhouseDigitalTwin({ sensorValues: sv, connectionMode, crop, ledOn, motorOn }: Props) {
+export function GreenhouseDigitalTwin({ sensorValues: sv, connectionMode, crop, ledOn, motorOn, waterOn }: Props) {
+  const pumpOn = waterOn ?? motorOn; // 未传入单独的水泵开关时,默认跟随风扇状态
   const [, setTick] = useState(0);
   useEffect(() => {
     const id = window.setInterval(() => setTick(t => t + 1), 1000);
@@ -314,6 +321,7 @@ export function GreenhouseDigitalTwin({ sensorValues: sv, connectionMode, crop, 
   const alertText = "\u26a0 \u73af\u5883\u5f02\u5e38"; // ⚠ 环境异常
   const ledLabel  = "\u8865\u5149\u706f";  // 补光灯
   const fanLabel  = "\u98ce\u673a";        // 风机
+  const pumpLabel = "\u6c34\u6cf5";        // 水泵
 
   const connClass = connectionMode === "live"
     ? "bg-green-900/50 text-green-300 border-green-700"
@@ -350,6 +358,12 @@ export function GreenhouseDigitalTwin({ sensorValues: sv, connectionMode, crop, 
                     : "bg-gray-800/80 border-gray-600 text-gray-500"}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${motorOn ? "bg-blue-400" : "bg-gray-600"}`} />
             {fanLabel}
+          </span>
+          <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${
+            pumpOn ? "bg-cyan-900/50 border-cyan-600 text-cyan-300"
+                   : "bg-gray-800/80 border-gray-600 text-gray-500"}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${pumpOn ? "bg-cyan-400" : "bg-gray-600"}`} />
+            {pumpLabel}
           </span>
           {hasAlert && (
             <span className="bg-red-900/70 border border-red-500 text-red-300 text-xs px-3 py-0.5 rounded-full animate-pulse">
@@ -476,10 +490,12 @@ export function GreenhouseDigitalTwin({ sensorValues: sv, connectionMode, crop, 
         {/* Control box */}
         <rect x="450" y="250" width="32" height="22" rx="2"
           fill="rgba(10,20,35,0.90)" stroke={frameColor} strokeWidth="0.8" opacity="0.7" />
-        <rect x="454" y="254" width="8" height="5" rx="1"
+        <rect x="454" y="254" width="6" height="5" rx="1"
           fill={ledOn ? "#fef08a" : "#1a2535"} opacity="0.9" />
-        <rect x="465" y="254" width="8" height="5" rx="1"
+        <rect x="462" y="254" width="6" height="5" rx="1"
           fill={motorOn ? "#60a5fa" : "#1a2535"} opacity="0.9" />
+        <rect x="470" y="254" width="6" height="5" rx="1"
+          fill={pumpOn ? "#22d3ee" : "#1a2535"} opacity="0.9" />
         <rect x="454" y="263" width="19" height="2" rx="0.5" fill={frameColor} opacity="0.3" />
 
         {/* Fan */}
@@ -501,6 +517,60 @@ export function GreenhouseDigitalTwin({ sensorValues: sv, connectionMode, crop, 
           <circle cx="488" cy="294" r="3.5" fill="#22c55e">
             <animate attributeName="opacity" values="1;0.25;1" dur="1.1s" repeatCount="indefinite" />
           </circle>
+        )}
+
+        {/* 虚拟水泵电机 — 位于左侧地面, 独立于风扇的第二个虚拟电机 */}
+        {/* 水管 (从地面延伸到各种植单床) */}
+        <g opacity={pumpOn ? 0.9 : 0.55}>
+          <line x1="186" y1="360" x2="186" y2="395" stroke="#1e3a5f" strokeWidth="2.2" />
+          <line x1="186" y1="395" x2="430" y2="395" stroke="#1e3a5f" strokeWidth="1.8" />
+          {[170, 220, 270, 320, 370].map(dx => (
+            <circle key={dx} cx={dx + 30} cy="395" r="1.4" fill={pumpOn ? "#22d3ee" : "#334155"} opacity={pumpOn ? 0.9 : 0.5} />
+          ))}
+        </g>
+        {/* 水泵主体 (圆旋转叶片) */}
+        <g transform="translate(186,355)">
+          <circle cx="0" cy="0" r="16" fill="rgba(8,22,38,0.95)"
+            stroke={pumpOn ? "#22d3ee" : frameColor} strokeWidth="1.3"
+            opacity={pumpOn ? 0.95 : 0.7} />
+          {/* 水泵叶轮 (4 片, 与风扇 3 片区分) */}
+          <g>
+            <animateTransform attributeName="transform" type="rotate"
+              from="0 0 0" to="-360 0 0"
+              dur={pumpOn ? "0.45s" : "6s"} repeatCount="indefinite" />
+            {[0, 90, 180, 270].map((angle, i) => (
+              <path key={i}
+                d="M 0 -2 Q 3 -5 0 -10 Q -3 -5 0 -2 Z"
+                fill={pumpOn ? "#22d3ee" : "#2a3f55"}
+                opacity="0.92"
+                transform={`rotate(${angle})`} />
+            ))}
+          </g>
+          <circle cx="0" cy="0" r="2.4" fill="#94a3b8" />
+          {/* 进水口 (向上) */}
+          <rect x="-3" y="-22" width="6" height="8" rx="1"
+            fill="rgba(8,22,38,0.9)" stroke={pumpOn ? "#22d3ee" : frameColor} strokeWidth="0.7" />
+          {/* 出水口 (向右接水管) */}
+          <rect x="10" y="-3" width="8" height="6" rx="1"
+            fill="rgba(8,22,38,0.9)" stroke={pumpOn ? "#22d3ee" : frameColor} strokeWidth="0.7" />
+        </g>
+        {/* 水泵运行时的水滴动画 */}
+        {pumpOn && (
+          <>
+            {[200, 250, 310, 360, 405].map((x, i) => (
+              <circle key={i} cx={x} cy="395" r="1.6" fill="#7dd3fc" opacity="0.85">
+                <animate attributeName="cy" values="395;402;395" dur={`${0.8 + i * 0.12}s`} repeatCount="indefinite" />
+                <animate attributeName="opacity" values="0.9;0.2;0.9" dur={`${0.8 + i * 0.12}s`} repeatCount="indefinite" />
+              </circle>
+            ))}
+            <circle cx="186" cy="360" r="4" fill="none" stroke="#22d3ee" strokeWidth="1" opacity="0.75">
+              <animate attributeName="r" values="4;20;4" dur="1.6s" repeatCount="indefinite" />
+              <animate attributeName="opacity" values="0.75;0;0.75" dur="1.6s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="176" cy="352" r="2.8" fill="#22c55e">
+              <animate attributeName="opacity" values="1;0.25;1" dur="1.1s" repeatCount="indefinite" />
+            </circle>
+          </>
         )}
 
         {/* Front arch */}

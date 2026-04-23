@@ -28,6 +28,8 @@ export interface FarmGreenhouse {
   crop: string;
   ledOn: boolean;
   motorOn: boolean;
+  /** 虚拟浇水开关，未传入时默认跟随 motorOn */
+  waterOn?: boolean;
   connectionMode: ConnMode;
   hasAlert?: boolean;
 }
@@ -232,10 +234,16 @@ function MiniGreenhouse({
 
   const fanRef = useRef<THREE.Group>(null);
   const speedRef = useRef(0);
+  const pumpRef = useRef<THREE.Group>(null);
+  const pumpSpeedRef = useRef(0);
+  const pumpOn = data.waterOn ?? data.motorOn;
   useFrame((_, delta) => {
     const target = data.motorOn ? 8 : 0;
     speedRef.current += (target - speedRef.current) * Math.min(1, delta * 4);
     if (fanRef.current) fanRef.current.rotation.z += speedRef.current * delta;
+    const pumpTarget = pumpOn ? -12 : 0;
+    pumpSpeedRef.current += (pumpTarget - pumpSpeedRef.current) * Math.min(1, delta * 4);
+    if (pumpRef.current) pumpRef.current.rotation.y += pumpSpeedRef.current * delta;
   });
 
   const offline = data.connectionMode === "offline";
@@ -404,6 +412,70 @@ function MiniGreenhouse({
         )}
       </group>
 
+      {/* 虚拟水泵电机：前山墙另一侧 (与风扇独立，虚拟场景两个电机) */}
+      <group position={[-0.3, 0.14, W / 2 - 0.08]}>
+        {/* 水泵外壳 */}
+        <mesh castShadow>
+          <cylinderGeometry args={[0.09, 0.09, 0.1, 16]} />
+          <meshStandardMaterial
+            color={pumpOn ? "#0e7490" : "#1f2937"}
+            emissive={pumpOn ? "#22d3ee" : "#000000"}
+            emissiveIntensity={pumpOn ? 0.5 : 0}
+            metalness={0.6}
+            roughness={0.4}
+          />
+        </mesh>
+        {/* 水泵顶盖 */}
+        <mesh position={[0, 0.055, 0]}>
+          <cylinderGeometry args={[0.075, 0.075, 0.015, 16]} />
+          <meshStandardMaterial color="#0f172a" metalness={0.7} />
+        </mesh>
+        {/* 旋转叶轮 (在4片, 与风扇3片区分) */}
+        <group ref={pumpRef} position={[0, 0.02, 0]}>
+          {[0, 1, 2, 3].map((i) => (
+            <mesh key={i} rotation={[0, (i * Math.PI) / 2, 0]} position={[0, 0, 0]}>
+              <boxGeometry args={[0.14, 0.012, 0.03]} />
+              <meshStandardMaterial
+                color={pumpOn ? "#67e8f9" : "#475569"}
+                emissive={pumpOn ? "#22d3ee" : "#000000"}
+                emissiveIntensity={pumpOn ? 0.7 : 0}
+                toneMapped={false}
+              />
+            </mesh>
+          ))}
+          <mesh>
+            <cylinderGeometry args={[0.02, 0.02, 0.03, 12]} />
+            <meshStandardMaterial color="#0f172a" />
+          </mesh>
+        </group>
+        {/* 输出水管 (向后横铺) */}
+        <mesh position={[0.08, 0, -0.05]} rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.018, 0.018, 0.22, 10]} />
+          <meshStandardMaterial color={pumpOn ? "#22d3ee" : "#334155"} metalness={0.5} />
+        </mesh>
+        {/* 运行时的水滴 */}
+        {pumpOn && (
+          <>
+            {[0, 1, 2, 3, 4].map((i) => (
+              <mesh key={i} position={[0.18 - i * 0.08, -0.02, -0.05]}>
+                <sphereGeometry args={[0.018, 8, 8]} />
+                <meshBasicMaterial color="#7dd3fc" transparent opacity={0.85} toneMapped={false} />
+              </mesh>
+            ))}
+            {/* 运行指示灯 */}
+            <mesh position={[0, 0.12, 0]}>
+              <sphereGeometry args={[0.022, 8, 8]} />
+              <meshBasicMaterial color="#22d3ee" toneMapped={false} />
+            </mesh>
+            {/* 地面湿润茂 */}
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[-0.05, -0.1, -0.05]}>
+              <circleGeometry args={[0.25, 20]} />
+              <meshBasicMaterial color="#0ea5e9" transparent opacity={0.28} toneMapped={false} />
+            </mesh>
+          </>
+        )}
+      </group>
+
       {/* 顶部 HTML 标签 */}
       <Html
         position={[0, R + 0.45, 0]}
@@ -437,6 +509,9 @@ function MiniGreenhouse({
           )}
           {data.motorOn && (
             <span style={{ color: "#60a5fa", textShadow: "0 0 4px #60a5fa" }}>❇</span>
+          )}
+          {pumpOn && (
+            <span style={{ color: "#22d3ee", textShadow: "0 0 4px #22d3ee" }}>☁</span>
           )}
         </div>
       </Html>
@@ -749,16 +824,26 @@ function FarmScene({
   setHoveredName: (n: string | null) => void;
   onSelect: (name: string) => void;
 }) {
-  // 2×3 layout: cols(z): -1.45, 2.55 ; rows(x): -3.5, 0, 3.5
-  // 整体向前(+z) 平移 R≈0.55,让大棚在画面中下移
-  const layout: [number, number][] = [
-    [-3.5, -1.45],
-    [0, -1.45],
-    [3.5, -1.45],
-    [-3.5, 2.55],
-    [0, 2.55],
-    [3.5, 2.55],
-  ];
+  // 按大棚数量自适应布局 (2 行, 列数随数量扩展; 1 列居中, 2 列水平相邻)
+  // 与原 2×3 硬编码保持一致: [-3.5, 0, 3.5] x [-1.45, 2.55]
+  const layout = useMemo<[number, number][]>(() => {
+    const n = greenhouses.length;
+    if (n === 0) return [];
+    // 最大单行列数保持在 6 个左右, 超出进入第 2 行
+    const cols = Math.min(6, Math.max(1, Math.ceil(n / 2)));
+    const rows = Math.ceil(n / cols);
+    const xSpacing = 3.5;
+    const zRows = rows === 1 ? [0] : [-1.45, 2.55];
+    const positions: [number, number][] = [];
+    for (let i = 0; i < n; i++) {
+      const r = Math.floor(i / cols);
+      const c = i % cols;
+      const x = (c - (cols - 1) / 2) * xSpacing;
+      const z = zRows[Math.min(r, zRows.length - 1)];
+      positions.push([x, z]);
+    }
+    return positions;
+  }, [greenhouses.length]);
 
   return (
     <>

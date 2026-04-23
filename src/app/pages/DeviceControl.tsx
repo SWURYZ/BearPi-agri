@@ -80,7 +80,13 @@ export function DeviceControl() {
         setDevices([]);
         return;
       }
-      const preferred = rows.find((r) => r.deviceId === targetDeviceId) ?? rows[0];
+      // 默认排除 MOBILE_SCANNER (手机扫码设备),它们不能执行 LIGHT/MOTOR 控制指令.
+      // 若保留选中的 targetDeviceId 在列表内则沿用,否则选第一个硬件设备.
+      const isHardware = (r: DeviceMappingResponse) =>
+        !r.deviceType || r.deviceType.toUpperCase() !== "MOBILE_SCANNER";
+      const hardware = rows.filter(isHardware);
+      const pool = hardware.length > 0 ? hardware : rows;
+      const preferred = pool.find((r) => r.deviceId === targetDeviceId) ?? pool[0];
       setTargetDeviceId(preferred.deviceId);
       setTargetGreenhouse(preferred.greenhouseCode || "未绑定大棚");
       setDevices(buildControlDevices(preferred.deviceId, preferred.greenhouseCode || "未绑定大棚"));
