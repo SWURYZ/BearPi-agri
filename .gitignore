@@ -41,3 +41,12 @@ backend/pest-recognition-service/latest.json
 backend/pest-recognition-service/uploads/
 
 backend/build*.log
+
+# 微服务运行日志
+backend/**/*.out.log
+backend/**/*.err.log
+backend/**/*.trace.log
+backend/**/*-test.log
+backend/**/*-e2e.log
+backend/**/*-final.log
+backend/**/*-verify.log

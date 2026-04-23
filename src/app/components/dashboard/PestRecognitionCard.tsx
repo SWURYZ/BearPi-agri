@@ -42,15 +42,19 @@ function triggerYayaStop() {
 export function PestRecognitionCard() {
   const [mobileUrl] = useState(() => {
     // 手机端二维码 / NFC 直接进入 React 主站的「害虫识别」页面
-    // 优先用 VITE_PEST_HOST 环境变量指定的 IP；否则若浏览器在 localhost
-    // 则回退到固定局域网 IP；否则沿用当前 hostname
-    const envIp = (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_PEST_HOST;
-    if (envIp) return `http://${envIp}:5173/insect`;
-    const host = window.location.hostname || "localhost";
-    if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0") {
-      return "http://10.157.218.245:5173/insect";
+    // 优先使用 VITE_PEST_HOST（可含 host:port 或域名），否则沿用当前 hostname
+    // 生产部署到公网时，建议在 .env 中配置 VITE_PEST_HOST=yourdomain.com
+    const rawEnv = (import.meta as unknown as { env?: Record<string, string> }).env;
+    const envHost = rawEnv?.VITE_PEST_HOST;
+    const { protocol, hostname, port } = window.location;
+    if (envHost) {
+      // 允许传入 host 或 host:port 或完整 URL
+      if (envHost.startsWith("http")) return `${envHost.replace(/\/$/, "")}/insect`;
+      return `${protocol}//${envHost}/insect`;
     }
-    return `http://${host}:5173/insect`;
+    const host = hostname || "localhost";
+    const suffix = port ? `:${port}` : "";
+    return `${protocol}//${host}${suffix}/insect`;
   });
 
   const [latest, setLatest] = useState<InsectLatestResult | null>(null);

@@ -33,11 +33,16 @@ Default model paths:
 - models/best.pt
 - models/yolo11s.pt
 
-You can override them with environment variables:
+You can override them with environment variables (use paths relative to this service directory, or absolute paths if needed):
 
 ```bash
-set MODEL_PATH=D:\path\to\best.pt
-set DETECTOR_MODEL_PATH=D:\path\to\yolo11s.pt
+# Windows (cmd)
+set MODEL_PATH=models\best.pt
+set DETECTOR_MODEL_PATH=models\yolo11s.pt
+
+# Linux / macOS
+export MODEL_PATH=models/best.pt
+export DETECTOR_MODEL_PATH=models/yolo11s.pt
 ```
 
 ## 4) Run
