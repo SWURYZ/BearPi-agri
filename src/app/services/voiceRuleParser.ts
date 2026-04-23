@@ -11,16 +11,22 @@
 
 import {
   createScheduleRule,
+  fetchScheduleRules,
+  deleteScheduleRule,
   type ScheduleRuleRequest,
   type ScheduleRuleResponse,
 } from "./deviceControl";
 import {
   createCompositeRule,
+  fetchCompositeRules,
+  deleteCompositeRule,
   type CompositeRuleRequest,
   type CompositeRuleResponse,
 } from "./compositeCondition";
 import {
   createThresholdRule,
+  fetchThresholdRules,
+  deleteThresholdRule,
   type ThresholdRuleRequest,
   type ThresholdRule,
 } from "./thresholdAlert";
@@ -33,6 +39,8 @@ export interface ParsedSchedule {
   turnOnTime: string;   // HH:mm
   turnOffTime: string;  // HH:mm
   commandType: "LIGHT_CONTROL" | "MOTOR_CONTROL";
+  /** 若为 true,表示用户想"取消/删除"该时间段的定时规则而非新增 */
+  cancel?: boolean;
 }
 
 export interface ParsedCondition {
@@ -46,12 +54,16 @@ export interface ParsedLinkage {
   logicOperator: "AND" | "OR";
   commandType: "LIGHT_CONTROL" | "MOTOR_CONTROL";
   commandAction: "ON" | "OFF";
+  /** 取消匹配联动规则 */
+  cancel?: boolean;
 }
 
 export interface ParsedThreshold {
   metric: "temperature" | "humidity" | "luminance";
   operator: "ABOVE" | "BELOW";
   threshold: number;
+  /** 取消匹配阈值告警 */
+  cancel?: boolean;
 }
 
 export interface VoiceRuleResult {
@@ -164,7 +176,11 @@ function matchAction(text: string): "ON" | "OFF" {
   // ON: very broad — any mention of opening/starting/enabling
   return "ON";
 }
-
+// ── Cancel/delete intent for existing rules ──
+const CANCEL_VERB_RE = /(取消|删除|移除|去掉|废除|拆了|拆除|不要(了)?|别要(了)?|干掉)/;
+function detectCancelVerb(text: string): boolean {
+  return CANCEL_VERB_RE.test(text);
+}
 // ─── Sensor metric matching ─────────────────────────────────────────────────
 
 type SensorMetric = "temperature" | "humidity" | "luminance";
@@ -218,7 +234,13 @@ function matchConditionOp(text: string): { cond: CondOp; thresh: ThreshOp } {
  */
 export function isRuleCreationIntent(text: string): boolean {
   const t = text.replace(/\s+/g, "");
-
+  // ── 0. Explicit cancel/delete on rules — always treat as rule operation
+  //    例："取消下午2点到4点的补光灯"，"删除温度告警"，"不要联动了"
+  if (CANCEL_VERB_RE.test(t)) {
+    if (/(规则|定时|联动|告警|报警|阈值|自动|计划|安排|提醒|预警)/.test(t)) return true;
+    if (TIME_RANGE_RE.test(t) || TIME_RE.test(t)) return true;
+    if (matchDevice(t) || matchMetric(t)) return true;
+  }
   // ── 1. Explicit rule-setting verbs（显式设规则意图）
   if (/(设定|设置|新增|添加|创建|配置|制定|建立|弄一?个|搞一?个|加一?个|来一?个|整一?个|帮我|给我).*(规则|定时|联动|告警|报警|自动|计划|安排)/.test(t)) return true;
 
@@ -287,11 +309,19 @@ export function parseRuleLocally(text: string): VoiceRuleResult | null {
       const endTime = parseTimeExpr(timeMatch[4] || timeMatch[1], timeMatch[5], timeMatch[6]);
       if (startTime && endTime) {
         const deviceLabel = device === "LIGHT_CONTROL" ? "补光灯" : "风机";
+        const isCancel = matchAction(t) === "OFF";
         return {
           ruleType: "SCHEDULE",
           ruleName: `语音定时-${deviceLabel}(${startTime}~${endTime})`,
-          schedule: { turnOnTime: startTime, turnOffTime: endTime, commandType: device },
-          explanation: `${startTime}到${endTime}${matchAction(t) === "ON" ? "开启" : "关闭"}${deviceLabel}`,
+          schedule: {
+            turnOnTime: startTime,
+            turnOffTime: endTime,
+            commandType: device,
+            cancel: isCancel,
+          },
+          explanation: isCancel
+            ? `取消${startTime}到${endTime}的${deviceLabel}定时规则`
+            : `${startTime}到${endTime}开启${deviceLabel}`,
         };
       }
     }
@@ -305,13 +335,28 @@ export function parseRuleLocally(text: string): VoiceRuleResult | null {
     if (value != null) {
       const metricLabel = metric === "temperature" ? "温度" : metric === "humidity" ? "湿度" : "光照";
       const opLabel = op.thresh === "ABOVE" ? "高于" : "低于";
+      const isCancel = detectCancelVerb(t);
       return {
         ruleType: "THRESHOLD",
         ruleName: `语音告警-${metricLabel}${opLabel}${value}`,
-        threshold: { metric, operator: op.thresh, threshold: value },
-        explanation: `当${metricLabel}${opLabel}${value}时触发告警`,
+        threshold: { metric, operator: op.thresh, threshold: value, cancel: isCancel },
+        explanation: isCancel
+          ? `取消“${metricLabel}${opLabel}${value}时告警”的阈值规则`
+          : `当${metricLabel}${opLabel}${value}时触发告警`,
       };
     }
+  }
+  // 2b. Cancel 阈值告警 — 只要“取消温度告警”，无需具体阈值
+  if (metric && detectCancelVerb(t) && /(告警|报警|预警|提醒|通知|阈值)/.test(t)) {
+    const op = matchConditionOp(t);
+    const value = extractThresholdValue(t);
+    const metricLabel = metric === "temperature" ? "温度" : metric === "humidity" ? "湿度" : "光照";
+    return {
+      ruleType: "THRESHOLD",
+      ruleName: `语音取消告警-${metricLabel}`,
+      threshold: { metric, operator: op.thresh, threshold: value ?? 0, cancel: true },
+      explanation: `取消${metricLabel}告警规则`,
+    };
   }
 
   // ── 3. Linkage rule: sensor + condition + device action ──
@@ -326,6 +371,7 @@ export function parseRuleLocally(text: string): VoiceRuleResult | null {
         const opLabel = op.cond === "GT" ? "超过" : op.cond === "LT" ? "低于" : op.cond === "GTE" ? "达到" : "不超过";
         const deviceLabel = device === "LIGHT_CONTROL" ? "补光灯" : "风机";
         const actionLabel = action === "ON" ? "开启" : "关闭";
+        const isCancel = detectCancelVerb(t);
         return {
           ruleType: "LINKAGE",
           ruleName: `语音联动-${metricLabel}${opLabel}${value}${actionLabel}${deviceLabel}`,
@@ -334,8 +380,11 @@ export function parseRuleLocally(text: string): VoiceRuleResult | null {
             logicOperator: "AND",
             commandType: device,
             commandAction: action,
+            cancel: isCancel,
           },
-          explanation: `当${metricLabel}${opLabel}${value}时${actionLabel}${deviceLabel}`,
+          explanation: isCancel
+            ? `取消“${metricLabel}${opLabel}${value}${actionLabel}${deviceLabel}”的联动规则`
+            : `当${metricLabel}${opLabel}${value}时${actionLabel}${deviceLabel}`,
         };
       }
     }
@@ -378,6 +427,37 @@ export async function dispatchRuleCreation(
   switch (parsed.ruleType) {
     case "SCHEDULE": {
       if (!parsed.schedule) throw new Error("缺少定时规则参数");
+      // ── 取消/删除路径: 用户说"关闭X点到Y点的灯" → 找到匹配的规则并删除
+      if (parsed.schedule.cancel) {
+        const all = await fetchScheduleRules();
+        const want = parsed.schedule;
+        // 主键:同一 deviceId 上同一开关时间段。commandType 老数据可能为空,做宽松匹配
+        const target = all.find(
+          (r) =>
+            r.deviceId === deviceId &&
+            r.turnOnTime.slice(0, 5) === want.turnOnTime &&
+            r.turnOffTime.slice(0, 5) === want.turnOffTime &&
+            (!r.commandType || r.commandType === want.commandType),
+        );
+        if (!target) {
+          // 二次兜底:不要求时间完全一致,按 commandType 匹配最近的一条
+          const fallback = all.find(
+            (r) => r.deviceId === deviceId && (r.commandType ?? "LIGHT_CONTROL") === want.commandType,
+          );
+          if (!fallback) {
+            throw new Error(`未找到 ${want.turnOnTime}~${want.turnOffTime} 的定时规则,无需取消`);
+          }
+          await deleteScheduleRule(fallback.id);
+          return { ruleType: "SCHEDULE", rule: fallback, explanation: parsed.explanation };
+        }
+        await deleteScheduleRule(target.id);
+        return {
+          ruleType: "SCHEDULE",
+          rule: target,
+          explanation: parsed.explanation,
+        };
+      }
+      // ── 新建路径
       const req: ScheduleRuleRequest = {
         deviceId,
         ruleName: parsed.ruleName,
@@ -392,6 +472,28 @@ export async function dispatchRuleCreation(
 
     case "LINKAGE": {
       if (!parsed.linkage) throw new Error("缺少联动规则参数");
+      // ── 取消路径
+      if (parsed.linkage.cancel) {
+        const all = await fetchCompositeRules();
+        const want = parsed.linkage;
+        const target = all.find((r) => {
+          if (r.commandType !== want.commandType) return false;
+          if (r.commandAction !== want.commandAction) return false;
+          if (r.targetDeviceId !== deviceId) return false;
+          // 匹配主条件
+          const cond = want.conditions[0];
+          return r.conditions.some(
+            (c) =>
+              c.sensorMetric === cond.sensorMetric &&
+              c.operator === cond.operator &&
+              Number(c.threshold) === Number(cond.threshold),
+          );
+        });
+        if (!target) throw new Error(`未找到匹配的联动规则，无需取消`);
+        await deleteCompositeRule(target.id);
+        return { ruleType: "LINKAGE", rule: target, explanation: parsed.explanation };
+      }
+      // ── 新建路径
       const req: CompositeRuleRequest = {
         name: parsed.ruleName,
         description: `语音创建: ${parsed.explanation}`,
@@ -413,6 +515,23 @@ export async function dispatchRuleCreation(
 
     case "THRESHOLD": {
       if (!parsed.threshold) throw new Error("缺少阈值告警参数");
+      // ── 取消路径
+      if (parsed.threshold.cancel) {
+        const all = await fetchThresholdRules();
+        const want = parsed.threshold;
+        // 如果指定了阈值，精准匹配；否则匹配 metric+该 deviceId 的任一告警
+        const target = all.find((r) =>
+          r.deviceId === deviceId &&
+          r.metric === want.metric &&
+          (want.threshold === 0 ||
+            (r.operator === want.operator &&
+              Number(r.threshold) === Number(want.threshold))),
+        );
+        if (!target) throw new Error(`未找到匹配的告警规则，无需取消`);
+        await deleteThresholdRule(target.id);
+        return { ruleType: "THRESHOLD", rule: target, explanation: parsed.explanation };
+      }
+      // ── 新建路径
       const req: ThresholdRuleRequest = {
         deviceId,
         metric: parsed.threshold.metric,
@@ -449,6 +568,128 @@ export async function parseAndCreateRule(
     }
   }
 
+  // 2.5 兜底注入 cancel 意图——无论本地还是 LLM 路径,只要原话出现了取消动词
+  //    或对定时规则说"关闭/关掉",就强制走删除分支,避免重复创建报错。
+  const t = voiceText.replace(/\s+/g, "");
+  const cancelByVerb = detectCancelVerb(t);
+  const cancelByOff = matchAction(t) === "OFF"; // 仅对 SCHEDULE 有效
+  if (parsed.ruleType === "SCHEDULE" && parsed.schedule) {
+    if (cancelByVerb || cancelByOff) {
+      parsed.schedule.cancel = true;
+      if (!/^取消/.test(parsed.explanation)) {
+        parsed.explanation = `取消${parsed.schedule.turnOnTime}到${parsed.schedule.turnOffTime}的${
+          parsed.schedule.commandType === "LIGHT_CONTROL" ? "补光灯" : "风机"
+        }定时规则`;
+      }
+    }
+  } else if (parsed.ruleType === "LINKAGE" && parsed.linkage && cancelByVerb) {
+    parsed.linkage.cancel = true;
+    if (!/^取消/.test(parsed.explanation)) parsed.explanation = `取消${parsed.explanation}`;
+  } else if (parsed.ruleType === "THRESHOLD" && parsed.threshold && cancelByVerb) {
+    parsed.threshold.cancel = true;
+    if (!/^取消/.test(parsed.explanation)) parsed.explanation = `取消${parsed.explanation}`;
+  }
+
   // 3. Dispatch to the appropriate service
   return dispatchRuleCreation(parsed, deviceId);
+}
+
+// ─── Rule query intent (列出规则) ────────────────────────────────────────────
+
+export type RuleQueryKind = "ALL" | "SCHEDULE" | "LINKAGE" | "THRESHOLD";
+
+/** 检测"有哪些规则/查看告警"等查询意图,并返回想查询的种类 */
+export function parseRuleQueryIntent(text: string): RuleQueryKind | null {
+  const t = text.replace(/\s+/g, "");
+  // 必须包含查询动词
+  const hasQueryVerb = /(查看|看看|看一下|有哪些|有什么|有几个|多少个|列出|列表|查询|有多少|展示|显示|看下)/.test(t);
+  if (!hasQueryVerb) return null;
+
+  // 必须涉及规则
+  const hasRuleNoun = /(规则|定时|联动|告警|报警|预警|阈值|计划|安排|自动化)/.test(t);
+  if (!hasRuleNoun) return null;
+
+  if (/定时|计划|安排/.test(t)) return "SCHEDULE";
+  if (/联动|自动化/.test(t)) return "LINKAGE";
+  if (/告警|报警|预警|阈值/.test(t)) return "THRESHOLD";
+  return "ALL";
+}
+
+export interface RuleQueryResult {
+  kind: RuleQueryKind;
+  schedules: ScheduleRuleResponse[];
+  linkages: CompositeRuleResponse[];
+  thresholds: ThresholdRule[];
+  /** 给用户朗读/展示的中文摘要 */
+  summary: string;
+}
+
+/** 调用后端 fetch 各类规则,生成中文摘要 */
+export async function fetchRulesSummary(
+  kind: RuleQueryKind,
+  deviceId: string,
+): Promise<RuleQueryResult> {
+  const wantSch = kind === "ALL" || kind === "SCHEDULE";
+  const wantLnk = kind === "ALL" || kind === "LINKAGE";
+  const wantThr = kind === "ALL" || kind === "THRESHOLD";
+
+  const [schedules, linkages, thresholds] = await Promise.all([
+    wantSch ? fetchScheduleRules().catch(() => []) : Promise.resolve([] as ScheduleRuleResponse[]),
+    wantLnk ? fetchCompositeRules().catch(() => []) : Promise.resolve([] as CompositeRuleResponse[]),
+    wantThr ? fetchThresholdRules().catch(() => []) : Promise.resolve([] as ThresholdRule[]),
+  ]);
+
+  const mySch = schedules.filter((r) => r.deviceId === deviceId);
+  const myLnk = linkages.filter((r) => r.targetDeviceId === deviceId);
+  const myThr = thresholds.filter((r) => r.deviceId === deviceId);
+
+  const lines: string[] = [];
+  if (wantSch) {
+    if (mySch.length === 0) lines.push("没有定时规则");
+    else {
+      lines.push(`定时规则 ${mySch.length} 条:`);
+      mySch.slice(0, 5).forEach((r) => {
+        const dev = (r.commandType ?? "LIGHT_CONTROL") === "LIGHT_CONTROL" ? "补光灯" : "风机";
+        lines.push(`· ${dev} ${r.turnOnTime.slice(0, 5)}~${r.turnOffTime.slice(0, 5)}${r.enabled ? "" : " (已停用)"}`);
+      });
+      if (mySch.length > 5) lines.push(`...还有 ${mySch.length - 5} 条`);
+    }
+  }
+  if (wantLnk) {
+    if (myLnk.length === 0) lines.push("没有联动规则");
+    else {
+      lines.push(`联动规则 ${myLnk.length} 条:`);
+      myLnk.slice(0, 5).forEach((r) => {
+        const cond = r.conditions[0];
+        const metric = cond?.sensorMetric === "temperature" ? "温度"
+          : cond?.sensorMetric === "humidity" ? "湿度" : "光照";
+        const opLabel = cond?.operator === "GT" ? "超过" : cond?.operator === "LT" ? "低于" : cond?.operator;
+        const dev = r.commandType === "LIGHT_CONTROL" ? "补光灯" : "风机";
+        const act = r.commandAction === "ON" ? "开启" : "关闭";
+        lines.push(`· ${metric}${opLabel}${cond?.threshold} → ${act}${dev}${r.enabled ? "" : " (已停用)"}`);
+      });
+      if (myLnk.length > 5) lines.push(`...还有 ${myLnk.length - 5} 条`);
+    }
+  }
+  if (wantThr) {
+    if (myThr.length === 0) lines.push("没有阈值告警规则");
+    else {
+      lines.push(`告警规则 ${myThr.length} 条:`);
+      myThr.slice(0, 5).forEach((r) => {
+        const metric = r.metric === "temperature" ? "温度"
+          : r.metric === "humidity" ? "湿度" : "光照";
+        const opLabel = r.operator === "ABOVE" ? "高于" : "低于";
+        lines.push(`· ${metric}${opLabel}${r.threshold}${r.enabled ? "" : " (已停用)"}`);
+      });
+      if (myThr.length > 5) lines.push(`...还有 ${myThr.length - 5} 条`);
+    }
+  }
+
+  return {
+    kind,
+    schedules: mySch,
+    linkages: myLnk,
+    thresholds: myThr,
+    summary: lines.join("\n") || "暂无规则",
+  };
 }

@@ -4,7 +4,7 @@ import { useNavigate } from "react-router";
 import { executeDecision, type SensorSnapshot } from "../services/smartDecision";
 import { streamAgriAgentChat } from "../services/agriAgent";
 import { sendManualControl } from "../services/deviceControl";
-import { isRuleCreationIntent, parseAndCreateRule } from "../services/voiceRuleParser";
+import { isRuleCreationIntent, parseAndCreateRule, parseRuleQueryIntent, fetchRulesSummary } from "../services/voiceRuleParser";
 
 type VoiceState = "idle" | "listening" | "thinking" | "speaking";
 
@@ -761,6 +761,21 @@ export function SmartDecision() {
   const [aiText,   setAiText]   = useState("");
   const [normalizedHint, setNormalizedHint] = useState<string | null>(null);
   const [supported, setSupported] = useState(true);
+  /** 芽芽的思考过程 — 逐步推入每一步推理，让用户看到 AI 的思路链 */
+  const [thoughts, setThoughts] = useState<
+    Array<{ id: number; label: string; detail?: string; kind: "step" | "result" }>
+  >([]);
+  const thoughtIdRef = useRef(0);
+  const pushThought = useCallback(
+    (label: string, detail?: string, kind: "step" | "result" = "step") => {
+      thoughtIdRef.current += 1;
+      setThoughts((prev) => [
+        ...prev,
+        { id: thoughtIdRef.current, label, detail, kind },
+      ]);
+    },
+    [],
+  );
   const navigate = useNavigate();
 
   const vsRef       = useRef<VoiceState>("idle");
@@ -938,6 +953,7 @@ export function SmartDecision() {
     setUserText("");
     setAiText("");
     setNormalizedHint(null);
+    setThoughts([]);
     try { rec.start(); resetSilenceTimer(); } catch { go("idle"); }
   }, [go, navigate, speakText]);
 
@@ -946,13 +962,16 @@ export function SmartDecision() {
       setUserText(text);
       setAiText("");
       setNormalizedHint(null);
+      setThoughts([]);
       go("thinking");
+      pushThought("收到语音", `“${text}”`);
 
       // ── Semantic normalization: map vague speech to canonical intent ──
       const norm = normalizeIntent(text, lastTopicRef.current);
       const query = norm.text;          // use normalized text for all routing below
       if (norm.displayHint && norm.text !== text) {
         setNormalizedHint(norm.displayHint);
+        pushThought("语义规范化", norm.displayHint);
       }
 
       // DEBUG: log routing decision
@@ -965,6 +984,8 @@ export function SmartDecision() {
       // ── Voice navigation path: jump to requested page ──
       const nav = parseNavigationCommand(query);
       if (nav) {
+        pushThought("意图识别", "页面导航");
+        pushThought("跳转路由", `${nav.label} (${nav.to})`, "result");
         navigate(nav.to);
         const reply = `好的，已为你打开${nav.label}页面。`;
         setAiText(reply);
@@ -973,12 +994,40 @@ export function SmartDecision() {
         return;
       }
 
+      // ── Rule query path: "有哪些定时规则" / "看下告警规则" ──
+      const ruleQueryKind = parseRuleQueryIntent(query) ?? parseRuleQueryIntent(text);
+      if (ruleQueryKind) {
+        pushThought("意图识别", `规则查询 (${ruleQueryKind})`);
+        try {
+          const summary = await fetchRulesSummary(ruleQueryKind, deviceIdRef.current);
+          const total = summary.schedules.length + summary.linkages.length + summary.thresholds.length;
+          pushThought("拉取后端规则", `共 ${total} 条`, "result");
+          setAiText(summary.summary);
+          go("speaking");
+          // 语音只说总结,完整列表在字幕里
+          const speakLine = total === 0
+            ? "你还没有创建任何规则呢。"
+            : `一共有 ${total} 条规则，详情请看屏幕。`;
+          speakText(speakLine);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "未知错误";
+          pushThought("查询失败", msg, "result");
+          const reply = `抱歉，获取规则列表失败：${msg}`;
+          setAiText(reply);
+          go("speaking");
+          speakText(reply);
+        }
+        return;
+      }
+
       // ── Voice rule creation path (HIGHEST PRIORITY after nav) ──
       // 规则创建必须在设备控制之前判断，否则"打开下午2点到4点补光灯"会被误判为"立即开灯"
       if (isRuleCreationIntent(query) || isRuleCreationIntent(text)) {
+        pushThought("意图识别", "规则创建");
         try {
           // 优先用原始text（避免normalizeIntent把时间词丢了），回退用query
           const ruleInput = isRuleCreationIntent(text) ? text : query;
+          pushThought("解析并调用后端", "local parser → LLM fallback");
           const result = await parseAndCreateRule(ruleInput, deviceIdRef.current);
           const typeLabel =
             result.ruleType === "SCHEDULE" ? "定时规则" :
@@ -986,13 +1035,20 @@ export function SmartDecision() {
           const navTarget =
             result.ruleType === "SCHEDULE" ? "/control" :
             result.ruleType === "LINKAGE"  ? "/automation" : "/alerts";
-          const reply = `好的，已为你创建${typeLabel}：${result.explanation}。规则已启用，你可以在对应页面查看和管理。`;
+          // 区分"取消"和"创建"语境(parser 在 schedule 类型下会用"取消"开头表达取消意图)
+          const isCancel = /^取消/.test(result.explanation);
+          const verb = isCancel ? "取消" : "创建";
+          pushThought(`已${verb} ${typeLabel}`, result.explanation, "result");
+          const reply = isCancel
+            ? `好的，已为你${result.explanation}。`
+            : `好的，已为你创建${typeLabel}：${result.explanation}。规则已启用，你可以在对应页面查看和管理。`;
           setAiText(reply);
           go("speaking");
           setTimeout(() => navigate(navTarget), 1500);
           speakText(reply);
         } catch (err) {
           const msg = err instanceof Error ? err.message : "未知错误";
+          pushThought("规则创建失败", msg, "result");
           const reply = `抱歉，规则创建失败：${msg}。请再试一次或用更明确的表达。`;
           setAiText(reply);
           go("speaking");
@@ -1004,6 +1060,8 @@ export function SmartDecision() {
       // ── Device control path: immediate device on/off (no time range) ──
       const cmd = parseDeviceCommand(query);
       if (cmd) {
+        pushThought("意图识别", "设备控制");
+        pushThought("发送指令", `${cmd.label} → ${cmd.action}`);
         try {
           const result = await sendManualControl({
             deviceId: deviceIdRef.current,
@@ -1011,12 +1069,14 @@ export function SmartDecision() {
             action: cmd.action,
           });
           const actionText = cmd.action === "ON" ? "开启" : "关闭";
+          pushThought("云端响应", `status=${result.status}`, "result");
           const reply = `${cmd.label}${actionText}指令已发送。状态：${result.status}。`;
           setAiText(reply);
           go("speaking");
           speakText(reply);
         } catch (err) {
           const msg = err instanceof Error ? err.message : "未知错误";
+          pushThought("控制失败", msg, "result");
           const reply = `抱歉，${cmd.label}控制失败：${msg}`;
           setAiText(reply);
           go("speaking");
@@ -1028,6 +1088,7 @@ export function SmartDecision() {
       // ── Fast path: local quick reply for casual conversation ──
       const quick = quickReply(query);
       if (quick) {
+        pushThought("意图识别", "寒暄快捷回复", "result");
         setAiText(quick);
         go("speaking");
         speakText(quick);
@@ -1036,8 +1097,20 @@ export function SmartDecision() {
 
       // ── Sensor direct-read path (must come BEFORE !isAgriQuery so "多少度" etc. are caught) ──
       if (isSensorDataQuery(query)) {
+        pushThought("意图识别", "传感器直读");
         try {
+          pushThought("读取实时快照", "/api/v1/smart-decision/decide");
           const res = await executeDecision({ query, deviceId: deviceIdRef.current });
+          const snap = res.sensorSnapshot;
+          pushThought(
+            "传感器数据",
+            [
+              snap.temperature != null ? `温度 ${snap.temperature}°C` : null,
+              snap.humidity != null ? `湿度 ${snap.humidity}%` : null,
+              snap.luminance != null ? `光照 ${snap.luminance}lx` : null,
+            ].filter(Boolean).join(" · ") || "无数据",
+            "result",
+          );
           const answer = formatSensorDirectAnswer(res.sensorSnapshot);
           setAiText(answer);
           lastTopicRef.current = "SENSOR";
@@ -1045,6 +1118,7 @@ export function SmartDecision() {
           navigate("/");
           speakText(answer);
         } catch {
+          pushThought("读取失败", "后端服务异常", "result");
           const errMsg = "抱歉，获取传感器数据失败，请稍后再试。";
           setAiText(errMsg);
           go("speaking");
@@ -1055,6 +1129,8 @@ export function SmartDecision() {
 
       // ── Casual path: non-agri query → streaming LLM quick reply ──
       if (!isAgriQuery(query)) {
+        pushThought("意图识别", "闲聊 / 非农事问题");
+        pushThought("调用 Agri-Agent LLM", "流式回复");
         let accumulated = "";
         try {
           await streamAgriAgentChat(
@@ -1067,10 +1143,12 @@ export function SmartDecision() {
           );
           const reply = accumulated.trim() ||
             "我暂时还不太懂这个问题，但有农事问题尽管问我！";
+          pushThought("生成完成", `${reply.length} 字`, "result");
           setAiText(reply);
           go("speaking");
           speakText(reply);
         } catch {
+          pushThought("LLM 异常", "回退本地回复", "result");
           const fallback = "我暂时还不太懂这个问题，但灌溉、施肥、光照等农事问题我擅长！";
           setAiText(fallback);
           go("speaking");
@@ -1080,8 +1158,24 @@ export function SmartDecision() {
       }
 
       // ── Agri decision path: call backend smart decision, prefix with live sensor data ──
+      pushThought("意图识别", "农事智能决策");
+      pushThought("调用 LangGraph 工作流", "classify_intent → 场景节点");
       try {
         const res = await executeDecision({ query, deviceId: deviceIdRef.current });
+        const snap = res.sensorSnapshot;
+        const sensorLine = [
+          snap.temperature != null ? `温 ${snap.temperature}°C` : null,
+          snap.humidity != null ? `湿 ${snap.humidity}%` : null,
+          snap.luminance != null ? `光 ${snap.luminance}lx` : null,
+        ].filter(Boolean).join(" · ");
+        if (sensorLine) pushThought("传感器快照", sensorLine);
+        if (res.scenarioLabel) {
+          pushThought(
+            "场景命中",
+            `${res.scenarioLabel}${res.graphTrace ? ` · ${res.graphTrace}` : ""}`,
+            "result",
+          );
+        }
         const sensorPrefix = buildSensorSummary(res.sensorSnapshot);
         const enhanced = mergeDecisionWithAdvice(res.decision, res.sensorSnapshot);
         const fullReply = sensorPrefix ? `${sensorPrefix}\n\n${enhanced}` : enhanced;
@@ -1090,12 +1184,13 @@ export function SmartDecision() {
         go("speaking");
         speakText(fullReply);
       } catch {
+        pushThought("后端异常", "LangGraph 执行失败", "result");
         const errMsg = "抱歉，我遇到了一些问题，请稍后再试一次";
         setAiText(errMsg);
         go("speaking");
         speakText(errMsg);
       }
-  }, [go, navigate, speakText]);
+  }, [go, navigate, speakText, pushThought]);
 
   const handleMic = useCallback(() => {
     const state = vsRef.current;
@@ -1235,6 +1330,105 @@ export function SmartDecision() {
           </p>
         )}
       </div>
+
+      {/* 芽芽思考过程 — chain-of-thought 可视化 */}
+      {thoughts.length > 0 && vs !== "idle" && (
+        <div style={{
+          width: "min(560px, 92%)",
+          marginTop: 4,
+          marginBottom: 4,
+          padding: "10px 14px",
+          borderRadius: 14,
+          background: "rgba(15, 23, 42, 0.55)",
+          border: "1px solid rgba(74,222,128,0.25)",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+          backdropFilter: "blur(8px)",
+          animation: "sub-in 0.35s ease",
+          zIndex: 2,
+        }}>
+          <div style={{
+            fontSize: 11,
+            fontWeight: 600,
+            color: "rgba(134,239,172,0.85)",
+            letterSpacing: 0.6,
+            textTransform: "uppercase",
+            marginBottom: 6,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}>
+            <span style={{
+              display: "inline-block",
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: "#4ade80",
+              boxShadow: "0 0 8px #4ade80",
+              animation: vs === "thinking" ? "pulse-soft 1.2s ease-in-out infinite" : "none",
+            }} />
+            芽芽思考过程
+            <span style={{ marginLeft: "auto", opacity: 0.55, fontSize: 10 }}>
+              {thoughts.length} 步
+            </span>
+          </div>
+          <ol style={{
+            listStyle: "none",
+            margin: 0,
+            padding: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            maxHeight: 140,
+            overflowY: "auto",
+          }}>
+            {thoughts.map((t, i) => {
+              const isResult = t.kind === "result";
+              return (
+                <li key={t.id} style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "flex-start",
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                  color: isResult ? "#bbf7d0" : "rgba(226,232,240,0.82)",
+                  animation: "sub-in 0.3s ease",
+                }}>
+                  <span style={{
+                    flexShrink: 0,
+                    width: 18,
+                    height: 18,
+                    borderRadius: "50%",
+                    background: isResult
+                      ? "linear-gradient(135deg,#4ade80,#16a34a)"
+                      : "rgba(74,222,128,0.18)",
+                    color: isResult ? "#052e16" : "#86efac",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginTop: 1,
+                  }}>
+                    {isResult ? "✓" : i + 1}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ fontWeight: 600 }}>{t.label}</span>
+                    {t.detail && (
+                      <span style={{
+                        marginLeft: 6,
+                        opacity: 0.7,
+                        fontSize: 11,
+                      }}>
+                        — {t.detail}
+                      </span>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      )}
 
       {/* Mic / stop button */}
       <button

@@ -411,15 +411,6 @@ export function Login() {
                     <p className="text-xs text-gray-400">
                       新用户请联系管理员添加账户
                     </p>
-                    <button
-                      type="button"
-                      onClick={handleReset}
-                      disabled={loading}
-                      className="text-xs text-red-400 hover:text-red-600 transition-colors inline-flex items-center gap-1"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      系统初始化（清除所有用户重新注册）
-                    </button>
                   </div>
                 )}
               </form>

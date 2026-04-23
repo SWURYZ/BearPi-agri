@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Send, Square, X } from "lucide-react";
 import { startGestureRecognition, stopGestureRecognition, describeGestureError, type GestureLabel, type GestureEvent } from "../services/gestureRecognition";
-import { sendManualControl, createScheduleRule } from "../services/deviceControl";
+import { sendManualControl, createScheduleRule, fetchScheduleRules, deleteScheduleRule } from "../services/deviceControl";
 import { createCompositeRule } from "../services/compositeCondition";
 import { createThresholdRule, runThresholdCheckNow } from "../services/thresholdAlert";
 import { executeDecision, type SensorSnapshot } from "../services/smartDecision";
@@ -471,7 +471,11 @@ interface LightScheduleIntent {
   turnOnTime: string;
   turnOffTime: string;
   label: string;
+  cancel?: boolean;
 }
+
+// 取消/关闭/删除 类动词
+const LIGHT_SCHED_CANCEL_RE = /(取消|删除|移除|去掉|废除|关闭|关掉|关上|停止|停掉|不要(了)?|别要(了)?|别开)/;
 
 function parseLightScheduleIntent(text: string): LightScheduleIntent | null {
   const t = text.replace(/\s+/g, "");
@@ -481,7 +485,8 @@ function parseLightScheduleIntent(text: string): LightScheduleIntent | null {
   if (!/(到|至|~|-|—)/.test(t)) return null;
   const range = parseTimeRange(t);
   if (!range) return null;
-  return { turnOnTime: range.turnOnTime, turnOffTime: range.turnOffTime, label: "补光灯" };
+  const cancel = LIGHT_SCHED_CANCEL_RE.test(t);
+  return { turnOnTime: range.turnOnTime, turnOffTime: range.turnOffTime, label: "补光灯", cancel };
 }
 
 function parseDeviceCommand(text: string): DeviceCommand | null {
@@ -1119,6 +1124,40 @@ export function YayaFloatingAssistant() {
     const lightSchedule = parseLightScheduleIntent(text);
     if (lightSchedule) {
       try {
+        // 取消分支：先查后删
+        if (lightSchedule.cancel) {
+          const all = await fetchScheduleRules();
+          const target = all.find(
+            (r) =>
+              r.deviceId === deviceIdRef.current &&
+              r.turnOnTime.slice(0, 5) === lightSchedule.turnOnTime &&
+              r.turnOffTime.slice(0, 5) === lightSchedule.turnOffTime &&
+              (!r.commandType || r.commandType === "LIGHT_CONTROL"),
+          );
+          if (!target) {
+            const fallback = all.find(
+              (r) => r.deviceId === deviceIdRef.current && (r.commandType ?? "LIGHT_CONTROL") === "LIGHT_CONTROL",
+            );
+            if (!fallback) {
+              const reply = `未找到 ${lightSchedule.turnOnTime}~${lightSchedule.turnOffTime} 的补光灯定时规则，无需取消。`;
+              push("assistant", reply);
+              speakText(reply);
+              return;
+            }
+            await deleteScheduleRule(fallback.id);
+            navigate("/control");
+            const reply = `好的，已取消补光灯定时规则（${fallback.turnOnTime.slice(0, 5)}~${fallback.turnOffTime.slice(0, 5)}）。`;
+            push("assistant", reply);
+            speakText(reply);
+            return;
+          }
+          await deleteScheduleRule(target.id);
+          navigate("/control");
+          const reply = `好的，已取消 ${lightSchedule.turnOnTime}~${lightSchedule.turnOffTime} 的补光灯定时规则。`;
+          push("assistant", reply);
+          speakText(reply);
+          return;
+        }
         const ruleName = `语音创建 ${lightSchedule.turnOnTime}-${lightSchedule.turnOffTime}`;
         await createScheduleRule({
           deviceId: deviceIdRef.current,
