@@ -691,14 +691,14 @@ function FarmGround() {
   // 随机草丛位置（使用伪随机保证稳定）
   const grassPositions = useMemo<[number, number, number][]>(() => {
     const arr: [number, number, number][] = [];
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 70; i++) {
       const seed = i * 9301 + 49297;
       const r1 = ((seed * 7 + 13) % 1000) / 1000;
       const r2 = ((seed * 11 + 17) % 1000) / 1000;
-      const x = (r1 - 0.5) * 13;
-      const z = (r2 - 0.5) * 9;
-      // 避开中央大棚区域
-      if (Math.abs(x) < 4.5 && Math.abs(z) < 2.8) continue;
+      const x = (r1 - 0.5) * 22;
+      const z = (r2 - 0.5) * 11;
+      // 避开中央大棚区域 (12 个大棚扩展后 ±10 × ±3)
+      if (Math.abs(x) < 10 && Math.abs(z) < 3.2) continue;
       arr.push([x, 0.005, z]);
     }
     return arr;
@@ -708,38 +708,38 @@ function FarmGround() {
     <group>
       {/* 草地边框（最外层 — 扩大到足以填满视口下方） */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 0]} receiveShadow>
-        <planeGeometry args={[60, 50]} />
+        <planeGeometry args={[80, 60]} />
         <meshStandardMaterial color="#4d7c0f" roughness={0.95} />
       </mesh>
       {/* 农田土地（中层） */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.005, 0]} receiveShadow>
-        <planeGeometry args={[18, 13]} />
+        <planeGeometry args={[28, 14]} />
         <meshStandardMaterial color="#78716c" roughness={0.9} />
       </mesh>
       {/* 主耕作区 */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
-        <planeGeometry args={[14, 10]} />
+        <planeGeometry args={[24, 12]} />
         <meshStandardMaterial color="#5a4023" roughness={0.9} />
       </mesh>
       {/* 中央十字小路（硕石色） */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.006, 0]} receiveShadow>
-        <planeGeometry args={[12, 0.7]} />
+        <planeGeometry args={[22, 0.7]} />
         <meshStandardMaterial color="#a8a29e" roughness={0.85} />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.006, 0]} receiveShadow>
-        <planeGeometry args={[0.7, 8]} />
+        <planeGeometry args={[0.7, 10]} />
         <meshStandardMaterial color="#a8a29e" roughness={0.85} />
       </mesh>
       {/* 路边白线 */}
       {[-0.32, 0.32].map((y) => (
         <mesh key={`hr${y}`} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.008, y]}>
-          <planeGeometry args={[12, 0.04]} />
+          <planeGeometry args={[22, 0.04]} />
           <meshBasicMaterial color="#fafafa" />
         </mesh>
       ))}
       {[-0.32, 0.32].map((x) => (
         <mesh key={`vr${x}`} rotation={[-Math.PI / 2, 0, 0]} position={[x, 0.008, 0]}>
-          <planeGeometry args={[0.04, 8]} />
+          <planeGeometry args={[0.04, 10]} />
           <meshBasicMaterial color="#fafafa" />
         </mesh>
       ))}
@@ -776,36 +776,50 @@ function SkyAndDistance() {
 }
 
 function PerimeterDecor() {
-  // 周边树在农田边界 (外 ±6.5/±4.5)
+  // 周边树在扩大后的农田边界 (外 ±11.5/±5.5)
   const treePositions: [number, number, number][] = [
-    [-6.5, 0, -4.5],
-    [-6.5, 0, -2.0],
-    [-6.5, 0, 0.5],
-    [-6.5, 0, 3.0],
-    [-6.5, 0, 4.5],
-    [6.5, 0, -4.5],
-    [6.5, 0, -1.5],
-    [6.5, 0, 1.5],
-    [6.5, 0, 4.5],
-    [-4.0, 0, -4.5],
-    [4.0, 0, -4.5],
-    [-2.0, 0, 4.5],
-    [2.0, 0, 4.5],
+    // 左侧
+    [-11.5, 0, -5.5],
+    [-11.5, 0, -3.0],
+    [-11.5, 0, -0.5],
+    [-11.5, 0, 2.0],
+    [-11.5, 0, 4.5],
+    [-11.5, 0, 5.5],
+    // 右侧
+    [11.5, 0, -5.5],
+    [11.5, 0, -2.5],
+    [11.5, 0, 0],
+    [11.5, 0, 2.5],
+    [11.5, 0, 5.5],
+    // 上边 (z=-5.5)
+    [-8.0, 0, -5.5],
+    [-4.5, 0, -5.5],
+    [-1.0, 0, -5.5],
+    [3.0, 0, -5.5],
+    [6.5, 0, -5.5],
+    [9.5, 0, -5.5],
+    // 下边 (z=5.5)
+    [-8.0, 0, 5.5],
+    [-4.5, 0, 5.5],
+    [-1.0, 0, 5.5],
+    [3.0, 0, 5.5],
+    [6.5, 0, 5.5],
+    [9.5, 0, 5.5],
   ];
   return (
     <group>
       {treePositions.map((p, i) => (
         <Tree key={i} position={p} scale={0.85 + (i % 3) * 0.08} />
       ))}
-      {/* 四周栅栏 */}
-      <FenceSegment position={[0, 0, -4.7]} length={12} />
-      <FenceSegment position={[0, 0, 4.7]} length={12} />
-      <FenceSegment position={[-6.0, 0, 0]} length={9.4} rotationY={Math.PI / 2} />
-      <FenceSegment position={[6.0, 0, 0]} length={9.4} rotationY={Math.PI / 2} />
+      {/* 四周栅栏 (扩大后) */}
+      <FenceSegment position={[0, 0, -5.7]} length={22} />
+      <FenceSegment position={[0, 0, 5.7]} length={22} />
+      <FenceSegment position={[-11.0, 0, 0]} length={11.4} rotationY={Math.PI / 2} />
+      <FenceSegment position={[11.0, 0, 0]} length={11.4} rotationY={Math.PI / 2} />
       {/* 角落小池塘 */}
-      <Pond position={[5.2, 0, 3.4]} />
+      <Pond position={[9.8, 0, 4.2]} />
       {/* 风车 (左下角) */}
-      <Windmill position={[-5.6, 0, 3.4]} />
+      <Windmill position={[-10.2, 0, 4.2]} />
     </group>
   );
 }
@@ -854,12 +868,12 @@ function FarmScene({
         castShadow
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
-        shadow-camera-left={-12}
-        shadow-camera-right={12}
-        shadow-camera-top={10}
-        shadow-camera-bottom={-10}
+        shadow-camera-left={-18}
+        shadow-camera-right={18}
+        shadow-camera-top={12}
+        shadow-camera-bottom={-12}
         shadow-camera-near={0.5}
-        shadow-camera-far={30}
+        shadow-camera-far={40}
       />
       <directionalLight position={[-6, 8, -4]} intensity={0.5} color="#bee3f8" />
       <hemisphereLight args={["#dbeafe", "#65a30d", 0.7]} />
@@ -888,7 +902,7 @@ function FarmScene({
         );
       })}
 
-      <ContactShadows position={[0, 0.01, 0]} opacity={0.4} scale={20} blur={2.5} far={6} />
+      <ContactShadows position={[0, 0.01, 0]} opacity={0.4} scale={32} blur={2.5} far={6} />
     </>
   );
 }
@@ -902,7 +916,7 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
   const [gestureMode, setGestureMode] = useState(true);
   const [handStatus, setHandStatus] = useState<"idle" | "tracking" | "lost">("idle");
   const orbitRef = useRef<OrbitControlsImpl | null>(null);
-  const initialCamPos = useRef<[number, number, number]>([9, 7, 9]);
+  const initialCamPos = useRef<[number, number, number]>([14, 10, 14]);
   const initialTarget = useRef<[number, number, number]>([0, 0.5, 0]);
 
   // ── 手势驱动 3D 视角："地球仪式握拳拖拽" + 张开手时双指捏合缩放（带平滑） ──
@@ -1147,7 +1161,7 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
       <Canvas
         shadows
         dpr={[1, 2]}
-        camera={{ position: [9, 8, 11], fov: 45 }}
+        camera={{ position: [14, 11, 16], fov: 45 }}
         style={{ background: "transparent" }}
       >
         <Suspense fallback={<Html center><span style={{ color: "#22c55e" }}>加载 3D 场景中…</span></Html>}>

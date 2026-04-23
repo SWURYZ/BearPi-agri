@@ -29,12 +29,13 @@ const baseNavItems = [
   { to: "/automation", icon: Zap, label: "联动规则", desc: "复合条件自动化" },
   { to: "/history", icon: BarChart2, label: "历史分析", desc: "数据趋势图表" },
   { to: "/devices", icon: Cpu, label: "设备管理", desc: "绑定/解绑设备" },
-  { to: "/insect", icon: Bug, label: "病虫害识别", desc: "害虫+病害 拍照识别" },
   { to: "/ai", icon: Bot, label: "农事问答", desc: "AI智能助手" },
 ];
 
 const adminNavItem = { to: "/users", icon: Users, label: "用户管理", desc: "用户与人脸管理" };
 const logsNavItem = { to: "/logs", icon: ClipboardList, label: "登录日志", desc: "用户登录记录" };
+// 病虫害识别主要为手机移动端扫码/拍照场景,放在侧边栏最末尾
+const insectNavItem = { to: "/insect", icon: Bug, label: "病虫害识别", desc: "害虫+病害 拍照识别" };
 
 export function Layout() {
   const location = useLocation();
@@ -65,8 +66,8 @@ export function Layout() {
 
   const adminUser = user?.role === "admin";
   const navItems = adminUser
-    ? [...baseNavItems, adminNavItem, logsNavItem]
-    : [...baseNavItems];
+    ? [...baseNavItems, adminNavItem, logsNavItem, insectNavItem]
+    : [...baseNavItems, insectNavItem];
 
   const handleLogout = async () => {
     await logout();
