@@ -957,6 +957,143 @@ function FarmGround() {
   );
 }
 
+// =============== 天气预报（和风天气 7d, 重庆 101040100） ===============
+type QWeatherDaily = {
+  fxDate: string;
+  tempMax: string;
+  tempMin: string;
+  textDay: string;
+  textNight: string;
+  iconDay: string;
+  windDirDay: string;
+  windScaleDay: string;
+};
+const QWEATHER_HOST = "https://mf4t2cgffg.re.qweatherapi.com";
+const QWEATHER_TOKEN = "1a7d555b3c8149558af49edb7e005083";
+const QWEATHER_LOCATION = "101040100"; // 重庆
+function weatherEmoji(text: string): string {
+  if (/雷/.test(text)) return "⛈️";
+  if (/雪/.test(text)) return "🌨️";
+  if (/雨/.test(text)) return "🌧️";
+  if (/雾|霾/.test(text)) return "🌫️";
+  if (/阴/.test(text)) return "☁️";
+  if (/多云/.test(text)) return "⛅";
+  if (/晴/.test(text)) return "☀️";
+  return "🌤️";
+}
+function WeatherSkyPanel() {
+  const [daily, setDaily] = useState<QWeatherDaily[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let aborted = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `${QWEATHER_HOST}/v7/weather/7d?location=${QWEATHER_LOCATION}`,
+          { headers: { "X-QW-Api-Key": QWEATHER_TOKEN } }
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (aborted) return;
+        if (data.code !== "200") throw new Error(`code=${data.code}`);
+        setDaily(data.daily as QWeatherDaily[]);
+        setError(null);
+      } catch (e: any) {
+        if (!aborted) setError(e?.message ?? "加载失败");
+      }
+    })();
+    return () => {
+      aborted = true;
+    };
+  }, []);
+
+  return (
+    <Html
+      position={[0, 6, -10]}
+      center
+      distanceFactor={10}
+      zIndexRange={[20, 0]}
+      style={{ pointerEvents: "none" }}
+    >
+      <div
+        style={{
+          background: "rgba(15, 23, 42, 0.55)",
+          backdropFilter: "blur(8px)",
+          border: "1px solid rgba(148, 197, 255, 0.35)",
+          borderRadius: 14,
+          padding: "10px 14px",
+          color: "#f8fafc",
+          fontFamily:
+            'ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
+          boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+          minWidth: 560,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 6,
+          }}
+        >
+          <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: 1 }}>
+            🌤️ 重庆 · 未来 7 天天气
+          </span>
+          <span style={{ fontSize: 11, color: "#cbd5e1" }}>QWeather</span>
+        </div>
+        {error && !daily && (
+          <div style={{ fontSize: 12, color: "#fca5a5" }}>加载失败：{error}</div>
+        )}
+        {!error && !daily && (
+          <div style={{ fontSize: 12, color: "#cbd5e1" }}>加载中…</div>
+        )}
+        {daily && (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(7, 1fr)",
+              gap: 6,
+            }}
+          >
+            {daily.slice(0, 7).map((d) => {
+              const date = new Date(d.fxDate);
+              const md = `${date.getMonth() + 1}/${date.getDate()}`;
+              const wd = ["日", "一", "二", "三", "四", "五", "六"][date.getDay()];
+              return (
+                <div
+                  key={d.fxDate}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    background: "rgba(255,255,255,0.06)",
+                    borderRadius: 8,
+                    padding: "6px 4px",
+                    fontSize: 11,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  <div style={{ color: "#94a3b8", fontSize: 10 }}>
+                    {md} 周{wd}
+                  </div>
+                  <div style={{ fontSize: 22, margin: "2px 0" }}>
+                    {weatherEmoji(d.textDay)}
+                  </div>
+                  <div style={{ color: "#e2e8f0" }}>{d.textDay}</div>
+                  <div style={{ color: "#fde68a", fontWeight: 600 }}>
+                    {d.tempMin}° ~ {d.tempMax}°
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </Html>
+  );
+}
+
 function SkyAndDistance() {
   return (
     <group>
@@ -1078,6 +1215,7 @@ function FarmScene({
       </mesh>
 
       <SkyAndDistance />
+      <WeatherSkyPanel />
       <PerimeterDecor />
       <FarmGround />
 
