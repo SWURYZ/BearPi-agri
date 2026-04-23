@@ -62,41 +62,99 @@ const CROP_PAL: Record<string, [string, string]> = {
 
 // ============================================================
 // Plant renderers
+// 真实特征设计：番茄/草莓/辣椒/茄子顶部带绿色萼片；番茄/茄子带高光；
+//              黄瓜表面带深色条纹；草莓果实带籽点；生菜用卷边叶片而非简单椭圆。
 // ============================================================
 type PP = { cx: number; by: number; s: number; fr: string; lf: string };
 
-function Tomato({ cx, by, s, fr, lf }: PP) {
+/** 绿色五角星萼片（番茄/草莓/茄子顶部通用） */
+function Sepal({ cx, cy, r, color = "#166534" }: { cx: number; cy: number; r: number; color?: string }) {
+  const pts = Array.from({ length: 5 }, (_, i) => {
+    const a = (i / 5) * Math.PI * 2 - Math.PI / 2;
+    return `${cx + Math.cos(a) * r},${cy + Math.sin(a) * r}`;
+  }).join(" ");
   return (
     <g>
+      <polygon points={pts} fill={color} opacity={0.9} />
+      <circle cx={cx} cy={cy} r={r * 0.35} fill={color} />
+    </g>
+  );
+}
+
+function Tomato({ cx, by, s, fr, lf }: PP) {
+  // 深浅红交替（有未熟有熟），更贴合真实番茄串
+  const darker = "#b91c1c";
+  return (
+    <g>
+      {/* 主茎 */}
       <rect x={cx - 1.5 * s} y={by - 72 * s} width={3 * s} height={72 * s} fill={lf} rx={1.5 * s} />
+      {/* 枝叶 */}
       <line x1={cx} y1={by - 30 * s} x2={cx - 14 * s} y2={by - 40 * s} stroke={lf} strokeWidth={1.5 * s} />
       <line x1={cx} y1={by - 50 * s} x2={cx + 13 * s} y2={by - 58 * s} stroke={lf} strokeWidth={1.5 * s} />
       <ellipse cx={cx - 14 * s} cy={by - 43 * s} rx={8 * s} ry={5 * s} fill={lf} opacity={0.8}
         transform={`rotate(-20,${cx - 14 * s},${by - 43 * s})`} />
       <ellipse cx={cx + 13 * s} cy={by - 61 * s} rx={8 * s} ry={5 * s} fill={lf} opacity={0.8}
         transform={`rotate(20,${cx + 13 * s},${by - 61 * s})`} />
-      <circle cx={cx - 8 * s}  cy={by - 22 * s} r={7 * s}   fill={fr} />
-      <circle cx={cx + 8 * s}  cy={by - 22 * s} r={7.5 * s} fill={fr} />
-      <circle cx={cx}           cy={by - 40 * s} r={7 * s}   fill={fr} />
-      <circle cx={cx - 9 * s}  cy={by - 54 * s} r={6 * s}   fill={fr} />
-      <circle cx={cx + 8 * s}  cy={by - 56 * s} r={6.5 * s} fill={fr} />
+      {/* 果实（略扁球） */}
+      {[
+        { x: -8, y: -22, r: 7,   c: fr },
+        { x:  8, y: -22, r: 7.5, c: fr },
+        { x:  0, y: -40, r: 7,   c: darker },
+        { x: -9, y: -54, r: 6,   c: fr },
+        { x:  8, y: -56, r: 6.5, c: darker },
+      ].map((t, i) => (
+        <g key={i}>
+          <ellipse cx={cx + t.x * s} cy={by + t.y * s} rx={t.r * s} ry={t.r * 0.94 * s} fill={t.c} />
+          {/* 高光 */}
+          <ellipse cx={cx + (t.x - t.r * 0.3) * s} cy={by + (t.y - t.r * 0.35) * s}
+            rx={t.r * 0.28 * s} ry={t.r * 0.18 * s} fill="#fff" opacity={0.42} />
+          {/* 绿色萼片 */}
+          <Sepal cx={cx + t.x * s} cy={by + (t.y - t.r * 0.85) * s} r={t.r * 0.48 * s} />
+        </g>
+      ))}
     </g>
   );
 }
 
 function Cucumber({ cx, by, s, fr, lf }: PP) {
+  const stripe = "#4d7c0f"; // 黄瓜深绿条纹
   return (
     <g>
+      {/* 主茎 */}
       <rect x={cx - 1.5 * s} y={by - 80 * s} width={3 * s} height={80 * s} fill={lf} rx={1.5 * s} />
+      {/* 心形叶（放大的椭圆模拟） */}
       <line x1={cx} y1={by - 20 * s} x2={cx - 18 * s} y2={by - 28 * s} stroke={lf} strokeWidth={1.5 * s} />
       <line x1={cx} y1={by - 45 * s} x2={cx + 18 * s} y2={by - 52 * s} stroke={lf} strokeWidth={1.5 * s} />
       <line x1={cx} y1={by - 65 * s} x2={cx - 16 * s} y2={by - 72 * s} stroke={lf} strokeWidth={1.5 * s} />
-      <ellipse cx={cx - 18 * s} cy={by - 31 * s} rx={9 * s} ry={5.5 * s} fill={lf} opacity={0.75} />
-      <ellipse cx={cx + 18 * s} cy={by - 55 * s} rx={9 * s} ry={5.5 * s} fill={lf} opacity={0.75} />
-      <ellipse cx={cx - 16 * s} cy={by - 75 * s} rx={8.5 * s} ry={5 * s} fill={lf} opacity={0.75} />
-      <ellipse cx={cx + 5 * s}  cy={by - 15 * s} rx={5 * s} ry={10 * s} fill={fr} />
-      <ellipse cx={cx - 6 * s}  cy={by - 38 * s} rx={4.5 * s} ry={9 * s} fill={fr} />
-      <ellipse cx={cx + 6 * s}  cy={by - 60 * s} rx={5 * s} ry={10 * s} fill={fr} />
+      <ellipse cx={cx - 18 * s} cy={by - 31 * s} rx={9 * s} ry={6 * s} fill={lf} opacity={0.85} />
+      <ellipse cx={cx + 18 * s} cy={by - 55 * s} rx={9 * s} ry={6 * s} fill={lf} opacity={0.85} />
+      <ellipse cx={cx - 16 * s} cy={by - 75 * s} rx={8.5 * s} ry={5.5 * s} fill={lf} opacity={0.85} />
+      {/* 黄色小花（黄瓜特征） */}
+      <circle cx={cx + 7 * s} cy={by - 77 * s} r={2.5 * s} fill="#facc15" />
+      {/* 黄瓜果（细长 + 深色条纹） */}
+      {[
+        { x:  5, y: -15, rx: 5,   ry: 10 },
+        { x: -6, y: -38, rx: 4.5, ry: 9  },
+        { x:  6, y: -60, rx: 5,   ry: 10 },
+      ].map((t, i) => (
+        <g key={i}>
+          <ellipse cx={cx + t.x * s} cy={by + t.y * s} rx={t.rx * s} ry={t.ry * s} fill={fr} />
+          {/* 深色纵向条纹 */}
+          <line
+            x1={cx + (t.x - t.rx * 0.4) * s} y1={by + (t.y - t.ry * 0.7) * s}
+            x2={cx + (t.x - t.rx * 0.4) * s} y2={by + (t.y + t.ry * 0.7) * s}
+            stroke={stripe} strokeWidth={0.8 * s} opacity={0.7}
+          />
+          <line
+            x1={cx + (t.x + t.rx * 0.4) * s} y1={by + (t.y - t.ry * 0.7) * s}
+            x2={cx + (t.x + t.rx * 0.4) * s} y2={by + (t.y + t.ry * 0.7) * s}
+            stroke={stripe} strokeWidth={0.8 * s} opacity={0.7}
+          />
+          {/* 高光 */}
+          <ellipse cx={cx + (t.x - t.rx * 0.3) * s} cy={by + (t.y - t.ry * 0.4) * s}
+            rx={t.rx * 0.25 * s} ry={t.ry * 0.4 * s} fill="#fff" opacity={0.35} />
+        </g>
+      ))}
     </g>
   );
 }
@@ -107,13 +165,35 @@ function Strawberry({ cx, by, s, fr, lf }: PP) {
       <rect x={cx - s} y={by - 50 * s} width={2 * s} height={50 * s} fill={lf} rx={s} />
       <line x1={cx} y1={by - 12 * s} x2={cx - 14 * s} y2={by - 18 * s} stroke={lf} strokeWidth={1.5 * s} />
       <line x1={cx} y1={by - 28 * s} x2={cx + 13 * s} y2={by - 34 * s} stroke={lf} strokeWidth={1.5 * s} />
-      <ellipse cx={cx - 14 * s} cy={by - 20 * s} rx={8 * s} ry={4.5 * s} fill={lf} opacity={0.8} />
-      <ellipse cx={cx + 13 * s} cy={by - 36 * s} rx={7.5 * s} ry={4.5 * s} fill={lf} opacity={0.8} />
-      {[[-6, -8], [6, -8], [0, -18], [-7, -25], [6, -26], [-3, -36]].map(([dx, dy], i) => (
-        <path key={i}
-          d={`M${cx + dx * s},${by + dy * s} Q${cx + (dx - 4) * s},${by + (dy - 8) * s} ${cx + (dx + 4) * s},${by + (dy - 8) * s} Z`}
-          fill={fr} />
-      ))}
+      {/* 三出复叶（齿缘用 polyline 近似锯齿） */}
+      <ellipse cx={cx - 14 * s} cy={by - 20 * s} rx={8 * s} ry={4.5 * s} fill={lf} opacity={0.9} />
+      <ellipse cx={cx + 13 * s} cy={by - 36 * s} rx={7.5 * s} ry={4.5 * s} fill={lf} opacity={0.9} />
+      {/* 心形果 + 萼片 + 籽点 */}
+      {[[-6, -8], [6, -8], [0, -18], [-7, -25], [6, -26], [-3, -36]].map(([dx, dy], i) => {
+        const bx = cx + dx * s;
+        const by0 = by + dy * s;
+        return (
+          <g key={i}>
+            {/* 心形果实：上宽下尖 */}
+            <path
+              d={`M${bx - 5 * s},${by0 - 3 * s}
+                  C${bx - 5 * s},${by0 - 8 * s} ${bx - 1 * s},${by0 - 9 * s} ${bx},${by0 - 5 * s}
+                  C${bx + 1 * s},${by0 - 9 * s} ${bx + 5 * s},${by0 - 8 * s} ${bx + 5 * s},${by0 - 3 * s}
+                  C${bx + 5 * s},${by0 + 1 * s} ${bx},${by0 + 5 * s} ${bx},${by0 + 5 * s}
+                  C${bx},${by0 + 5 * s} ${bx - 5 * s},${by0 + 1 * s} ${bx - 5 * s},${by0 - 3 * s} Z`}
+              fill={fr}
+            />
+            {/* 高光 */}
+            <ellipse cx={bx - 1.8 * s} cy={by0 - 3.5 * s} rx={1.2 * s} ry={1.8 * s} fill="#fff" opacity={0.45} />
+            {/* 籽点（黄色小点，草莓最辨识特征） */}
+            {[[-2, -2], [2, -1], [-1, 1], [1.5, 2], [-2.5, 0.5]].map(([sx, sy], j) => (
+              <circle key={j} cx={bx + sx * s} cy={by0 + sy * s} r={0.4 * s} fill="#fde68a" />
+            ))}
+            {/* 绿色萼片（紧贴果实上方） */}
+            <Sepal cx={bx} cy={by0 - 6 * s} r={2.6 * s} color="#166534" />
+          </g>
+        );
+      })}
     </g>
   );
 }
@@ -128,30 +208,69 @@ function Chili({ cx, by, s, fr, lf }: PP) {
       <ellipse cx={cx - 16 * s} cy={by - 29 * s} rx={8.5 * s} ry={4.5 * s} fill={lf} opacity={0.8} />
       <ellipse cx={cx + 15 * s} cy={by - 51 * s} rx={8 * s} ry={4.5 * s} fill={lf} opacity={0.8} />
       <ellipse cx={cx - 14 * s} cy={by - 68 * s} rx={7.5 * s} ry={4.5 * s} fill={lf} opacity={0.8} />
-      {[[-8, -10], [7, -28], [-6, -48], [8, -62]].map(([dx, dy], i) => (
-        <path key={i}
-          d={`M${cx + dx * s},${by + dy * s} Q${cx + (dx + 3) * s},${by + (dy - 5) * s} ${cx + (dx + 1) * s},${by + (dy - 14) * s}`}
-          fill="none" stroke={fr} strokeWidth={3.5 * s} strokeLinecap="round" />
-      ))}
+      {/* 下垂辣椒：细长锥，顶部带绿色蒂把 */}
+      {[
+        { x: -8, y: -10, bend:  3, len: 16 },
+        { x:  7, y: -28, bend:  3, len: 18 },
+        { x: -6, y: -48, bend:  3, len: 16 },
+        { x:  8, y: -62, bend:  3, len: 16 },
+      ].map((t, i) => {
+        const tx = cx + t.x * s, ty = by + t.y * s;
+        const tipX = cx + (t.x + t.bend) * s, tipY = by + (t.y + t.len) * s;
+        return (
+          <g key={i}>
+            {/* 辣椒主体 */}
+            <path
+              d={`M${tx - 2.2 * s},${ty}
+                  Q${tx + t.bend * 0.5 * s},${ty + t.len * 0.5 * s} ${tipX},${tipY}
+                  Q${tx + t.bend * 0.5 * s + 2.2 * s},${ty + t.len * 0.5 * s} ${tx + 2.2 * s},${ty} Z`}
+              fill={fr}
+            />
+            {/* 高光条 */}
+            <line x1={tx - 0.5 * s} y1={ty + 1 * s} x2={tx + t.bend * 0.5 * s - 0.5 * s}
+              y2={ty + t.len * 0.5 * s} stroke="#fff" strokeWidth={0.6 * s} opacity={0.4} />
+            {/* 绿色蒂把 */}
+            <rect x={tx - 2.5 * s} y={ty - 2.5 * s} width={5 * s} height={3 * s}
+              fill="#15803d" rx={0.8 * s} />
+          </g>
+        );
+      })}
     </g>
   );
 }
 
 function Lettuce({ cx, by, s, fr, lf }: PP) {
+  // 外圈大卷叶（波浪边缘用 path 模拟），内圈嫩叶
+  const ruffleLeaf = (ang: number, rx: number, ry: number, fill: string, opacity = 0.85) => {
+    const rad = (ang * Math.PI) / 180;
+    const ex = cx + Math.cos(rad) * 10 * s;
+    const ey = by - 8 * s + Math.sin(rad) * 5 * s;
+    // 卷边用 M-Q-Q-Q 画一个波浪形叶
+    const p = `M${ex - rx * s},${ey}
+      Q${ex - rx * 0.6 * s},${ey - ry * 1.3 * s} ${ex},${ey - ry * s}
+      Q${ex + rx * 0.6 * s},${ey - ry * 1.3 * s} ${ex + rx * s},${ey}
+      Q${ex + rx * 0.6 * s},${ey + ry * 0.6 * s} ${ex},${ey + ry * 0.4 * s}
+      Q${ex - rx * 0.6 * s},${ey + ry * 0.6 * s} ${ex - rx * s},${ey} Z`;
+    return (
+      <path
+        key={ang}
+        d={p}
+        fill={fill}
+        opacity={opacity}
+        transform={`rotate(${ang},${ex},${ey})`}
+      />
+    );
+  };
   return (
     <g>
-      {[0, 45, 90, 135, 180, 225, 270, 315].map((angle, i) => {
-        const r = (i % 2 === 0 ? 14 : 10) * s;
-        const rad = (angle * Math.PI) / 180;
-        const ex = cx + Math.cos(rad) * r;
-        const ey = by - 8 * s + Math.sin(rad) * r * 0.5;
-        return (
-          <ellipse key={i} cx={ex} cy={ey} rx={8 * s} ry={5 * s}
-            fill={i % 2 === 0 ? lf : fr} opacity={0.82}
-            transform={`rotate(${angle},${ex},${ey})`} />
-        );
-      })}
-      <circle cx={cx} cy={by - 8 * s} r={6 * s} fill={fr} opacity={0.9} />
+      {[0, 45, 90, 135, 180, 225, 270, 315].map((a, i) =>
+        ruffleLeaf(a, 9, 5, i % 2 === 0 ? lf : "#22c55e", 0.85),
+      )}
+      {/* 内圈嫩叶 */}
+      {[22, 112, 202, 292].map((a) => ruffleLeaf(a, 6, 3.5, fr, 0.9))}
+      {/* 叶球芯 */}
+      <circle cx={cx} cy={by - 8 * s} r={5 * s} fill={fr} />
+      <ellipse cx={cx - 1.5 * s} cy={by - 10 * s} rx={2 * s} ry={1.5 * s} fill="#fff" opacity={0.4} />
     </g>
   );
 }
@@ -162,11 +281,27 @@ function Eggplant({ cx, by, s, fr, lf }: PP) {
       <rect x={cx - 1.5 * s} y={by - 78 * s} width={3 * s} height={78 * s} fill={lf} rx={1.5 * s} />
       <line x1={cx} y1={by - 22 * s} x2={cx - 16 * s} y2={by - 30 * s} stroke={lf} strokeWidth={1.5 * s} />
       <line x1={cx} y1={by - 48 * s} x2={cx + 15 * s} y2={by - 55 * s} stroke={lf} strokeWidth={1.5 * s} />
-      <ellipse cx={cx - 16 * s} cy={by - 33 * s} rx={8.5 * s} ry={5 * s} fill={lf} opacity={0.8} />
-      <ellipse cx={cx + 15 * s} cy={by - 58 * s} rx={8 * s} ry={5 * s} fill={lf} opacity={0.8} />
-      <ellipse cx={cx + 4 * s}  cy={by - 15 * s} rx={7 * s} ry={12 * s} fill={fr} />
-      <ellipse cx={cx - 5 * s}  cy={by - 42 * s} rx={6.5 * s} ry={11 * s} fill={fr} />
-      <ellipse cx={cx + 5 * s}  cy={by - 65 * s} rx={6 * s} ry={10 * s} fill={fr} />
+      <ellipse cx={cx - 16 * s} cy={by - 33 * s} rx={8.5 * s} ry={5 * s} fill={lf} opacity={0.85} />
+      <ellipse cx={cx + 15 * s} cy={by - 58 * s} rx={8 * s} ry={5 * s} fill={lf} opacity={0.85} />
+      {/* 紫色长椭圆果 + 高光 + 绿色萼片 */}
+      {[
+        { x:  4, y: -15, rx: 7,   ry: 12 },
+        { x: -5, y: -42, rx: 6.5, ry: 11 },
+        { x:  5, y: -65, rx: 6,   ry: 10 },
+      ].map((t, i) => (
+        <g key={i}>
+          {/* 果实 */}
+          <ellipse cx={cx + t.x * s} cy={by + t.y * s} rx={t.rx * s} ry={t.ry * s} fill={fr} />
+          {/* 深紫阴影 */}
+          <ellipse cx={cx + (t.x + t.rx * 0.4) * s} cy={by + (t.y + t.ry * 0.2) * s}
+            rx={t.rx * 0.55 * s} ry={t.ry * 0.7 * s} fill="#581c87" opacity={0.35} />
+          {/* 高光（茄子表皮有明显光泽） */}
+          <ellipse cx={cx + (t.x - t.rx * 0.35) * s} cy={by + (t.y - t.ry * 0.3) * s}
+            rx={t.rx * 0.2 * s} ry={t.ry * 0.5 * s} fill="#fff" opacity={0.45} />
+          {/* 绿色顶萼片（茄子标志性） */}
+          <Sepal cx={cx + t.x * s} cy={by + (t.y - t.ry * 0.95) * s} r={t.rx * 0.85 * s} color="#166534" />
+        </g>
+      ))}
     </g>
   );
 }

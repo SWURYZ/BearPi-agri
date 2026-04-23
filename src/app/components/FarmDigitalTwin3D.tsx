@@ -21,6 +21,12 @@ const CROP_PAL: Record<string, [string, string]> = {
   "茄子": ["#7c3aed", "#15803d"],
 };
 
+/** 基于 (x,z) 的稳定伪随机，避免同种作物排成"复印件" */
+function seeded(x: number, z: number, salt = 0): number {
+  const s = Math.sin((x * 127.1 + z * 311.7 + salt * 74.7) * 43758.5453);
+  return s - Math.floor(s);
+}
+
 export type ConnMode = "live" | "waiting" | "offline";
 
 export interface FarmGreenhouse {
@@ -41,162 +47,356 @@ interface Props {
 
 // ============================================================
 // 单株作物迷你模型（按作物类型生成不同造型）
+// 设计原则：
+//   · 果实 → 真实颜色 + 形态（番茄球、辣椒下垂锥、草莓心、黄瓜长条、茄子长椭、生菜叶球）
+//   · 花萼/叶柄：番茄/草莓/茄子顶部有小绿色萼片
+//   · 叶序：由多片独立叶子按角度排布，而不是一个大球
+//   · 差异化：按位置 seed 给每株加少量随机偏移/旋转/缩放，避免整齐得像复印件
 // ============================================================
 function CropMini({ crop, position }: { crop: string; position: [number, number, number] }) {
   const [fruit, leaf] = CROP_PAL[crop] ?? CROP_PAL["番茄"];
+  const [px, , pz] = position;
+  // 每株独立的小随机：旋转 / 缩放 / 位置抖动，保留整体一致性
+  const rot = (seeded(px, pz, 1) - 0.5) * 0.9;                     // ±0.45 rad yaw
+  const scl = 0.92 + seeded(px, pz, 2) * 0.18;                     // 0.92~1.10
+  const jog = (k: number) => (seeded(px, pz, k) - 0.5) * 0.02;     // ±1cm 抖动
+
+  const baseGroupProps = {
+    position: [position[0] + jog(3), position[1], position[2] + jog(4)] as [number, number, number],
+    rotation: [0, rot, 0] as [number, number, number],
+    scale: scl,
+  };
 
   switch (crop) {
-    // 番茄：直立茎 + 圆叶团 + 红色果实
+    // ── 番茄：细直茎 + 复叶（多片小叶）+ 红果带绿萼 ──
     case "番茄":
       return (
-        <group position={position}>
-          <mesh position={[0, 0.04, 0]} castShadow>
-            <cylinderGeometry args={[0.012, 0.018, 0.16, 6]} />
-            <meshStandardMaterial color="#65a30d" />
+        <group {...baseGroupProps}>
+          {/* 主茎 */}
+          <mesh position={[0, 0.11, 0]} castShadow>
+            <cylinderGeometry args={[0.009, 0.014, 0.22, 6]} />
+            <meshStandardMaterial color="#65a30d" roughness={0.9} />
           </mesh>
-          <mesh position={[0, 0.16, 0]} castShadow>
-            <sphereGeometry args={[0.085, 10, 8]} />
-            <meshStandardMaterial color={leaf} />
-          </mesh>
-          <mesh position={[0.06, 0.13, 0.03]} castShadow>
-            <sphereGeometry args={[0.035, 10, 10]} />
-            <meshStandardMaterial color={fruit} emissive={fruit} emissiveIntensity={0.2} />
-          </mesh>
-          <mesh position={[-0.05, 0.10, -0.04]} castShadow>
-            <sphereGeometry args={[0.03, 10, 10]} />
-            <meshStandardMaterial color={fruit} emissive={fruit} emissiveIntensity={0.2} />
-          </mesh>
+          {/* 分支叶（6 片羽状叶团，沿茎错落分布） */}
+          {[0, 1, 2, 3, 4, 5].map((i) => {
+            const a = (i / 6) * Math.PI * 2 + i * 0.3;
+            const y = 0.06 + (i % 3) * 0.06;
+            const r = 0.08 + (i % 2) * 0.015;
+            return (
+              <mesh
+                key={`l${i}`}
+                position={[Math.cos(a) * 0.05, y, Math.sin(a) * 0.05]}
+                rotation={[Math.PI / 2 - 0.4, a, 0]}
+                castShadow
+              >
+                <coneGeometry args={[r * 0.55, r * 1.6, 5]} />
+                <meshStandardMaterial color={leaf} roughness={0.85} />
+              </mesh>
+            );
+          })}
+          {/* 3 颗番茄果 + 绿萼 */}
+          {[
+            [0.065, 0.14, 0.03, 0.036],
+            [-0.055, 0.11, -0.045, 0.032],
+            [0.02, 0.07, 0.06, 0.028],
+          ].map(([fx, fy, fz, fr], i) => (
+            <group key={`f${i}`} position={[fx, fy, fz]}>
+              {/* 略扁的番茄球（顶部缩放 0.88 更像真实番茄） */}
+              <mesh castShadow scale={[1, 0.88, 1]}>
+                <sphereGeometry args={[fr, 12, 10]} />
+                <meshStandardMaterial color={fruit} roughness={0.4} />
+              </mesh>
+              {/* 绿色萼片（5 瓣星形） */}
+              {[0, 1, 2, 3, 4].map((k) => {
+                const ang = (k / 5) * Math.PI * 2;
+                return (
+                  <mesh
+                    key={k}
+                    position={[Math.cos(ang) * fr * 0.6, fr * 0.72, Math.sin(ang) * fr * 0.6]}
+                    rotation={[Math.PI / 2 - 0.7, ang, 0]}
+                  >
+                    <coneGeometry args={[fr * 0.22, fr * 0.55, 4]} />
+                    <meshStandardMaterial color="#15803d" />
+                  </mesh>
+                );
+              })}
+            </group>
+          ))}
         </group>
       );
 
-    // 黄瓜：藤架 + 长椭圆果
+    // ── 黄瓜：立杆 + 宽心形叶 + 下垂长条果 + 黄色雌花 ──
     case "黄瓜":
       return (
-        <group position={position}>
-          {/* 支架杆 */}
-          <mesh position={[0, 0.12, 0]} castShadow>
-            <cylinderGeometry args={[0.008, 0.008, 0.24, 6]} />
-            <meshStandardMaterial color="#a16207" />
+        <group {...baseGroupProps}>
+          {/* 支架竹杆 */}
+          <mesh position={[0, 0.15, 0]} castShadow>
+            <cylinderGeometry args={[0.006, 0.008, 0.3, 6]} />
+            <meshStandardMaterial color="#92400e" />
           </mesh>
-          {/* 藤叶 */}
-          <mesh position={[0, 0.18, 0]} castShadow>
-            <sphereGeometry args={[0.075, 10, 8]} />
-            <meshStandardMaterial color={leaf} />
-          </mesh>
-          {/* 黄瓜（细长椭球） */}
-          <mesh position={[0.05, 0.10, 0]} rotation={[0, 0, Math.PI / 2.5]} castShadow scale={[1, 2.5, 1]}>
-            <sphereGeometry args={[0.022, 10, 8]} />
-            <meshStandardMaterial color={fruit} />
-          </mesh>
-          <mesh position={[-0.04, 0.07, 0.03]} rotation={[0, 0, -Math.PI / 3]} castShadow scale={[1, 2.2, 1]}>
-            <sphereGeometry args={[0.02, 10, 8]} />
-            <meshStandardMaterial color={fruit} />
+          {/* 宽心形叶（4-5 片沿杆螺旋分布） */}
+          {[0, 1, 2, 3, 4].map((i) => {
+            const a = (i / 5) * Math.PI * 2 + i * 0.5;
+            const y = 0.09 + i * 0.05;
+            return (
+              <mesh
+                key={`l${i}`}
+                position={[Math.cos(a) * 0.02, y, Math.sin(a) * 0.02]}
+                rotation={[-Math.PI / 6, a, 0]}
+                castShadow
+                scale={[1.4, 0.1, 1.4]}
+              >
+                <sphereGeometry args={[0.065, 10, 6]} />
+                <meshStandardMaterial color={leaf} roughness={0.85} side={THREE.DoubleSide} />
+              </mesh>
+            );
+          })}
+          {/* 2 根下垂黄瓜（细长 + 略弯 + 表面凸起纹理感用 roughness 近似） */}
+          {[
+            [0.05, 0.12, 0, Math.PI / 2.2, 0.022, 2.8],
+            [-0.04, 0.09, 0.035, -Math.PI / 2.6, 0.019, 2.5],
+          ].map(([cx, cy, cz, rz, rr, len], i) => (
+            <mesh
+              key={`c${i}`}
+              position={[cx, cy, cz]}
+              rotation={[0, 0, rz]}
+              castShadow
+              scale={[1, len, 1]}
+            >
+              <capsuleGeometry args={[rr, rr * 0.8, 4, 10]} />
+              <meshStandardMaterial color={fruit} roughness={0.75} />
+            </mesh>
+          ))}
+          {/* 雌花黄色小花（黄瓜特征之一） */}
+          <mesh position={[0.02, 0.18, -0.05]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+            <coneGeometry args={[0.018, 0.025, 6]} />
+            <meshStandardMaterial color="#fde047" emissive="#facc15" emissiveIntensity={0.15} />
           </mesh>
         </group>
       );
 
-    // 草莓：低矮丛 + 红色小球
+    // ── 草莓：低矮三出复叶莲座 + 心形果带绿萼 + 白色小花 ──
     case "草莓":
       return (
-        <group position={position}>
-          {/* 叶丛 */}
-          {[0, 1, 2, 3].map((i) => {
-            const a = (i / 4) * Math.PI * 2;
+        <group {...baseGroupProps}>
+          {/* 三出复叶（6 组，每组 3 小叶，构成莲座） */}
+          {[0, 1, 2, 3, 4, 5].map((i) => {
+            const a = (i / 6) * Math.PI * 2;
+            const cx = Math.cos(a) * 0.055;
+            const cz = Math.sin(a) * 0.055;
             return (
-              <mesh
-                key={i}
-                position={[Math.cos(a) * 0.05, 0.04, Math.sin(a) * 0.05]}
-                rotation={[Math.PI / 2.5, 0, a]}
-                castShadow
-              >
-                <coneGeometry args={[0.04, 0.09, 4]} />
-                <meshStandardMaterial color={leaf} />
-              </mesh>
+              <group key={`rosette${i}`} position={[cx, 0.035, cz]} rotation={[0, a, 0]}>
+                {[-0.3, 0, 0.3].map((offset, k) => (
+                  <mesh
+                    key={k}
+                    position={[0, 0.01, 0.02 + Math.abs(offset) * 0.01]}
+                    rotation={[Math.PI / 2.6, offset, 0]}
+                    castShadow
+                    scale={[0.9, 0.12, 1]}
+                  >
+                    <sphereGeometry args={[0.028, 8, 6]} />
+                    <meshStandardMaterial color={leaf} roughness={0.85} side={THREE.DoubleSide} />
+                  </mesh>
+                ))}
+              </group>
             );
           })}
-          {/* 草莓果实 */}
-          <mesh position={[0.04, 0.05, 0]} castShadow scale={[1, 1.3, 1]}>
-            <coneGeometry args={[0.025, 0.05, 8]} />
-            <meshStandardMaterial color={fruit} emissive={fruit} emissiveIntensity={0.15} />
-          </mesh>
-          <mesh position={[-0.03, 0.05, 0.04]} castShadow scale={[1, 1.3, 1]}>
-            <coneGeometry args={[0.022, 0.045, 8]} />
-            <meshStandardMaterial color={fruit} emissive={fruit} emissiveIntensity={0.15} />
+          {/* 2 颗草莓果（心形：用倒圆锥 + 顶部绿色萼片） */}
+          {[
+            [0.045, 0.04, 0, 1, 0.028],
+            [-0.035, 0.04, 0.045, 1, 0.024],
+          ].map(([fx, fy, fz, , fr], i) => (
+            <group key={`berry${i}`} position={[fx, fy, fz]}>
+              {/* 果实：倒立锥（尖端朝下），略圆润 */}
+              <mesh rotation={[Math.PI, 0, 0]} castShadow>
+                <coneGeometry args={[fr, fr * 2.0, 10]} />
+                <meshStandardMaterial
+                  color={fruit}
+                  emissive={fruit}
+                  emissiveIntensity={0.1}
+                  roughness={0.45}
+                />
+              </mesh>
+              {/* 顶部绿色萼片（星形 5 瓣） */}
+              {[0, 1, 2, 3, 4].map((k) => {
+                const ang = (k / 5) * Math.PI * 2;
+                return (
+                  <mesh
+                    key={k}
+                    position={[Math.cos(ang) * fr * 0.7, fr * 1.0, Math.sin(ang) * fr * 0.7]}
+                    rotation={[Math.PI / 2 - 0.5, ang, 0]}
+                  >
+                    <coneGeometry args={[fr * 0.25, fr * 0.6, 4]} />
+                    <meshStandardMaterial color="#15803d" />
+                  </mesh>
+                );
+              })}
+            </group>
+          ))}
+          {/* 一朵白色小花 */}
+          <mesh position={[0.02, 0.07, -0.04]} rotation={[Math.PI / 2, 0, 0]}>
+            <sphereGeometry args={[0.014, 8, 6]} />
+            <meshStandardMaterial color="#fef2f2" emissive="#fecaca" emissiveIntensity={0.2} />
           </mesh>
         </group>
       );
 
-    // 辣椒：直立茎 + 下垂红辣椒
+    // ── 辣椒：丛状多叶 + 3 根下垂尖锥红椒 ──
     case "辣椒":
       return (
-        <group position={position}>
-          <mesh position={[0, 0.06, 0]} castShadow>
-            <cylinderGeometry args={[0.011, 0.014, 0.2, 6]} />
-            <meshStandardMaterial color="#65a30d" />
+        <group {...baseGroupProps}>
+          {/* 主茎 */}
+          <mesh position={[0, 0.09, 0]} castShadow>
+            <cylinderGeometry args={[0.010, 0.013, 0.18, 6]} />
+            <meshStandardMaterial color="#65a30d" roughness={0.9} />
           </mesh>
-          <mesh position={[0, 0.18, 0]} castShadow>
-            <sphereGeometry args={[0.07, 10, 8]} />
-            <meshStandardMaterial color={leaf} />
-          </mesh>
-          {/* 下垂的辣椒 */}
-          <mesh position={[0.04, 0.12, 0]} rotation={[0, 0, Math.PI / 7]} castShadow scale={[1, 2.5, 1]}>
-            <coneGeometry args={[0.018, 0.05, 8]} />
-            <meshStandardMaterial color={fruit} emissive={fruit} emissiveIntensity={0.2} />
-          </mesh>
-          <mesh position={[-0.04, 0.10, 0.02]} rotation={[0, 0, -Math.PI / 7]} castShadow scale={[1, 2.5, 1]}>
-            <coneGeometry args={[0.016, 0.045, 8]} />
-            <meshStandardMaterial color={fruit} emissive={fruit} emissiveIntensity={0.2} />
-          </mesh>
-        </group>
-      );
-
-    // 生菜：圆球状叶团（深绿）
-    case "生菜":
-      return (
-        <group position={position}>
-          {/* 多片叶子层叠 */}
-          {[0, 1, 2, 3, 4].map((i) => {
-            const a = (i / 5) * Math.PI * 2;
+          {/* 深绿色椭圆叶（7 片分布） */}
+          {[0, 1, 2, 3, 4, 5, 6].map((i) => {
+            const a = (i / 7) * Math.PI * 2 + i * 0.2;
+            const y = 0.07 + (i % 3) * 0.04;
             return (
               <mesh
-                key={i}
-                position={[Math.cos(a) * 0.04, 0.05, Math.sin(a) * 0.04]}
-                rotation={[Math.PI / 4, a, 0]}
+                key={`l${i}`}
+                position={[Math.cos(a) * 0.045, y, Math.sin(a) * 0.045]}
+                rotation={[Math.PI / 2.5, a, 0]}
                 castShadow
+                scale={[0.7, 0.15, 1.3]}
               >
-                <sphereGeometry args={[0.06, 8, 6]} />
-                <meshStandardMaterial color={leaf} />
+                <sphereGeometry args={[0.04, 8, 6]} />
+                <meshStandardMaterial color={leaf} roughness={0.85} />
               </mesh>
             );
           })}
-          <mesh position={[0, 0.07, 0]} castShadow>
-            <sphereGeometry args={[0.05, 10, 8]} />
-            <meshStandardMaterial color={fruit} />
+          {/* 3 根下垂尖辣椒（锥形 + 向下 + 略微弯曲） */}
+          {[
+            [0.045, 0.13, 0.01, Math.PI - 0.15, 0.017, 3.2],
+            [-0.04, 0.12, 0.03, Math.PI + 0.2, 0.015, 3.0],
+            [0.015, 0.11, -0.05, Math.PI, 0.014, 2.8],
+          ].map(([cx, cy, cz, rx, rr, len], i) => (
+            <group key={`p${i}`} position={[cx, cy, cz]}>
+              {/* 辣椒果 */}
+              <mesh rotation={[rx, 0, (i - 1) * 0.1]} castShadow scale={[1, len, 1]}>
+                <coneGeometry args={[rr, rr * 2.5, 8]} />
+                <meshStandardMaterial
+                  color={fruit}
+                  emissive={fruit}
+                  emissiveIntensity={0.15}
+                  roughness={0.35}
+                />
+              </mesh>
+              {/* 绿色蒂把 */}
+              <mesh position={[0, 0.005, 0]}>
+                <cylinderGeometry args={[rr * 0.7, rr * 0.9, rr * 0.8, 6]} />
+                <meshStandardMaterial color="#15803d" />
+              </mesh>
+            </group>
+          ))}
+        </group>
+      );
+
+    // ── 生菜：矮莲座卷叶球（多片弧形叶片交叠） ──
+    case "生菜":
+      return (
+        <group {...baseGroupProps}>
+          {/* 外圈大叶（8 片，波浪状半开） */}
+          {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => {
+            const a = (i / 8) * Math.PI * 2;
+            return (
+              <mesh
+                key={`o${i}`}
+                position={[Math.cos(a) * 0.055, 0.04, Math.sin(a) * 0.055]}
+                rotation={[Math.PI / 2.2, a, 0.2]}
+                castShadow
+                scale={[1.2, 0.18, 1.35]}
+              >
+                <sphereGeometry args={[0.055, 10, 6]} />
+                <meshStandardMaterial
+                  color={leaf}
+                  roughness={0.85}
+                  side={THREE.DoubleSide}
+                />
+              </mesh>
+            );
+          })}
+          {/* 内圈嫩叶（6 片，更浅色） */}
+          {[0, 1, 2, 3, 4, 5].map((i) => {
+            const a = (i / 6) * Math.PI * 2 + 0.3;
+            return (
+              <mesh
+                key={`i${i}`}
+                position={[Math.cos(a) * 0.03, 0.07, Math.sin(a) * 0.03]}
+                rotation={[Math.PI / 3, a, 0]}
+                castShadow
+                scale={[0.9, 0.16, 1.1]}
+              >
+                <sphereGeometry args={[0.038, 10, 6]} />
+                <meshStandardMaterial color={fruit} roughness={0.8} side={THREE.DoubleSide} />
+              </mesh>
+            );
+          })}
+          {/* 叶球芯 */}
+          <mesh position={[0, 0.08, 0]} castShadow>
+            <sphereGeometry args={[0.028, 10, 8]} />
+            <meshStandardMaterial color={fruit} roughness={0.9} />
           </mesh>
         </group>
       );
 
-    // 茄子：紫色椭圆果实
+    // ── 茄子：粗壮茎 + 大裂叶 + 下垂紫色长椭圆果（带绿色萼片） ──
     case "茄子":
       return (
-        <group position={position}>
-          <mesh position={[0, 0.05, 0]} castShadow>
-            <cylinderGeometry args={[0.012, 0.016, 0.18, 6]} />
-            <meshStandardMaterial color="#65a30d" />
+        <group {...baseGroupProps}>
+          {/* 主茎 */}
+          <mesh position={[0, 0.10, 0]} castShadow>
+            <cylinderGeometry args={[0.013, 0.017, 0.2, 6]} />
+            <meshStandardMaterial color="#4d7c0f" roughness={0.9} />
           </mesh>
-          <mesh position={[0, 0.16, 0]} castShadow>
-            <sphereGeometry args={[0.075, 10, 8]} />
-            <meshStandardMaterial color={leaf} />
-          </mesh>
-          {/* 茄子果（紫色细椭圆） */}
-          <mesh position={[0.05, 0.10, 0]} rotation={[0, 0, Math.PI / 6]} castShadow scale={[1, 2, 1]}>
-            <sphereGeometry args={[0.025, 10, 8]} />
-            <meshStandardMaterial color={fruit} emissive={fruit} emissiveIntensity={0.15} />
-          </mesh>
-          <mesh position={[-0.04, 0.08, 0.03]} rotation={[0, 0, -Math.PI / 6]} castShadow scale={[1, 2, 1]}>
-            <sphereGeometry args={[0.022, 10, 8]} />
-            <meshStandardMaterial color={fruit} emissive={fruit} emissiveIntensity={0.15} />
-          </mesh>
+          {/* 大裂叶（5 片，深绿略带紫色调） */}
+          {[0, 1, 2, 3, 4].map((i) => {
+            const a = (i / 5) * Math.PI * 2;
+            const y = 0.11 + (i % 2) * 0.04;
+            return (
+              <mesh
+                key={`l${i}`}
+                position={[Math.cos(a) * 0.05, y, Math.sin(a) * 0.05]}
+                rotation={[Math.PI / 2.8, a, 0]}
+                castShadow
+                scale={[1.25, 0.12, 1.4]}
+              >
+                <sphereGeometry args={[0.055, 10, 6]} />
+                <meshStandardMaterial color="#166534" roughness={0.85} side={THREE.DoubleSide} />
+              </mesh>
+            );
+          })}
+          {/* 2 根下垂紫色茄子（长椭圆 + 顶端绿萼） */}
+          {[
+            [0.06, 0.10, 0.01, Math.PI / 8, 0.026, 2.3],
+            [-0.05, 0.09, 0.04, -Math.PI / 9, 0.024, 2.1],
+          ].map(([cx, cy, cz, rz, rr, len], i) => (
+            <group key={`e${i}`} position={[cx, cy, cz]} rotation={[0, 0, rz]}>
+              {/* 果实主体 */}
+              <mesh castShadow scale={[1, len, 1]}>
+                <capsuleGeometry args={[rr, rr * 1.5, 4, 12]} />
+                <meshStandardMaterial
+                  color={fruit}
+                  roughness={0.3}
+                  metalness={0.1}
+                  emissive="#4c1d95"
+                  emissiveIntensity={0.1}
+                />
+              </mesh>
+              {/* 顶部绿色萼片（帽状） */}
+              <mesh position={[0, rr * len * 0.75, 0]} castShadow>
+                <coneGeometry args={[rr * 1.15, rr * 0.9, 6]} />
+                <meshStandardMaterial color="#166534" roughness={0.8} />
+              </mesh>
+              {/* 短果柄 */}
+              <mesh position={[0, rr * len * 1.05, 0]}>
+                <cylinderGeometry args={[rr * 0.2, rr * 0.3, rr * 0.6, 6]} />
+                <meshStandardMaterial color="#4d7c0f" />
+              </mesh>
+            </group>
+          ))}
         </group>
       );
 
@@ -237,11 +437,17 @@ function MiniGreenhouse({
   const pumpRef = useRef<THREE.Group>(null);
   const pumpSpeedRef = useRef(0);
   const pumpOn = data.waterOn ?? data.motorOn;
+  // 性能：风扇/水泵都关闭且已减速到 0 时，tick 不运行（避免 6 个大棚每帧高频计算）
   useFrame((_, delta) => {
     const target = data.motorOn ? 8 : 0;
+    const pumpTarget = pumpOn ? -12 : 0;
+    // 全部静止时直接跳出
+    if (
+      target === 0 && pumpTarget === 0 &&
+      Math.abs(speedRef.current) < 1e-3 && Math.abs(pumpSpeedRef.current) < 1e-3
+    ) return;
     speedRef.current += (target - speedRef.current) * Math.min(1, delta * 4);
     if (fanRef.current) fanRef.current.rotation.z += speedRef.current * delta;
-    const pumpTarget = pumpOn ? -12 : 0;
     pumpSpeedRef.current += (pumpTarget - pumpSpeedRef.current) * Math.min(1, delta * 4);
     if (pumpRef.current) pumpRef.current.rotation.y += pumpSpeedRef.current * delta;
   });
@@ -287,16 +493,16 @@ function MiniGreenhouse({
         />
       </mesh>
 
-      {/* 玻璃拱顶 (半圆柱体) - 平边下沉贴合地基顶部 */}
+      {/* 玻璃拱顶 (半圆柱体) - 平边下沉贴合地基顶部
+          性能：改用 meshStandardMaterial + opacity，避免 transmission 触发额外的 opaque pass */}
       <mesh position={[0, 0.08, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <cylinderGeometry args={[R, R, W, 24, 1, true, 0, Math.PI]} />
-        <meshPhysicalMaterial
+        <meshStandardMaterial
           color={glassColor}
           transparent
-          opacity={data.ledOn ? 0.45 : 0.32}
-          roughness={0.05}
-          transmission={0.7}
-          thickness={0.05}
+          opacity={data.ledOn ? 0.38 : 0.28}
+          roughness={0.1}
+          metalness={0.1}
           side={THREE.DoubleSide}
           emissive={data.ledOn ? "#fde047" : "#000000"}
           emissiveIntensity={data.ledOn ? 0.5 : 0}
@@ -307,13 +513,12 @@ function MiniGreenhouse({
       {[-W / 2, W / 2].map((z) => (
         <mesh key={z} position={[0, 0.08, z]}>
           <circleGeometry args={[R, 24, 0, Math.PI]} />
-          <meshPhysicalMaterial
+          <meshStandardMaterial
             color={glassColor}
             transparent
-            opacity={0.28}
-            roughness={0.05}
-            transmission={0.8}
-            thickness={0.05}
+            opacity={0.22}
+            roughness={0.1}
+            metalness={0.1}
             side={THREE.DoubleSide}
           />
         </mesh>
@@ -862,19 +1067,8 @@ function FarmScene({
   return (
     <>
       <ambientLight intensity={1.0} />
-      <directionalLight
-        position={[6, 10, 6]}
-        intensity={1.5}
-        castShadow
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
-        shadow-camera-left={-18}
-        shadow-camera-right={18}
-        shadow-camera-top={12}
-        shadow-camera-bottom={-12}
-        shadow-camera-near={0.5}
-        shadow-camera-far={40}
-      />
+      {/* directionalLight 取消 castShadow：已以 ContactShadows 提供地面 AO，避免阴影通道 */}
+      <directionalLight position={[6, 10, 6]} intensity={1.5} />
       <directionalLight position={[-6, 8, -4]} intensity={0.5} color="#bee3f8" />
       <hemisphereLight args={["#dbeafe", "#65a30d", 0.7]} />
       {/* 太阳本体可见 */}
@@ -1159,8 +1353,13 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
       </div>
 
       <Canvas
-        shadows
-        dpr={[1, 2]}
+        // shadows 关闭：场景里有 1000+ 作物/装饰 mesh，阴影通道每帧重渲染成本极高；
+        // 地面 AO 已由 ContactShadows 提供，视觉差异几乎不可见
+        shadows={false}
+        // DPR 封顶 1.5：Retina/4K 下像素数量 ×1.5 的渲染量，而非 ×2
+        dpr={[1, 1.5]}
+        // 渲染器调优：保留 antialias 但启用 high-performance GPU
+        gl={{ antialias: true, powerPreference: "high-performance", alpha: true }}
         camera={{ position: [14, 11, 16], fov: 45 }}
         style={{ background: "transparent" }}
       >
