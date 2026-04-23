@@ -1,4 +1,4 @@
-package com.smartagri.agriagent.controller;
+banpackage com.smartagri.agriagent.controller;
 
 import com.smartagri.agriagent.dto.AgriAgentChatRequest;
 import com.smartagri.agriagent.dto.AgriAgentChatResponse;

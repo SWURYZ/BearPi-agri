@@ -816,24 +816,24 @@ function Mountain({ position, scale = 1, color = "#475569" }: { position: [numbe
   );
 }
 
-function Cloud({ position }: { position: [number, number, number] }) {
+function Cloud({ position, color = "#ffffff" }: { position: [number, number, number]; color?: string }) {
   return (
     <group position={position}>
       <mesh>
         <sphereGeometry args={[0.5, 12, 10]} />
-        <meshStandardMaterial color="#ffffff" roughness={1} emissive="#ffffff" emissiveIntensity={0.05} />
+        <meshStandardMaterial color={color} roughness={1} emissive={color} emissiveIntensity={0.05} />
       </mesh>
       <mesh position={[0.5, 0.05, 0]}>
         <sphereGeometry args={[0.4, 12, 10]} />
-        <meshStandardMaterial color="#ffffff" roughness={1} emissive="#ffffff" emissiveIntensity={0.05} />
+        <meshStandardMaterial color={color} roughness={1} emissive={color} emissiveIntensity={0.05} />
       </mesh>
       <mesh position={[-0.45, 0.0, 0.1]}>
         <sphereGeometry args={[0.42, 12, 10]} />
-        <meshStandardMaterial color="#ffffff" roughness={1} emissive="#ffffff" emissiveIntensity={0.05} />
+        <meshStandardMaterial color={color} roughness={1} emissive={color} emissiveIntensity={0.05} />
       </mesh>
       <mesh position={[0.15, 0.25, 0]}>
         <sphereGeometry args={[0.3, 12, 10]} />
-        <meshStandardMaterial color="#ffffff" roughness={1} emissive="#ffffff" emissiveIntensity={0.05} />
+        <meshStandardMaterial color={color} roughness={1} emissive={color} emissiveIntensity={0.05} />
       </mesh>
     </group>
   );
@@ -981,12 +981,111 @@ function weatherEmoji(text: string): string {
   if (/晴/.test(text)) return "☀️";
   return "🌤️";
 }
-function WeatherSkyPanel() {
+
+// 天气种类归一化：用于驱动 3D 场景的天空/云/粒子效果
+export type WeatherKind = "sunny" | "cloudy" | "overcast" | "rain" | "storm" | "snow" | "fog";
+export interface WeatherSceneParams {
+  kind: WeatherKind;
+  /** 降水/降雪强度 0..1（小→大→暴） */
+  intensity: number;
+  /** 天空基础色 */
+  skyColor: string;
+  /** 太阳可见度 0..1 */
+  sunOpacity: number;
+  /** 方向光强度倍率 0..1 */
+  lightScale: number;
+  /** 云朵数量上限 */
+  cloudCount: number;
+  /** 云朵颜色 */
+  cloudColor: string;
+  /** 是否启用雾 */
+  fogEnabled: boolean;
+  fogNear: number;
+  fogFar: number;
+  fogColor: string;
+}
+function classifyWeather(text: string | undefined): WeatherKind {
+  if (!text) return "sunny";
+  if (/雪/.test(text)) return "snow";
+  if (/雷|暴雨/.test(text)) return "storm";
+  if (/雨/.test(text)) return "rain";
+  if (/雾|霾|沙|尘/.test(text)) return "fog";
+  if (/阴/.test(text)) return "overcast";
+  if (/多云|少云/.test(text)) return "cloudy";
+  if (/晴/.test(text)) return "sunny";
+  return "cloudy";
+}
+function rainIntensity(text: string | undefined): number {
+  if (!text) return 0.5;
+  if (/暴雨|大暴雨|特大暴雨/.test(text)) return 1.0;
+  if (/大雨|大雪/.test(text)) return 0.85;
+  if (/中雨|中雪/.test(text)) return 0.65;
+  if (/小雨|小雪|阵雨|阵雪|毛毛/.test(text)) return 0.4;
+  return 0.55;
+}
+function weatherSceneParams(text: string | undefined): WeatherSceneParams {
+  const kind = classifyWeather(text);
+  const intensity = kind === "rain" || kind === "storm" || kind === "snow" ? rainIntensity(text) : 0;
+  switch (kind) {
+    case "sunny":
+      return {
+        kind, intensity: 0,
+        skyColor: "#87ceeb", sunOpacity: 1, lightScale: 1,
+        cloudCount: 1, cloudColor: "#ffffff",
+        fogEnabled: false, fogNear: 20, fogFar: 60, fogColor: "#bfdbfe",
+      };
+    case "cloudy":
+      return {
+        kind, intensity: 0,
+        skyColor: "#a7c8e0", sunOpacity: 0.7, lightScale: 0.85,
+        cloudCount: 4, cloudColor: "#f8fafc",
+        fogEnabled: false, fogNear: 20, fogFar: 60, fogColor: "#cbd5e1",
+      };
+    case "overcast":
+      return {
+        kind, intensity: 0,
+        skyColor: "#8a9aab", sunOpacity: 0.15, lightScale: 0.55,
+        cloudCount: 7, cloudColor: "#cbd5e1",
+        fogEnabled: true, fogNear: 18, fogFar: 55, fogColor: "#94a3b8",
+      };
+    case "rain":
+      return {
+        kind, intensity,
+        skyColor: "#6b7785", sunOpacity: 0, lightScale: 0.45,
+        cloudCount: 8, cloudColor: "#94a3b8",
+        fogEnabled: true, fogNear: 14, fogFar: 48, fogColor: "#7a8895",
+      };
+    case "storm":
+      return {
+        kind, intensity,
+        skyColor: "#475569", sunOpacity: 0, lightScale: 0.3,
+        cloudCount: 9, cloudColor: "#64748b",
+        fogEnabled: true, fogNear: 10, fogFar: 40, fogColor: "#64748b",
+      };
+    case "snow":
+      return {
+        kind, intensity,
+        skyColor: "#c9d4de", sunOpacity: 0.25, lightScale: 0.75,
+        cloudCount: 7, cloudColor: "#f1f5f9",
+        fogEnabled: true, fogNear: 16, fogFar: 52, fogColor: "#e2e8f0",
+      };
+    case "fog":
+      return {
+        kind, intensity: 0,
+        skyColor: "#b8c0c8", sunOpacity: 0.1, lightScale: 0.5,
+        cloudCount: 3, cloudColor: "#d1d5db",
+        fogEnabled: true, fogNear: 6, fogFar: 28, fogColor: "#cbd5e1",
+      };
+  }
+}
+
+// 共享的实时天气 Hook：1 小时刷新一次；同时对外暴露 daily / error
+function useQWeatherDaily() {
   const [daily, setDaily] = useState<QWeatherDaily[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let aborted = false;
-    (async () => {
+    const load = async () => {
       try {
         const res = await fetch(
           `${QWEATHER_HOST}/v7/weather/7d?location=${QWEATHER_LOCATION}`,
@@ -1001,12 +1100,24 @@ function WeatherSkyPanel() {
       } catch (e: any) {
         if (!aborted) setError(e?.message ?? "加载失败");
       }
-    })();
+    };
+    load();
+    const timer = window.setInterval(load, 60 * 60 * 1000);
     return () => {
       aborted = true;
+      window.clearInterval(timer);
     };
   }, []);
+  return { daily, error };
+}
 
+function WeatherSkyPanel({
+  daily,
+  error,
+}: {
+  daily: QWeatherDaily[] | null;
+  error: string | null;
+}) {
   return (
     <div
       style={{
@@ -1093,27 +1204,134 @@ function WeatherSkyPanel() {
   );
 }
 
-function SkyAndDistance() {
+function SkyAndDistance({ params }: { params: WeatherSceneParams }) {
+  // 固定的云朵备选位置池；依据当前天气取前 cloudCount 个渲染
+  const cloudPool: [number, number, number][] = [
+    [-6, 5, -3], [3, 6, -4], [7, 5.5, -1], [-4, 5.8, 4],
+    [0, 6.3, -6], [-9, 5.2, 2], [8, 6, 3], [5, 5.4, -7], [-2, 6.5, -5],
+  ];
+  const mountainTint = params.kind === "storm" || params.kind === "rain" || params.kind === "overcast" ? 0.7 : 1.0;
+  const mkColor = (hex: string) => {
+    const c = new THREE.Color(hex);
+    c.multiplyScalar(mountainTint);
+    return `#${c.getHexString()}`;
+  };
   return (
     <group>
-      {/* 天空球 (内表面渐变天空) */}
+      {/* 天空球 (内表面渐变天空) — 颜色随天气变化 */}
       <mesh>
         <sphereGeometry args={[40, 32, 32]} />
-        <meshBasicMaterial color="#87ceeb" side={THREE.BackSide} />
+        <meshBasicMaterial color={params.skyColor} side={THREE.BackSide} />
       </mesh>
       {/* 远处山脉 */}
-      <Mountain position={[-9, 0, -7]} scale={1.6} color="#64748b" />
-      <Mountain position={[-5, 0, -8]} scale={2.0} color="#475569" />
-      <Mountain position={[0, 0, -8.5]} scale={2.4} color="#334155" />
-      <Mountain position={[5, 0, -8]} scale={2.0} color="#475569" />
-      <Mountain position={[9, 0, -7]} scale={1.6} color="#64748b" />
-      {/* 云朵 */}
-      <Cloud position={[-6, 5, -3]} />
-      <Cloud position={[3, 6, -4]} />
-      <Cloud position={[7, 5.5, -1]} />
-      <Cloud position={[-4, 5.8, 4]} />
+      <Mountain position={[-9, 0, -7]} scale={1.6} color={mkColor("#64748b")} />
+      <Mountain position={[-5, 0, -8]} scale={2.0} color={mkColor("#475569")} />
+      <Mountain position={[0, 0, -8.5]} scale={2.4} color={mkColor("#334155")} />
+      <Mountain position={[5, 0, -8]} scale={2.0} color={mkColor("#475569")} />
+      <Mountain position={[9, 0, -7]} scale={1.6} color={mkColor("#64748b")} />
+      {/* 云朵：数量由天气决定 */}
+      {cloudPool.slice(0, params.cloudCount).map((p, i) => (
+        <Cloud key={i} position={p} color={params.cloudColor} />
+      ))}
     </group>
   );
+}
+
+// ============== 降水/降雪粒子系统 ==============
+function PrecipitationParticles({
+  kind,
+  intensity,
+}: {
+  kind: "rain" | "snow";
+  intensity: number;
+}) {
+  const pointsRef = useRef<THREE.Points>(null);
+  const areaX = 30;
+  const areaZ = 22;
+  const topY = 14;
+  const bottomY = 0.2;
+  const count = Math.floor(
+    (kind === "snow" ? 600 : 1400) * Math.max(0.3, Math.min(1, intensity))
+  );
+
+  const { positions, velocities } = useMemo(() => {
+    const pos = new Float32Array(count * 3);
+    const vel = new Float32Array(count); // 每颗粒独立的下落速度
+    for (let i = 0; i < count; i++) {
+      pos[i * 3 + 0] = (Math.random() - 0.5) * areaX;
+      pos[i * 3 + 1] = bottomY + Math.random() * (topY - bottomY);
+      pos[i * 3 + 2] = (Math.random() - 0.5) * areaZ;
+      vel[i] = kind === "snow"
+        ? 0.6 + Math.random() * 0.8
+        : (6.0 + Math.random() * 4.0) * (0.6 + intensity * 0.8);
+    }
+    return { positions: pos, velocities: vel };
+  }, [count, kind, intensity]);
+
+  useFrame((_, delta) => {
+    const pts = pointsRef.current;
+    if (!pts) return;
+    const geom = pts.geometry as THREE.BufferGeometry;
+    const attr = geom.getAttribute("position") as THREE.BufferAttribute;
+    const arr = attr.array as Float32Array;
+    const t = performance.now() * 0.001;
+    for (let i = 0; i < count; i++) {
+      const idx = i * 3;
+      arr[idx + 1] -= velocities[i] * delta;
+      if (kind === "snow") {
+        // 雪花横向漂移
+        arr[idx + 0] += Math.sin(t * 0.8 + i) * delta * 0.3;
+        arr[idx + 2] += Math.cos(t * 0.6 + i * 0.7) * delta * 0.2;
+      }
+      if (arr[idx + 1] < bottomY) {
+        arr[idx + 1] = topY;
+        arr[idx + 0] = (Math.random() - 0.5) * areaX;
+        arr[idx + 2] = (Math.random() - 0.5) * areaZ;
+      }
+    }
+    attr.needsUpdate = true;
+  });
+
+  return (
+    <points ref={pointsRef}>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          args={[positions, 3]}
+          count={count}
+        />
+      </bufferGeometry>
+      <pointsMaterial
+        color={kind === "snow" ? "#ffffff" : "#cbd5e1"}
+        size={kind === "snow" ? 0.12 : 0.06}
+        transparent
+        opacity={kind === "snow" ? 0.95 : 0.65}
+        sizeAttenuation
+        depthWrite={false}
+      />
+    </points>
+  );
+}
+
+// 雷暴闪光（偶发整场亮起）
+function LightningFlash({ active }: { active: boolean }) {
+  const lightRef = useRef<THREE.PointLight>(null);
+  const stateRef = useRef({ nextAt: 0, flashUntil: 0 });
+  useFrame(() => {
+    if (!active || !lightRef.current) {
+      if (lightRef.current) lightRef.current.intensity = 0;
+      return;
+    }
+    const now = performance.now();
+    const st = stateRef.current;
+    if (st.nextAt === 0) st.nextAt = now + 2000 + Math.random() * 6000;
+    if (now > st.nextAt && st.flashUntil < now) {
+      st.flashUntil = now + 120 + Math.random() * 120;
+      st.nextAt = now + 3000 + Math.random() * 8000;
+    }
+    lightRef.current.intensity = now < st.flashUntil ? 4.0 : 0;
+  });
+  return <pointLight ref={lightRef} position={[0, 12, 0]} distance={60} color="#e0f2fe" intensity={0} />;
 }
 
 function PerimeterDecor() {
@@ -1173,11 +1391,13 @@ function FarmScene({
   hoveredName,
   setHoveredName,
   onSelect,
+  weatherParams,
 }: {
   greenhouses: FarmGreenhouse[];
   hoveredName: string | null;
   setHoveredName: (n: string | null) => void;
   onSelect: (name: string) => void;
+  weatherParams: WeatherSceneParams;
 }) {
   // 按大棚数量自适应布局 (2 行, 列数随数量扩展; 1 列居中, 2 列水平相邻)
   // 与原 2×3 硬编码保持一致: [-3.5, 0, 3.5] x [-1.45, 2.55]
@@ -1202,20 +1422,34 @@ function FarmScene({
 
   return (
     <>
-      <ambientLight intensity={1.0} />
+      <ambientLight intensity={1.0 * weatherParams.lightScale + 0.2} />
       {/* directionalLight 取消 castShadow：已以 ContactShadows 提供地面 AO，避免阴影通道 */}
-      <directionalLight position={[6, 10, 6]} intensity={1.5} />
-      <directionalLight position={[-6, 8, -4]} intensity={0.5} color="#bee3f8" />
-      <hemisphereLight args={["#dbeafe", "#65a30d", 0.7]} />
-      {/* 太阳本体可见 */}
-      <mesh position={[10, 13, -8]}>
-        <sphereGeometry args={[0.9, 16, 16]} />
-        <meshBasicMaterial color="#fef9c3" toneMapped={false} />
-      </mesh>
+      <directionalLight position={[6, 10, 6]} intensity={1.5 * weatherParams.lightScale} />
+      <directionalLight position={[-6, 8, -4]} intensity={0.5 * weatherParams.lightScale} color="#bee3f8" />
+      <hemisphereLight args={["#dbeafe", "#65a30d", 0.7 * weatherParams.lightScale + 0.15]} />
+      {weatherParams.fogEnabled && (
+        <fog attach="fog" args={[weatherParams.fogColor, weatherParams.fogNear, weatherParams.fogFar]} />
+      )}
+      {/* 太阳本体：被云/雨遮蔽时淡出 */}
+      {weatherParams.sunOpacity > 0.02 && (
+        <mesh position={[10, 13, -8]}>
+          <sphereGeometry args={[0.9, 16, 16]} />
+          <meshBasicMaterial color="#fef9c3" toneMapped={false} transparent opacity={weatherParams.sunOpacity} />
+        </mesh>
+      )}
 
-      <SkyAndDistance />
+      <SkyAndDistance params={weatherParams} />
       <PerimeterDecor />
       <FarmGround />
+
+      {/* 实时天气粒子：雨 / 雷暴 / 雪 */}
+      {(weatherParams.kind === "rain" || weatherParams.kind === "storm") && (
+        <PrecipitationParticles kind="rain" intensity={weatherParams.intensity} />
+      )}
+      {weatherParams.kind === "snow" && (
+        <PrecipitationParticles kind="snow" intensity={weatherParams.intensity} />
+      )}
+      <LightningFlash active={weatherParams.kind === "storm"} />
 
       {greenhouses.map((g, i) => {
         const [x, z] = layout[i] ?? [0, 0];
@@ -1245,6 +1479,12 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
   // 默认关闭手势控制，由用户手动开启
   const [gestureMode, setGestureMode] = useState(false);
   const [handStatus, setHandStatus] = useState<"idle" | "tracking" | "lost">("idle");
+  // 实时天气：驱动 3D 场景的天空 / 云朵 / 雨雪 / 光照
+  const { daily: weatherDaily, error: weatherError } = useQWeatherDaily();
+  const weatherParams = useMemo(
+    () => weatherSceneParams(weatherDaily?.[0]?.textDay),
+    [weatherDaily]
+  );
   const orbitRef = useRef<OrbitControlsImpl | null>(null);
   const initialCamPos = useRef<[number, number, number]>([14, 10, 14]);
   const initialTarget = useRef<[number, number, number]>([0, 0.5, 0]);
@@ -1449,7 +1689,8 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
       style={{
         height: "calc(100vh - 96px)",
         minHeight: 680,
-        background: "linear-gradient(180deg,#87ceeb 0%,#bfdbfe 70%,#dcfce7 100%)",
+        background: `linear-gradient(180deg, ${weatherParams.skyColor} 0%, ${weatherParams.fogColor} 70%, #dcfce7 100%)`,
+        transition: "background 1.2s ease",
       }}
     >
       {/* Header */}
@@ -1506,6 +1747,7 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
             hoveredName={hoveredName}
             setHoveredName={setHoveredName}
             onSelect={onSelect}
+            weatherParams={weatherParams}
           />
           <OrbitControls
             ref={orbitRef as any}
@@ -1531,7 +1773,7 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
       )}
 
       {/* 天气大屏：固定 DOM 覆盖层，不随 3D 视角变化 */}
-      <WeatherSkyPanel />
+      <WeatherSkyPanel daily={weatherDaily} error={weatherError} />
 
       {/* 手势模式提示面板 */}
       {gestureMode && (

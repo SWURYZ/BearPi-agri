@@ -416,3 +416,70 @@ export function stopGestureRecognition(): void {
   inferenceInFlight  = false;
   inferenceSeq       = 0;
 }
+
+// ── Pause / Resume (让出摄像头给其他功能使用，如拍照注册) ──────────────────
+// 与 stop 不同：保留 currentCallback 与已加载的模型，以便 resume 快速恢复。
+let pauseCount = 0;
+
+/**
+ * 暂停手势识别并释放摄像头（引用计数式）。
+ * 可多次调用；第一次调用立即释放摄像头，之后仅增加计数。
+ * 配对 {@link resumeGestureRecognition} 使用。
+ */
+export function pauseGestureRecognition(): void {
+  pauseCount += 1;
+  if (pauseCount > 1) return;
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((t) => t.stop());
+    cameraStream = null;
+  }
+  if (videoEl) {
+    videoEl.srcObject = null;
+    videoEl.remove();
+    videoEl = null;
+  }
+  // 清理瞬时状态，避免恢复后误触发上一次手势
+  pendingGesture     = "none";
+  pendingStartTime   = 0;
+  latestModelGesture = "none";
+  inferenceInFlight  = false;
+}
+
+/**
+ * 恢复手势识别（引用计数减一，归零时重新获取摄像头）。
+ */
+export async function resumeGestureRecognition(): Promise<void> {
+  if (pauseCount === 0) return;
+  pauseCount -= 1;
+  if (pauseCount > 0) return;
+  if (!currentCallback) return;          // 从未启动过，无需恢复
+  if (rafId !== null && cameraStream) return; // 已在运行
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480, facingMode: "user" },
+      audio: false,
+    });
+    cameraStream = stream;
+
+    const video = document.createElement("video");
+    video.srcObject  = stream;
+    video.playsInline = true;
+    video.muted      = true;
+    video.style.cssText =
+      "position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;";
+    document.body.appendChild(video);
+    await video.play();
+    videoEl = video;
+
+    lastEmittedTime = 0;
+    lastAnyTime     = 0;
+    rafId = requestAnimationFrame(processFrame);
+  } catch (err) {
+    console.warn("[GestureRec] resume failed", err);
+  }
+}
