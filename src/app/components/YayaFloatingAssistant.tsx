@@ -290,7 +290,17 @@ const PHONETIC_FIXES: Array<[RegExp, string]> = [
   [/二氧化探|二氧化탄|二氧化太/g, "二氧化碳"],
   [/湿杜|湿渡|适度/g, "湿度"],
   [/温渡|问度/g, "温度"],
-  [/大捧|大朋/g, "大棚"],
+  // ── 大棚：全局统一同音字纠正（所有下游解析都会受益） ──
+  //   "大X" 里的 X 若是 棚 的常见同音/近音字一律视为「大棚」
+  [/大(鹏|朋|蓬|篷|铺|彭|硼|捧|碰|棒|膨|盆|喷)/g, "大棚"],
+  //   "搭X / 塔X" → "大棚"
+  [/[搭塔哒](棚|鹏|朋|蓬|篷)/g, "大棚"],
+  //   "N号大棚" 里的「号」常见误识为「好/豪/耗/嚎」
+  [/(一|二|两|三|四|五|六|[1-6])(好|豪|耗|嚎)(大棚)/g, "$1号$3"],
+  //   罕见情况："一号大鹏"在前一条已纠正，但若 ASR 直接吐出 "一浩大棚" / "1耗大棚" 也覆盖
+  [/(一|二|两|三|四|五|六|[1-6])(浩|昊|郝|皓)大棚/g, "$1号大棚"],
+  //   "聚角/聚脚/具焦" → "聚焦"
+  [/聚(角|脚)|具焦/g, "聚焦"],
 ];
 
 function normalizeSpeechText(text: string): string {
@@ -359,12 +369,20 @@ function parseGreenhouseNo(text: string): string {
  * 解析"聚焦于 N 号大棚 / 查看 N 号大棚 / 进入 N 号大棚"等指令
  * 返回 { ghNo: 1-6, label: "1号大棚" } 或 null
  * "返回全景 / 退出大棚 / 关闭大棚视图" → { back: true }
+ *
+ * 同音字容错：上游 normalizeSpeechText/PHONETIC_FIXES 已统一把「大鹏/大朋/大蓬…」、
+ *            「一好大棚/1豪大棚」等纠正为标准写法，此处只做必要兜底。
  */
 function parseGreenhouseFocusCommand(
   text: string,
 ): { ghNo: number; label: string } | { back: true } | null {
-  const t = text.replace(/\s+/g, "");
-  // 返回全景指令
+  let t = text.replace(/\s+/g, "");
+
+  // 兜底：若本函数从未经 normalizeSpeechText 的路径调用，也能识别最常见误识
+  t = t.replace(/大(鹏|朋|蓬|篷|铺|彭|硼|捧|碰|棒|膨|盆|喷)/g, "大棚");
+  t = t.replace(/[搭塔哒](棚|鹏|朋|蓬|篷)/g, "大棚");
+
+  // 返回全景指令（放在归一化之后）
   if (/(返回|退出|关闭|离开)(全景|大棚|大棚视图|大棚详情|聚焦)/.test(t)) {
     return { back: true };
   }
@@ -377,7 +395,7 @@ function parseGreenhouseFocusCommand(
   // 必须出现 "N号大棚" 且包含聚焦/查看/进入/打开/看看 等动词
   const m = norm.match(/([1-6])号大棚/);
   if (!m) return null;
-  const verbRe = /(聚焦|查看|看看|看一下|看一看|进入|打开|跳到|跳转到|切到|切换到|前往|去|到|展开)/;
+  const verbRe = /(聚焦|查看|看看|看一下|看一看|瞧瞧|瞅瞅|进入|打开|跳到|跳转到|切到|切换到|前往|去|到|展开|显示)/;
   if (!verbRe.test(norm)) return null;
   const ghNo = parseInt(m[1], 10);
   return { ghNo, label: `${ghNo}号大棚` };

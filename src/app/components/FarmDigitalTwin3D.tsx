@@ -922,13 +922,10 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
     let anchorPhi = 0;       // 抓取瞬间的相机 phi
     let refLength = 1;       // 手掌基准长度（腕 → 中指根）
 
-    // 缩放（仅在"未抓取"时启用，连续增量式：每帧 Δratio 转指数因子乘到 targetRadius）
-    let prevPinchRatio: number | null = null;       // 上一帧已平滑的 pinchRatio
-
-    // 相机平滑目标
+    // 相机平滑目标（仅角度；缩放已禁用）
     let targetTheta = 0;
     let targetPhi = 0;
-    let targetRadius = 0;
+    let targetRadius = 0;       // 由 OrbitControls 初始化，不再被手势修改
     let initialized = false;
 
     // ── 参数 ──
@@ -936,16 +933,7 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
     const DRAG_GAIN_X = 3.5;            // 横向：手平移≈1 个手掌长度 → 转 3.5 弧度
     const DRAG_GAIN_Y = 2.6;            // 纵向：稍弱
     const DRAG_DEADZONE = 0.05;         // 标准化偏移 < 5% 视为不动（死区）
-    // ── 缩放：行业标准"增量 + 指数 + 目标逼近"三步走 ──
-    // 1) 增量驱动：取 pinchRatio 的"帧间差值 Δ"作为信号源（手指捏合像鼠标滚轮）
-    // 2) 指数映射：Δ → 比例因子，乘到 targetRadius 上（人对缩放的感知是乘法）
-    // 3) 目标逼近：targetRadius 由 One Euro Filter 平滑收敛到实际相机半径
-    // 标准化捏合比例 pinchRatio = dist(拇指尖4, 食指尖8) / dist(食指根5, 小指根17)
-    const ZOOM_GAIN = 1.6;                // 指数增益：Δratio=1 → 半径 ×e^(±1.6) ≈ ±5x
-    const ZOOM_DEADZONE = 0.012;          // |Δratio| < 0.012 视为手颤，丢弃
-    const ZOOM_DELTA_CLAMP = 0.15;        // 单帧 |Δratio| 超过 0.15 视为跳变（识别噪声），丢弃
-    const PINCH_VALID_MIN = 0.05;         // pinchRatio 太小（手指完全重叠）通常是误检，跳过
-    const PINCH_VALID_MAX = 1.6;          // pinchRatio 太大（关键点跳飞）跳过
+    // 缩放已禁用：只保留握拳拖拽旋转视角
     // ── 平滑滤波：One Euro Filter ──
     // 静止/微动时大幅平滑（消除手颤），快速移动时几乎零延迟跟随
     // 参考: https://gery.casiez.net/1euro/
@@ -977,10 +965,6 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
     // 角度（弧度）：minCutoff 越小越柔；beta 越大对快速运动响应越灵敏
     const filterTheta  = new OneEuroFilter(/*min*/0.8, /*beta*/0.4, /*dCutoff*/1.0);
     const filterPhi    = new OneEuroFilter(0.8, 0.4, 1.0);
-    // 半径：minCutoff 偏柔，beta 略大，让快速捏合时仍能跟住，慢动作时极致平滑
-    const filterRadius = new OneEuroFilter(/*min*/1.2, /*beta*/0.6, /*dCutoff*/1.0);
-    // pinchRatio 源头平滑：手指尖抖动幅度大，必须在【输入端】先吃掉抖动
-    const filterPinch  = new OneEuroFilter(/*min*/1.5, /*beta*/0.05, /*dCutoff*/1.0);
 
     const initSpherical = () => {
       const ctl = orbitRef.current;
@@ -1036,9 +1020,6 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
       // ── 状态切换：握拳 → 张开：释放 ──
       if (!fistNow && isGrabbing) {
         isGrabbing = false;
-        // 释放后立即把缩放基线重置（避免把"释放瞬间的快速变化"当作有效缩放增量）
-        prevPinchRatio = null;
-        filterPinch.reset();
       }
 
       if (isGrabbing) {
@@ -1057,54 +1038,19 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
         targetPhi = Math.max(0.15, Math.min(Math.PI / 2.05,
           anchorPhi + ndy * DRAG_GAIN_Y,
         ));
-      } else {
-        // 张开手时：连续缩放（增量驱动 + 指数映射 + 目标逼近）
-        const rawRatio = detail.pinchRatio;
-
-        // 输入端有效性过滤：跳过明显的关键点跳变 / 误检
-        if (rawRatio < PINCH_VALID_MIN || rawRatio > PINCH_VALID_MAX) {
-          // 视为无效帧，不更新基线，等待下一帧稳定
-        } else {
-          // ① 源头先做 One Euro 平滑，吃掉指尖颤抖（这步是关键！）
-          const smoothedRatio = filterPinch.filter(rawRatio, now);
-
-          if (prevPinchRatio === null) {
-            // 第一帧：仅建立基线，不缩放
-            prevPinchRatio = smoothedRatio;
-          } else {
-            // ② 计算帧间增量 Δ（手指张开 → Δ>0 → 放大；捏合 → Δ<0 → 缩小）
-            let delta = smoothedRatio - prevPinchRatio;
-
-            // 死区：< 1.2% 视为手颤丢弃
-            if (Math.abs(delta) < ZOOM_DEADZONE) delta = 0;
-            // 跳变保护：单帧位移过大视为识别噪声，丢弃
-            if (Math.abs(delta) > ZOOM_DELTA_CLAMP) delta = 0;
-
-            if (delta !== 0) {
-              // ③ 指数映射：delta 转比例因子，乘到目标半径
-              //   delta>0（张开）→ factor<1 → 半径减小 → 拉近
-              //   delta<0（捏合）→ factor>1 → 半径增大 → 拉远
-              const factor = Math.exp(-delta * ZOOM_GAIN);
-              targetRadius = Math.max(6, Math.min(20, targetRadius * factor));
-            }
-            prevPinchRatio = smoothedRatio;
-          }
-        }
       }
+      // 张开手时：不做任何动作（缩放已禁用）
     };
 
     const lostHandler = () => {
       setHandStatus("lost");
-      // 手丢失：释放抓取，清空缩放状态
+      // 手丢失：释放抓取
       isGrabbing = false;
-      prevPinchRatio = null;
-      filterPinch.reset();
     };
 
     // 平滑 lerp 循环
     let raf = 0;
     const EPS_ANGLE = 1e-4;
-    const EPS_RADIUS = 1e-3;
     const animate = () => {
       const ctl = orbitRef.current;
       if (ctl && initialized) {
@@ -1113,19 +1059,17 @@ export function FarmDigitalTwin3D({ greenhouses, onSelect }: Props) {
         const sph = new THREE.Spherical().setFromVector3(offset);
 
         const tNow = performance.now();
-        // 用 One Euro Filter 把"目标值"过滤为这一帧应该到达的值
-        // 静止 → 强平滑（吃掉手颤）；快速运动 → 弱平滑（紧贴手）
+
+        // 角度：保持原 One Euro Filter 逻辑（视角转换不动）
         const newTheta  = filterTheta.filter(targetTheta,   tNow);
         const newPhi    = filterPhi.filter(targetPhi,       tNow);
-        const newRadius = filterRadius.filter(targetRadius, tNow);
+        // 半径：不再由手势控制，保留用户鼠标滚轮缩放（OrbitControls 自己维护 sph.radius）
 
         const dTheta  = newTheta  - sph.theta;
         const dPhi    = newPhi    - sph.phi;
-        const dRadius = newRadius - sph.radius;
-        if (Math.abs(dTheta) > EPS_ANGLE || Math.abs(dPhi) > EPS_ANGLE || Math.abs(dRadius) > EPS_RADIUS) {
+        if (Math.abs(dTheta) > EPS_ANGLE || Math.abs(dPhi) > EPS_ANGLE) {
           sph.theta  = newTheta;
           sph.phi    = newPhi;
-          sph.radius = newRadius;
           offset.setFromSpherical(sph);
           cam.position.copy(ctl.target).add(offset);
           cam.lookAt(ctl.target);
