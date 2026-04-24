@@ -703,7 +703,8 @@ export function RealtimeMonitor() {
   if (focusedGH !== null) {
     const isOnline = focusedGH === ONLINE_GREENHOUSE;
     const ghSV = isOnline ? sensorValues : simulateSensorValues(sensorValues, focusedGH);
-    const ghConn: ConnectionMode = isOnline ? connectionMode : "offline";
+    // 非 1 号大棚：使用模拟数据，状态标为 "waiting"（模拟中），不显示离线
+    const ghConn: ConnectionMode = isOnline ? connectionMode : "waiting";
     const vs = virtualSwitches[focusedGH] ?? { led: false, motor: false, water: false };
     // 1号大棚:补光灯/风扇用真实设备状态;浇水用虚拟
     // 其他大棚:三个开关全部虚拟
@@ -916,7 +917,8 @@ export function RealtimeMonitor() {
             ledOn: isOnline ? ledOn : vs.led,
             motorOn: isOnline ? motorOn : vs.motor,
             waterOn: isOnline ? waterOn : vs.water,
-            connectionMode: isOnline ? connectionMode : "offline",
+            // 非 1 号大棚：使用模拟数据，状态与实时监测详情保持一致（"waiting"），不再显示为离线
+            connectionMode: isOnline ? connectionMode : "waiting",
             hasAlert: false,
           };
         })}
