@@ -607,32 +607,32 @@ function parseThresholdIntent(text: string) {
 type LlmIntent =
   | { action: "navigate"; to: string; label: string; reply: string }
   | {
-      action: "device_control";
-      commandType: "LIGHT_CONTROL" | "MOTOR_CONTROL";
-      commandAction: "ON" | "OFF";
-      greenhouseNo?: string;
-      label: string;
-      reply: string;
-    }
+    action: "device_control";
+    commandType: "LIGHT_CONTROL" | "MOTOR_CONTROL";
+    commandAction: "ON" | "OFF";
+    greenhouseNo?: string;
+    label: string;
+    reply: string;
+  }
   | { action: "light_schedule"; turnOnTime: string; turnOffTime: string; reply: string }
   | {
-      action: "threshold_alert";
-      greenhouseNo: string;
-      metric: "temp" | "humidity" | "light" | "co2";
-      min: number;
-      max: number;
-      reply: string;
-    }
+    action: "threshold_alert";
+    greenhouseNo: string;
+    metric: "temp" | "humidity" | "light" | "co2";
+    min: number;
+    max: number;
+    reply: string;
+  }
   | {
-      action: "automation_rule";
-      greenhouseNo: string;
-      metric: "Temperature" | "Humidity" | "Luminance" | "co2";
-      operator: "GT" | "LT" | "GTE" | "LTE";
-      threshold: number;
-      commandType: "LIGHT_CONTROL" | "MOTOR_CONTROL";
-      commandAction: "ON" | "OFF";
-      reply: string;
-    }
+    action: "automation_rule";
+    greenhouseNo: string;
+    metric: "Temperature" | "Humidity" | "Luminance" | "co2";
+    operator: "GT" | "LT" | "GTE" | "LTE";
+    threshold: number;
+    commandType: "LIGHT_CONTROL" | "MOTOR_CONTROL";
+    commandAction: "ON" | "OFF";
+    reply: string;
+  }
   | { action: "answer"; reply: string }
   | { action: "unknown"; reply?: string };
 
@@ -896,15 +896,15 @@ export function YayaFloatingAssistant() {
   const [panelSize, setPanelSize] = useState({ width: 360, height: 460 });
 
   // ── Gesture recognition state ──────────────────────────────────────────
-  const [yayaGestureActive, setYayaGestureActive]   = useState(false);
-  const [gestureAnim, setGestureAnim]               = useState<GestureAnim>("none");
-  const [gestureFeedback, setGestureFeedback]       = useState<{ icon: string; text: string; color: string } | null>(null);
-  const [gestureNavNum, setGestureNavNum]           = useState(0);
-  const gestureCleanupRef                           = useRef<(() => void) | null>(null);
-  const gestureAnimTimerRef                         = useRef<number | null>(null);
+  const [yayaGestureActive, setYayaGestureActive] = useState(false);
+  const [gestureAnim, setGestureAnim] = useState<GestureAnim>("none");
+  const [gestureFeedback, setGestureFeedback] = useState<{ icon: string; text: string; color: string } | null>(null);
+  const [gestureNavNum, setGestureNavNum] = useState(0);
+  const gestureCleanupRef = useRef<(() => void) | null>(null);
+  const gestureAnimTimerRef = useRef<number | null>(null);
   // Ref mirrors — 让 stable callback 始终读到最新状态，而不重启识别引擎
-  const yayaGestureActiveRef                        = useRef(false);
-  const gestureHandlerRef                           = useRef<(e: GestureEvent) => void>(() => {});
+  const yayaGestureActiveRef = useRef(false);
+  const gestureHandlerRef = useRef<(e: GestureEvent) => void>(() => { });
 
   const speechSupported = useMemo(
     () => typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition),
@@ -1468,30 +1468,31 @@ export function YayaFloatingAssistant() {
       }
     }
 
-    if (!isAgriQuery(text)) {
-      let accumulated = "";
-      try {
-        await streamAgriAgentChat(
-          { question: text },
-          {
-            onToken: (token) => {
-              accumulated += token;
-            },
-            onDone: () => { },
-            onError: (msg) => {
-              throw new Error(msg || "智能问答失败");
-            },
+    let accumulated = "";
+    try {
+      await streamAgriAgentChat(
+        { question: text },
+        {
+          onToken: (token) => {
+            accumulated += token;
           },
-        );
-        const reply = accumulated.trim() || "我暂时还不太懂这个问题，但有农事问题尽管问我。";
-        push("assistant", reply);
-        speakText(reply);
-      } catch {
+          onDone: () => { },
+          onError: (msg) => {
+            throw new Error(msg || "智能问答失败");
+          },
+        },
+      );
+      const reply = accumulated.trim() || "我暂时还不太懂这个问题，但有农事问题尽管问我。";
+      push("assistant", reply);
+      speakText(reply);
+      return;
+    } catch {
+      if (!isAgriQuery(text)) {
         const fallback = "我暂时还不太懂这个问题，但灌溉、施肥、光照这类农事问题我更擅长。";
         push("assistant", fallback);
         speakText(fallback);
+        return;
       }
-      return;
     }
 
     try {
@@ -1725,7 +1726,7 @@ export function YayaFloatingAssistant() {
     utt.lang = "zh-CN"; utt.rate = 1.0; utt.pitch = 1.0; utt.volume = 1;
     // 播放前锁定麦克风：预估时长 = max(3s, 每字 150ms) + 缓冲
     ignoreInputUntilRef.current = Date.now() + Math.max(3000, text.length * 150);
-    utt.onend  = () => { ignoreInputUntilRef.current = Date.now() + 1200; };
+    utt.onend = () => { ignoreInputUntilRef.current = Date.now() + 1200; };
     utt.onerror = () => { ignoreInputUntilRef.current = Date.now() + 500; };
     const vs = synth.getVoices();
     if (vs.length) { const v = pickYayaVoice(vs); if (v) utt.voice = v; synth.speak(utt); }
@@ -1812,8 +1813,8 @@ export function YayaFloatingAssistant() {
         break;
       }
     }
-  // 只依赖真正稳定的引用，不包含 state——state 通过 ref 读取
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // 只依赖真正稳定的引用，不包含 state——state 通过 ref 读取
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [triggerGestureAnim, gestureSpeak, stopAlwaysListening, startAlwaysListening, speechSupported, navigate, input, executeUnified, setInput, setHeardText]);
 
   // 每次渲染后更新 ref，不重启识别引擎
@@ -1822,7 +1823,7 @@ export function YayaFloatingAssistant() {
   // Stable wrapper — 身份永不改变，始终调用最新的 handleGesture
   const stableGestureCallback = useCallback((e: GestureEvent) => {
     gestureHandlerRef.current(e);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // 空依赖 = 只创建一次
 
   // ── Gesture recognition lifecycle（启动一次，永不重启）─────────────────────
@@ -1842,8 +1843,8 @@ export function YayaFloatingAssistant() {
       gestureCleanupRef.current?.();
       gestureCleanupRef.current = null;
     };
-  // stableGestureCallback 身份永不变，此 effect 只在 mount 时执行一次
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // stableGestureCallback 身份永不变，此 effect 只在 mount 时执行一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Auto-dismiss gesture feedback toast ────────────────────────────────────
@@ -2149,18 +2150,18 @@ export function YayaFloatingAssistant() {
             {[0, 0.22, 0.44].map((delay, i) => (
               <div key={i} style={{
                 position: "absolute", inset: 14, borderRadius: "50%",
-                border: `3px solid ${["rgba(74,222,128,0.85)","rgba(250,204,21,0.75)","rgba(167,139,250,0.70)"][i]}`,
+                border: `3px solid ${["rgba(74,222,128,0.85)", "rgba(250,204,21,0.75)", "rgba(167,139,250,0.70)"][i]}`,
                 animation: `yaya-summon-ring 1.05s ease-out ${delay}s both`,
                 pointerEvents: "none",
               }} />
             ))}
             {/* Sparkle particles */}
-            {[0,45,90,135,180,225,270,315].map((deg, i) => (
+            {[0, 45, 90, 135, 180, 225, 270, 315].map((deg, i) => (
               <div key={i} style={{
                 position: "absolute", left: "50%", top: "50%",
                 width: 11, height: 11, marginLeft: -5.5, marginTop: -5.5,
                 borderRadius: "50%", pointerEvents: "none",
-                background: ["#4ade80","#facc15","#f87171","#a78bfa","#22d3ee","#f97316","#a3e635","#fb7185"][i],
+                background: ["#4ade80", "#facc15", "#f87171", "#a78bfa", "#22d3ee", "#f97316", "#a3e635", "#fb7185"][i],
                 ["--spark-angle" as string]: `${deg}deg`,
                 animation: `yaya-spark-out 0.95s ease-out ${i * 0.05}s forwards`,
               } as React.CSSProperties} />

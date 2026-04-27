@@ -1,4 +1,4 @@
-banpackage com.smartagri.agriagent.controller;
+package com.smartagri.agriagent.controller;
 
 import com.smartagri.agriagent.dto.AgriAgentChatRequest;
 import com.smartagri.agriagent.dto.AgriAgentChatResponse;
@@ -43,10 +43,7 @@ public class AgriAgentController {
      * 表单字段：{@code image}（图片文件）、{@code question}（文本，默认"描述这张图片"）、
      * {@code userId}、{@code conversationId}（均可选）。
      */
-    @PostMapping(
-            value = "/chat/stream/with-image",
-            consumes = MediaType.MULTIPART_FORM_DATA_VALUE,
-            produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @PostMapping(value = "/chat/stream/with-image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamWithImage(
             @RequestPart("image") MultipartFile image,
             @RequestParam(value = "question", required = false, defaultValue = "请分析这张图片的内容") String question,

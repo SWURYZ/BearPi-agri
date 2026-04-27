@@ -56,8 +56,7 @@ public class ThresholdAlertService {
                 "temp",
                 "ABOVE",
                 30.0,
-                false
-        ));
+                false));
     }
 
     public List<ThresholdRuleDto> listRules() {
@@ -79,8 +78,7 @@ public class ThresholdAlertService {
                 request.threshold(),
                 request.enabled() == null || request.enabled(),
                 now,
-                now
-        );
+                now);
         rules.put(id, entity);
         return toDto(entity);
     }
@@ -99,8 +97,7 @@ public class ThresholdAlertService {
                 request.threshold(),
                 request.enabled() == null ? old.enabled() : request.enabled(),
                 old.createdAt(),
-                LocalDateTime.now()
-        );
+                LocalDateTime.now());
         rules.put(id, next);
         return toDto(next);
     }
@@ -118,8 +115,7 @@ public class ThresholdAlertService {
                 old.threshold(),
                 enabled,
                 old.createdAt(),
-                LocalDateTime.now()
-        ));
+                LocalDateTime.now()));
     }
 
     public void deleteRule(Long id) {
@@ -147,7 +143,8 @@ public class ThresholdAlertService {
             return;
         }
 
-        Set<String> breachedDevices = new HashSet<>();
+        // 按真实设备 ID 聚合，避免多个逻辑 deviceId 映射同一物理设备时互相覆盖指令。
+        Set<String> breachedRuntimeDevices = new HashSet<>();
 
         for (RuleEntity rule : rules.values()) {
             if (!rule.enabled()) {
@@ -164,14 +161,12 @@ public class ThresholdAlertService {
                 continue;
             }
 
-            breachedDevices.add(rule.deviceId());
+            breachedRuntimeDevices.add(resolveRuntimeDeviceId(rule.deviceId()));
             appendRecord(rule, currentValue);
         }
 
-        // 注意: 不再通过下发 LIGHT_CONTROL 指令闪烁 LED.
-        // 该副作用会覆盖用户手动操作与定时规则,造成"设备自动关闭"的体感问题.
-        // 阈值告警仅以记录 + 前端高亮形式呈现.
-        // blinkLedsForBreachedDevices(breachedDevices);
+        // 对超阈值设备按轮询周期切换一次开关，实现每 5s 闪烁效果。
+        blinkLedsForBreachedDevices(breachedRuntimeDevices);
     }
 
     private void validateRequest(ThresholdRuleRequest request) {
@@ -210,8 +205,7 @@ public class ThresholdAlertService {
                 entity.threshold(),
                 entity.enabled(),
                 entity.createdAt(),
-                entity.updatedAt()
-        );
+                entity.updatedAt());
     }
 
     private Double fetchMetricValue(String deviceId, String metric) {
@@ -241,7 +235,8 @@ public class ThresholdAlertService {
             }
             return number.doubleValue();
         } catch (Exception ex) {
-            log.debug("获取设备状态失败, deviceId={}, runtimeDeviceId={}, metric={}, error={}", deviceId, runtimeDeviceId, metric, ex.getMessage());
+            log.debug("获取设备状态失败, deviceId={}, runtimeDeviceId={}, metric={}, error={}", deviceId, runtimeDeviceId,
+                    metric, ex.getMessage());
             return null;
         }
     }
@@ -260,8 +255,7 @@ public class ThresholdAlertService {
                 rule.metric(),
                 opText,
                 currentValue,
-                rule.threshold()
-        );
+                rule.threshold());
 
         AlertRecordDto record = new AlertRecordDto(
                 recordIdGen.incrementAndGet(),
@@ -272,8 +266,7 @@ public class ThresholdAlertService {
                 rule.threshold(),
                 currentValue,
                 message,
-                LocalDateTime.now()
-        );
+                LocalDateTime.now());
 
         records.add(record);
         trimRecordsIfNeeded();
@@ -285,22 +278,22 @@ public class ThresholdAlertService {
         }
     }
 
-    private void blinkLedsForBreachedDevices(Set<String> breachedDevices) {
+    private void blinkLedsForBreachedDevices(Set<String> breachedRuntimeDevices) {
         // For each breached device: toggle ON/OFF every 5s => LED blinks every cycle.
-        for (String deviceId : breachedDevices) {
-            boolean nextOn = !blinkingLedState.getOrDefault(deviceId, false);
-            sendLightCommand(deviceId, nextOn ? "ON" : "OFF");
-            blinkingLedState.put(deviceId, nextOn);
+        for (String runtimeDeviceId : breachedRuntimeDevices) {
+            boolean nextOn = !blinkingLedState.getOrDefault(runtimeDeviceId, false);
+            sendLightCommand(runtimeDeviceId, nextOn ? "ON" : "OFF");
+            blinkingLedState.put(runtimeDeviceId, nextOn);
         }
 
         // If device no longer breaches: force OFF once and stop blinking state.
-        Set<String> trackedDevices = new HashSet<>(blinkingLedState.keySet());
-        for (String deviceId : trackedDevices) {
-            if (breachedDevices.contains(deviceId)) {
+        Set<String> trackedRuntimeDevices = new HashSet<>(blinkingLedState.keySet());
+        for (String runtimeDeviceId : trackedRuntimeDevices) {
+            if (breachedRuntimeDevices.contains(runtimeDeviceId)) {
                 continue;
             }
-            sendLightCommand(deviceId, "OFF");
-            blinkingLedState.remove(deviceId);
+            sendLightCommand(runtimeDeviceId, "OFF");
+            blinkingLedState.remove(runtimeDeviceId);
         }
     }
 
@@ -326,12 +319,14 @@ public class ThresholdAlertService {
             headers.setContentType(MediaType.APPLICATION_JSON);
             restTemplate.exchange(url, HttpMethod.POST, new HttpEntity<>(payload, headers), Map.class);
         } catch (Exception ex) {
-            log.warn("下发LED命令失败, deviceId={}, runtimeDeviceId={}, action={}, error={}", deviceId, runtimeDeviceId, action, ex.getMessage());
+            log.warn("下发LED命令失败, deviceId={}, runtimeDeviceId={}, action={}, error={}", deviceId, runtimeDeviceId,
+                    action, ex.getMessage());
         }
     }
 
     private String resolveRuntimeDeviceId(String deviceId) {
-        if (deviceId != null && deviceId.startsWith("DEV-GH") && properties.runtimeDeviceId() != null && !properties.runtimeDeviceId().isBlank()) {
+        if (deviceId != null && deviceId.startsWith("DEV-GH") && properties.runtimeDeviceId() != null
+                && !properties.runtimeDeviceId().isBlank()) {
             return properties.runtimeDeviceId();
         }
         return deviceId;
@@ -345,7 +340,6 @@ public class ThresholdAlertService {
             Double threshold,
             boolean enabled,
             LocalDateTime createdAt,
-            LocalDateTime updatedAt
-    ) {
+            LocalDateTime updatedAt) {
     }
 }
